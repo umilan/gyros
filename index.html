@@ -37,6 +37,10 @@
     overscroll-behavior:none;
     touch-action:none;
   }
+  /* Mirrors the entire page -- canvas render and every UI element/label
+     alike -- for setups where the screen is viewed via a physical mirror
+     rather than straight on, so the reflection reads correctly. */
+  body[data-mirror="1"]{transform:scaleX(-1);}
 
   /* ---------------- stage ---------------- */
   #stage{position:fixed;inset:0;}
@@ -391,6 +395,7 @@ const STORE_KEY = 'gyrosSettings';
 
 const DEFAULTS = {
   sbs: true,
+  mirrorUI: false,   // flips the whole page (canvas + UI text) for mirror-viewed rigs
   content: 'demo',        // demo | model | video
   shape: 0,               // index into SHAPES
   sourceSbs: false,       // video source is side-by-side stereo
@@ -439,6 +444,7 @@ const SHAPES = [
 const MENU = [
   { title:'GENERAL', items:[
     { type:'check', key:'sbs', label:'3D SBS' },
+    { type:'check', key:'mirrorUI', label:'MIRROR UI' },
     { type:'step',  key:'fov', label:'PERSPECTIVE', min:10, max:120, step:1 },
     { type:'hr' }
   ]},
@@ -1098,6 +1104,7 @@ function applyContent(){
 
 function applyAll(){
   document.body.dataset.sbs = state.sbs ? '1' : '0';
+  document.body.dataset.mirror = state.mirrorUI ? '1' : '0';
   applyEyeDistance();
   updateQuad();
   applyVideoLayout();
