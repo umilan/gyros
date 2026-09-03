@@ -1,0 +1,2227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="mobile-web-app-capable" content="yes">
+<title>GYROS</title>
+<style>
+  :root{
+    --bg:#000000;
+    --accent:#F6C41C;
+    --ink:#111111;
+    --text:#FFFFFF;
+    --muted:#9A9A9A;
+    --panel-sbs:rgba(0,0,0,0.55);
+    --hairline:rgba(255,255,255,0.22);
+    --row-h:48px;
+    --pad:16px;
+    --pad-lg:24px;
+    --gap:8px;
+    --rnd:28px;
+    --radius:4px;
+    --font:"Helvetica Neue",Helvetica,Arial,"Segoe UI",system-ui,sans-serif;
+  }
+
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  [hidden]{display:none !important;}
+  html,body{height:100%;margin:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font);
+    overflow:hidden;
+    overscroll-behavior:none;
+    touch-action:none;
+  }
+
+  /* ---------------- stage ---------------- */
+  #stage{position:fixed;inset:0;}
+  #stage canvas{display:block;width:100%;height:100%;}
+
+  #divider{
+    position:fixed;top:10%;height:80%;left:50%;width:0;
+    border-left:2px dotted rgba(255,255,255,0.55);
+    transform:translateX(-1px);
+    pointer-events:none;z-index:20;
+  }
+  body[data-sbs="0"] #divider{display:none;}
+
+  /* ---------------- chrome bars ---------------- */
+  .bar{
+    position:fixed;left:0;right:0;z-index:40;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:var(--pad) var(--pad-lg);
+    pointer-events:none;
+  }
+  .bar > *{pointer-events:auto;}
+  #topbar{top:0;background:linear-gradient(to bottom,rgba(0,0,0,0.55) 0%,transparent 100%);}
+  #botbar{bottom:0;background:linear-gradient(to top,rgba(0,0,0,0.55) 0%,transparent 100%);padding:0;}
+
+  /* botPanes: one pane per eye when 3D SBS is on (mirrors #menuPanes) */
+  #botPanes{display:flex;width:100%;height:100%;}
+  .botPane{
+    flex:1 1 0;min-width:0;
+    display:flex;align-items:center;justify-content:center;
+    padding:var(--pad) var(--pad-lg);
+  }
+
+  body[data-chrome="0"] #topbar,
+  body[data-chrome="0"] #botbar,
+  body[data-chrome="0"] #galleryPanes{opacity:0;pointer-events:none;}
+  /* Logo stays clickable in every state including hidden-chrome */
+  body[data-chrome="0"] #appTitle{pointer-events:auto;}
+
+  .title{
+    position:absolute;left:50%;transform:translateX(-50%);
+    color:var(--muted);
+    font-size:16px;font-weight:600;letter-spacing:0.32em;
+    pointer-events:none;
+    transition:opacity .12s ease;
+  }
+  body[data-ui="view"] .title,
+  body[data-ui="osd"]  .title{pointer-events:auto;cursor:pointer;}
+  body[data-ui="view"] .title:hover,
+  body[data-ui="osd"]  .title:hover{opacity:.75;}
+  body[data-ui="view"] .title:active,
+  body[data-ui="osd"]  .title:active{opacity:.55;}
+
+  .iconbtn{
+    appearance:none;background:none;border:0;padding:8px;margin:-8px;
+    color:var(--accent);cursor:pointer;
+    font-size:24px;line-height:1;font-weight:700;
+    transition:opacity .12s ease,transform .12s ease;
+  }
+  .iconbtn:hover{opacity:.75;}
+  .iconbtn:active{transform:scale(0.92);}
+  .iconbtn svg{display:block;}
+
+  /* bottom bar: a single gear while viewing, an OSD strip while in settings —
+     duplicated into one .botPane per eye when 3D SBS is on */
+  body[data-ui="osd"] .gearBtn{display:none;}
+
+  /* OSD bar — fills its .botPane; ‹ and › anchored to that pane's edges */
+  .osdBar{display:flex;flex:1;align-items:center;position:relative;}
+  body[data-ui="view"] .osdBar{display:none;}
+  /* Remove horizontal padding so buttons reach the pane edges */
+  .osdPrev{position:absolute;left:var(--pad-lg);top:50%;transform:translateY(-50%);}
+  .osdNext{position:absolute;right:var(--pad-lg);top:50%;transform:translateY(-50%);}
+
+  /* Nav column: ▲ (previous item) above, section/item label + value,
+     ▼ (next item) below — the same ‹ glyph as the corner buttons, rotated */
+  .osdNavWrap{
+    flex:1;min-width:0;
+    display:flex;flex-direction:column;align-items:center;gap:4px;
+    padding:0 52px;   /* keep text clear of corner buttons */
+  }
+  .osdItemUp{transform:rotate(90deg);}
+  .osdItemUp:active{transform:rotate(90deg) scale(0.92);}
+  .osdItemDown{transform:rotate(-90deg);}
+  .osdItemDown:active{transform:rotate(-90deg) scale(0.92);}
+  .osdNav{
+    display:flex;flex-direction:column;align-items:center;gap:2px;
+    min-width:0;max-width:100%;
+    pointer-events:auto;
+  }
+  .osdNav .caption,.galleryNav .caption{
+    color:var(--muted);font-size:11px;font-weight:600;letter-spacing:0.22em;
+    text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
+  }
+  .osdNav .name,.galleryNav .name{
+    min-width:0;max-width:100%;text-align:center;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    font-size:22px;font-weight:700;letter-spacing:0.06em;color:var(--text);
+  }
+
+  /* the full settings list takes the whole screen; it has its own close (tap outside) */
+  body[data-ui="list"] #topbar,
+  body[data-ui="list"] #botbar,
+  body[data-ui="list"] #galleryPanes{display:none;}
+
+  /* ---------------- overlays ---------------- */
+  .overlay{position:fixed;inset:0;z-index:30;display:flex;}
+  .overlay[hidden]{display:none;}
+
+  #menu .panes{display:flex;width:100%;height:100%;}
+  .pane{
+    flex:1 1 0;height:100%;overflow-y:auto;overflow-x:hidden;
+    -webkit-overflow-scrolling:touch;
+    background:var(--panel-sbs);
+    backdrop-filter:blur(6px);
+    -webkit-backdrop-filter:blur(6px);
+    cursor:pointer;              /* the margin around the column closes the menu */
+  }
+  .pane::-webkit-scrollbar{width:0;height:0;}
+
+  .paneInner{padding:var(--pad-lg) 0 96px;max-width:420px;margin:0 auto;cursor:default;}
+  .paneTitle{
+    position:relative;
+    text-align:center;color:var(--muted);
+    font-size:14px;font-weight:600;letter-spacing:0.32em;
+    padding:var(--pad) 0 var(--pad-lg);
+  }
+  .paneCloseBtn{
+    position:absolute;right:var(--pad-lg);top:50%;transform:translateY(-50%);
+    appearance:none;border:0;background:none;color:var(--muted);
+    font-size:20px;line-height:1;padding:4px 2px;cursor:pointer;
+    font-family:var(--font);transition:color .12s ease;
+  }
+  .paneCloseBtn:hover{color:var(--text);}
+
+  .section{color:var(--muted);font-size:11px;letter-spacing:0.28em;
+    padding:var(--pad-lg) var(--pad-lg) var(--gap);}
+  .hr{height:1px;background:var(--hairline);margin:var(--gap) var(--pad-lg);}
+
+  .row{
+    display:flex;align-items:center;justify-content:space-between;gap:var(--pad);
+    width:100%;min-height:var(--row-h);
+    padding:0 var(--pad-lg);
+    background:none;border:0;color:var(--text);
+    font-family:var(--font);font-size:15px;font-weight:600;letter-spacing:0.1em;
+    text-align:left;
+  }
+  button.row{cursor:pointer;transition:background .12s ease;}
+  button.row:hover{background:rgba(255,255,255,0.07);}
+  button.row:active{background:rgba(255,255,255,0.14);}
+  .row .label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .row.kbfocus,.textbtn.kbfocus{background:rgba(246,196,28,0.10);outline:1px solid rgba(246,196,28,0.40);outline-offset:-1px;}
+
+  /* stepper */
+  .stepper{flex:0 0 auto;display:flex;align-items:center;gap:var(--pad);}
+  .val{
+    min-width:40px;text-align:center;
+    font-size:15px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;
+  }
+  .rnd{
+    appearance:none;width:var(--rnd);height:var(--rnd);border:0;border-radius:50%;
+    background:var(--accent);color:var(--ink);
+    font-size:20px;font-weight:700;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:transform .1s ease,filter .12s ease;
+  }
+  .rnd:hover{filter:brightness(1.12);}
+  .rnd:active{transform:scale(0.9);}
+
+  .textbtn{
+    display:block;width:100%;margin-top:var(--pad-lg);padding:var(--pad) var(--pad-lg);
+    background:none;border:0;color:var(--accent);cursor:pointer;
+    font-family:var(--font);font-size:14px;font-weight:700;letter-spacing:0.18em;
+    text-align:center;transition:opacity .12s ease;
+  }
+  .textbtn:hover{opacity:.75;}
+  .textbtn:active{opacity:.55;}
+
+  /* -- all dialogs share the same panel bg as the settings list ---- */
+  .dialog{
+    z-index:50;          /* above bars */
+    background:none;     /* dlgPane provides its own bg */
+    align-items:stretch; /* dlgPane fills the overlay */
+    cursor:default;
+  }
+  /* Matches the logo-menu panel exactly */
+  .dlgPane{
+    flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    background:var(--panel-sbs);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    cursor:pointer;   /* clicking outside .paneInner closes the dialog */
+  }
+  .dlgPane::-webkit-scrollbar{width:0;height:0;}
+  .dlgPane .paneInner{cursor:default;}
+  /* URL input — full-width row, matches pane rhythm */
+  .dlgInput{
+    display:block;width:100%;box-sizing:border-box;
+    padding:var(--pad) var(--pad-lg);
+    background:rgba(255,255,255,0.07);
+    border:0;border-top:1px solid var(--hairline);border-bottom:1px solid var(--hairline);
+    color:var(--text);font-family:var(--font);font-size:15px;letter-spacing:0.04em;
+  }
+  .dlgInput::placeholder{color:var(--muted);}
+  .dlgInput:focus{outline:none;border-color:var(--accent);background:rgba(255,255,255,0.12);}
+  .helpText{
+    margin:0;padding:0 var(--pad-lg) var(--pad);
+    font-size:14px;line-height:1.65;letter-spacing:0.02em;color:var(--text);
+  }
+  .helpText b{color:var(--accent);font-weight:700;}
+
+  /* one toast, centred; a second copy appears on the right eye when SBS is
+     active, mirroring the bottom bar and settings list */
+  .toast{
+    position:fixed;left:50%;bottom:88px;transform:translateX(-50%);
+    z-index:60;padding:var(--gap) var(--pad);
+    background:rgba(0,0,0,0.5);border-radius:var(--radius);
+    color:var(--muted);font-size:12px;letter-spacing:0.18em;
+    opacity:0;transition:opacity .2s ease;pointer-events:none;
+  }
+  .toast.show{opacity:1;}
+  .toastR{display:none;}
+  body[data-sbs="1"] .toastL{left:25%;}
+  body[data-sbs="1"] .toastR{display:block;left:75%;}
+
+  /* gallery nav — ‹ › arrows over the image to step through a loaded
+     folder of photos/videos; one .galleryPane per eye when 3D SBS is on
+     (mirrors #botPanes / #menuPanes). Hidden unless >1 file is loaded. */
+  #galleryPanes{position:fixed;inset:0;z-index:25;display:flex;}
+  body[data-gallery="0"] #galleryPanes{display:none;}
+  .galleryPane{flex:1 1 0;min-width:0;position:relative;}
+  .galleryPrev,.galleryNext{
+    position:absolute;top:50%;transform:translateY(-50%);
+    background:rgba(0,0,0,0.35);border-radius:50%;
+  }
+  .galleryPrev{left:var(--pad-lg);}
+  .galleryNext{right:var(--pad-lg);}
+  /* persistent file-name readout, same spot the toast used to flash it in */
+  .galleryNav{
+    position:absolute;left:50%;bottom:88px;transform:translateX(-50%);
+    display:flex;flex-direction:column;align-items:center;gap:2px;
+    max-width:70%;pointer-events:none;
+  }
+  /* avoid stacking on top of the OSD strip / full list's own caption+name */
+  body[data-ui="osd"] .galleryNav,
+  body[data-ui="list"] .galleryNav{display:none;}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="divider"></div>
+
+<header class="bar" id="topbar">
+  <button class="iconbtn" id="btnLoad" title="Load…" aria-label="Load a file">
+    <svg width="24" height="20" viewBox="0 0 24 20" fill="none" aria-hidden="true">
+      <path d="M2 4a2 2 0 0 1 2-2h5l2 2.5h9a2 2 0 0 1 2 2V16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <div class="title" id="appTitle" role="button" tabindex="0" aria-label="Open settings list">GYROS</div>
+  <button class="iconbtn" id="btnHelp" title="Help…" aria-label="Help">?</button>
+</header>
+
+<div class="overlay dialog" id="hint" hidden>
+  <div class="dlgPane">
+    <div class="paneInner">
+      <div class="paneTitle">GYROSCOPE</div>
+      <div class="hr"></div>
+      <p class="helpText">This app uses your device's gyroscope for head tracking. Tap the button below to grant access.</p>
+      <button class="textbtn" id="hintBtn">ENABLE HEAD TRACKING</button>
+    </div>
+  </div>
+</div>
+
+<footer class="bar" id="botbar">
+  <div class="botPanes" id="botPanes"></div>
+</footer>
+
+<div class="galleryPanes" id="galleryPanes"></div>
+
+<div class="overlay" id="menu" hidden>
+  <div class="panes" id="menuPanes"></div>
+</div>
+
+<div class="overlay dialog" id="helpDlg" hidden>
+  <div id="helpPane" class="dlgPane">
+    <div class="paneInner">
+      <div class="paneTitle">HELP</div>
+      <div class="hr"></div>
+      <div class="section">OVERVIEW</div>
+      <p class="helpText"><b>GYROS</b> renders content twice — once per eye — for a phone-in-headset viewer. Turn your head to look around.</p>
+      <div class="hr"></div>
+      <div class="section">CONTENT</div>
+      <p class="helpText"><b>DEMO</b> — rotating wireframe solid.</p>
+      <p class="helpText"><b>3D MODEL</b> — local .obj or .stl file, max ~5 MB. Decimate high-poly meshes before loading.</p>
+      <p class="helpText"><b>VIDEO</b> — local file or streaming URL. Files named with "SBS" auto-enable side-by-side stereo mode.</p>
+      <p class="helpText"><b>FOLDER</b> — pick several photos and videos at once (or a whole folder, where supported) and step through them with the <b>‹ ›</b> arrows over the image; the current file's position and name are shown below them.</p>
+      <div class="hr"></div>
+      <div class="section">SETTINGS</div>
+      <p class="helpText"><b>POSITIONING / ZOOM</b> — shift, scale and keystone (TRPZD) each eye image to align it with your lenses.</p>
+      <p class="helpText"><b>GYRO</b> — multiply, freeze or invert each axis of head tracking. RECENTER sets the current heading as forward.</p>
+      <div class="hr"></div>
+      <div class="section">CONTROLS</div>
+      <p class="helpText"><b>GESTURES</b> — drag to pan, pinch to zoom, two fingers up/down adjusts eye distance, tap to show or hide the controls, double-tap to recenter.</p>
+      <p class="helpText"><b>SCROLL / PINCH</b> — mouse wheel or trackpad pinch zooms in and out.</p>
+      <p class="helpText"><b>KEYBOARD</b> — while viewing: <b>↑</b> opens the settings strip, <b>↓</b> opens the full list, <b>←/→</b> change eye distance, <b>Shift + arrows</b> shifts the image position (X/Y).</p>
+      <p class="helpText"><b>SETTINGS STRIP</b> — <b>↑/↓</b> move between items and wrap around at either end; tap the image, or press <b>Esc</b>, to close. <b>←/→</b> changes the value.</p>
+      <p class="helpText"><b>FULL LIST</b> — <b>↑/↓</b> move between items (past either end closes); <b>←/→</b> changes the value, or submits a highlighted row like RESET or CLOSE. <b>WASD</b> works too. <b>Esc</b> closes either.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Load: choose what kind of content to load -->
+<div class="overlay dialog" id="loadTypeDlg" hidden>
+  <div class="dlgPane">
+    <div class="paneInner">
+      <div class="paneTitle">LOAD</div>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="model"><span class="label">3D MODEL (.OBJ / .STL)</span></button>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="video"><span class="label">VIDEO / IMAGE</span></button>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="folder"><span class="label">FOLDER (PHOTOS + VIDEOS)</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- Source picker: FILE or URL -->
+<div class="overlay dialog" id="loadDlg" hidden>
+  <div class="dlgPane">
+    <div class="paneInner">
+      <div class="paneTitle" id="loadDlgTitle">LOAD</div>
+      <div class="hr"></div>
+      <button class="row" id="loadFileBtn"><span class="label">FROM FILE</span></button>
+      <div class="hr"></div>
+      <button class="row" id="loadUrlBtn"><span class="label">FROM URL</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay dialog" id="urlDlg" hidden>
+  <div class="dlgPane">
+    <div class="paneInner">
+      <div class="paneTitle" id="urlDlgTitle">URL</div>
+      <div class="hr"></div>
+      <p class="helpText" id="urlDlgNote"></p>
+      <div class="section">ADDRESS</div>
+      <input class="dlgInput" type="url" id="urlInput" placeholder="" autocomplete="off" spellcheck="false">
+      <button class="textbtn" id="urlOk">LOAD</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast toastL"></div>
+<div class="toast toastR"></div>
+
+<input type="file" id="modelFile" accept=".obj,.stl" hidden>
+<input type="file" id="videoFile" accept="video/*,image/*" hidden>
+<input type="file" id="folderFiles" accept="image/*,video/*" webkitdirectory multiple hidden>
+<video id="video" playsinline webkit-playsinline crossorigin="anonymous" loop hidden></video>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+/* =========================================================================
+   State
+   ========================================================================= */
+const STORE_KEY = 'gyrosSettings';
+
+const DEFAULTS = {
+  sbs: true,
+  content: 'demo',        // demo | model | video
+  shape: 0,               // index into SHAPES
+  sourceSbs: false,       // video source is side-by-side stereo
+  autoRotate: true,       // spin demo / loaded model
+  fov: 60,                 // camera field of view — controls perspective intensity
+  posX: 0, posY: 0, eyeDist: 0,
+  zoom: 0, scaleX: 0, scaleY: 0, trpzdTop: 0, trpzdBot: 0,
+  flipX: false, flipY: false,
+  gyroMulX: 1, gyroMulY: 1,
+  freezeX: false, freezeY: false,
+  gyroFlipX: false, gyroFlipY: false
+};
+
+const state = Object.assign({}, DEFAULTS);
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    for (const k of Object.keys(DEFAULTS)){
+      if (saved[k] !== undefined && typeof saved[k] === typeof DEFAULTS[k]) state[k] = saved[k];
+    }
+    // content and shape are session-ish: a model/video source cannot be restored
+    if (state.content !== 'demo') state.content = 'demo';
+  }catch(e){ /* ignore corrupt settings */ }
+}
+let saveTimer = null;
+function saveState(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(()=>{
+    try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
+  }, 200);
+}
+
+/* =========================================================================
+   Menu definition — one spec, rendered into every pane
+   ========================================================================= */
+const SHAPES = [
+  'WIRE CUBE','SOLID CUBE','COLOR CUBE',
+  'WIRE SPHERE','SOLID SPHERE','TORUS',
+  'PYRAMID','OCTA','ICOSA','CRYSTAL',
+  'OFF'
+];
+
+const MENU = [
+  { title:'GENERAL', items:[
+    { type:'check', key:'sbs', label:'3D SBS' },
+    { type:'step',  key:'fov', label:'PERSPECTIVE', min:10, max:120, step:1 },
+    { type:'hr' }
+  ]},
+  { title:'CONTENT', items:[
+    { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
+    { type:'check', key:'autoRotate', label:'AUTO ROTATE' },
+    { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' }
+  ]},
+  { title:'POSITIONING', items:[
+    { type:'step', key:'posX',    label:'POS X',        min:-100, max:100, step:1 },
+    { type:'step', key:'posY',    label:'POS Y',        min:-100, max:100, step:1 },
+    { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:2 }
+  ]},
+  { title:'ZOOM', items:[
+    { type:'step', key:'zoom',     label:'ZOOM (XY)', min:-90, max:300, step:2 },
+    { type:'step', key:'scaleX',   label:'SCALE X',   min:-90, max:300, step:2 },
+    { type:'step', key:'scaleY',   label:'SCALE Y',   min:-90, max:300, step:2 },
+    { type:'step', key:'trpzdTop', label:'TRPZD TOP', min:-10000, max:10000, step:100 },
+    { type:'step', key:'trpzdBot', label:'TRPZD BOT', min:-10000, max:10000, step:100 }
+  ]},
+  { title:'FLIP', items:[
+    { type:'check', key:'flipX', label:'FLIP X' },
+    { type:'check', key:'flipY', label:'FLIP Y' }
+  ]},
+  { title:'GYRO', items:[
+    { type:'step',  key:'gyroMulX', label:'X MULTIPLY', min:0, max:5, step:0.1, dec:1 },
+    { type:'step',  key:'gyroMulY', label:'Y MULTIPLY', min:0, max:5, step:0.1, dec:1 },
+    { type:'check', key:'freezeX',  label:'FREEZE X' },
+    { type:'check', key:'freezeY',  label:'FREEZE Y' },
+    { type:'check', key:'gyroFlipX',label:'FLIP X' },
+    { type:'check', key:'gyroFlipY',label:'FLIP Y' },
+    { type:'action', act:'recenter', label:'RECENTER', textbtn:true }
+  ]}
+];
+
+const SPEC = {}; // key -> item spec, for step bounds
+const ENUM_SPEC = {}; // key -> item spec, for enum options
+MENU.forEach(s => s.items.forEach(i => {
+  if (i.type === 'step') SPEC[i.key] = i;
+  if (i.type === 'enum') ENUM_SPEC[i.key] = i;
+}));
+
+function itemHTML(item){
+  const when = item.when ? ` data-when="${item.when}"` : '';
+  switch(item.type){
+    case 'hr':
+      return '<div class="hr"></div>';
+    case 'check':
+      return `<div class="row"${when}>
+        <span class="label">${item.label}</span>
+        <span class="stepper">
+          <button class="rnd" data-act="boolstep" data-key="${item.key}" data-dir="-1" aria-label="${item.label} No">&#8722;</button>
+          <span class="val" data-val="${item.key}">-</span>
+          <button class="rnd" data-act="boolstep" data-key="${item.key}" data-dir="1" aria-label="${item.label} Yes">+</button>
+        </span></div>`;
+    case 'action':
+      if (item.textbtn)
+        return `<button class="textbtn" data-act="${item.act}"${when}>${item.label}</button>`;
+      return `<button class="row" data-act="${item.act}"${when}>
+        <span class="label">${item.label}</span></button>`;
+    case 'step':
+      return `<div class="row"${when}>
+        <span class="label">${item.label}</span>
+        <span class="stepper">
+          <button class="rnd" data-act="step" data-key="${item.key}" data-dir="-1" aria-label="Decrease ${item.label}">&#8722;</button>
+          <span class="val" data-val="${item.key}">0</span>
+          <button class="rnd" data-act="step" data-key="${item.key}" data-dir="1" aria-label="Increase ${item.label}">+</button>
+        </span></div>`;
+    case 'enum':
+      return `<div class="row"${when}>
+        <span class="label">${item.label}</span>
+        <span class="stepper">
+          <button class="rnd" data-act="enumstep" data-key="${item.key}" data-dir="-1" aria-label="Previous ${item.label}">&#8722;</button>
+          <span class="val" data-val="${item.key}">-</span>
+          <button class="rnd" data-act="enumstep" data-key="${item.key}" data-dir="1" aria-label="Next ${item.label}">+</button>
+        </span></div>`;
+  }
+  return '';
+}
+
+function paneHTML(){
+  let html = '<div class="paneInner" style="padding-top:50vh;padding-bottom:50vh">'
+    + '<div class="paneTitle">MENU'
+    + '<button class="paneCloseBtn" data-act="closeList" aria-label="Close settings">&#215;</button>'
+    + '</div>';
+  for (const section of MENU){
+    html += `<div class="section">${section.title}</div>`;
+    html += section.items.map(itemHTML).join('');
+  }
+  html += '<button class="textbtn" data-act="reset">RESET TO DEFAULTS</button>';
+  html += '<button class="textbtn" data-act="closeList">CLOSE</button>';
+  html += '</div>';
+  return html;
+}
+
+const menuPanes = document.getElementById('menuPanes');
+function buildPanes(){
+  const count = state.sbs ? 2 : 1;
+  if (menuPanes.children.length === count) return;
+  menuPanes.innerHTML = '';
+  for (let i = 0; i < count; i++){
+    const pane = document.createElement('div');
+    pane.className = 'pane';
+    pane.innerHTML = paneHTML();
+    menuPanes.appendChild(pane);
+  }
+  refreshMenu();
+  // Restore keyboard focus if panes were rebuilt while the list was open (e.g. SBS toggle)
+  if (uiState === 'list' && menuFocusIdx >= 0) setMenuFocus(menuFocusIdx);
+}
+
+/* ---- bottom bar (gear / OSD strip) — same one-pane-per-eye treatment as
+   the logo-menu above: one .botPane per eye when 3D SBS is on, one full-width
+   pane otherwise. All instances share state and stay in sync. ---- */
+function botPaneHTML(){
+  return `<button class="iconbtn gearBtn" title="Settings" aria-label="Open settings">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </button>
+  <div class="osdBar">
+    <button class="iconbtn osdPrev" aria-label="Previous">&#8249;</button>
+    <div class="osdNavWrap">
+      <button class="iconbtn osdItemUp" aria-label="Previous item">&#8249;</button>
+      <div class="osdNav">
+        <div class="caption osdParent"></div>
+        <div class="name osdName"></div>
+      </div>
+      <button class="iconbtn osdItemDown" aria-label="Next item">&#8249;</button>
+    </div>
+    <button class="iconbtn osdNext" aria-label="Next">&#8250;</button>
+  </div>`;
+}
+
+const botPanesEl = document.getElementById('botPanes');
+function buildBotPanes(){
+  const count = state.sbs ? 2 : 1;
+  if (botPanesEl.children.length === count) return;
+  botPanesEl.innerHTML = '';
+  for (let i = 0; i < count; i++){
+    const pane = document.createElement('div');
+    pane.className = 'botPane';
+    pane.innerHTML = botPaneHTML();
+    botPanesEl.appendChild(pane);
+  }
+  renderOsd();
+}
+
+function fmt(key, v){
+  if (typeof v === 'boolean') return v ? 'YES' : 'NO';
+  if (ENUM_SPEC[key]) return ENUM_SPEC[key].options[v];
+  const dec = SPEC[key] && SPEC[key].dec ? SPEC[key].dec : 0;
+  return dec ? v.toFixed(dec) : String(Math.round(v));
+}
+
+function refreshMenu(){
+  menuPanes.querySelectorAll('[data-val]').forEach(el=>{
+    const k = el.dataset.val;
+    el.textContent = fmt(k, state[k]);
+  });
+  menuPanes.querySelectorAll('[data-when]').forEach(el=>{
+    el.hidden = !el.dataset.when.split(',').includes(state.content);
+  });
+  renderOsd();
+}
+
+/* =========================================================================
+   Three.js — scene, stereo rig, content
+   ========================================================================= */
+const stage = document.getElementById('stage');
+const video = document.getElementById('video');
+
+let renderer, scene, rig, camL, camR, world;
+let rtL, rtR, quadScene, quadCam, quadMesh, quadMat;
+let demoGroup, modelGroup, videoGroup;
+let videoTexture, videoMeshL, videoMeshR;
+
+const CONTENT_DISTANCE = -3;
+
+function initThree(){
+  renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.autoClear = false;
+  renderer.setClearColor(0x000000, 1);
+  stage.appendChild(renderer.domElement);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000000);
+  scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+  const key = new THREE.DirectionalLight(0xffffff, 2.4);
+  key.position.set(1.5, 2, 2.5);
+  const fill = new THREE.DirectionalLight(0xffffff, 1.0);
+  fill.position.set(-2, -1, 1.5);
+  scene.add(key, fill);
+
+  rig = new THREE.Object3D();
+  scene.add(rig);
+
+  camL = new THREE.PerspectiveCamera(60, 1, 0.02, 400);
+  camR = new THREE.PerspectiveCamera(60, 1, 0.02, 400);
+  camL.layers.enable(1);
+  camR.layers.enable(2);
+  rig.add(camL, camR);
+
+  world = new THREE.Group();
+  world.position.z = CONTENT_DISTANCE;
+  scene.add(world);
+
+  demoGroup = new THREE.Group();
+  modelGroup = new THREE.Group();
+  videoGroup = new THREE.Group();
+  world.add(demoGroup, modelGroup, videoGroup);
+
+  buildDemo(state.shape);
+  initVideoMeshes();
+  initBlit();
+
+  window.addEventListener('resize', onResize);
+  onResize();
+}
+
+/* ---- thick wireframe helper (WebGL cannot draw wide lines) ---- */
+function thickWire(geometry, radius){
+  const edges = new THREE.EdgesGeometry(geometry, 1);
+  const pos = edges.attributes.position;
+  const group = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color:0xffffff });
+  const cylGeo = new THREE.CylinderGeometry(radius, radius, 1, 8);
+  const jointGeo = new THREE.SphereGeometry(radius, 10, 8);
+  const a = new THREE.Vector3(), b = new THREE.Vector3();
+  const dir = new THREE.Vector3(), mid = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0);
+
+  for (let i = 0; i < pos.count; i += 2){
+    a.fromBufferAttribute(pos, i);
+    b.fromBufferAttribute(pos, i + 1);
+    dir.subVectors(b, a);
+    const len = dir.length();
+    if (len < 1e-6) continue;
+    mid.addVectors(a, b).multiplyScalar(0.5);
+
+    const seg = new THREE.Mesh(cylGeo, mat);
+    seg.position.copy(mid);
+    seg.scale.set(1, len, 1);
+    seg.quaternion.setFromUnitVectors(up, dir.normalize());
+    group.add(seg);
+
+    const j1 = new THREE.Mesh(jointGeo, mat); j1.position.copy(a); group.add(j1);
+    const j2 = new THREE.Mesh(jointGeo, mat); j2.position.copy(b); group.add(j2);
+  }
+  edges.dispose();
+  return group;
+}
+
+function disposeGroup(group){
+  while (group.children.length){
+    const child = group.children.pop();
+    child.traverse(n=>{
+      if (n.geometry) n.geometry.dispose();
+      if (n.material){
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        mats.forEach(m=>{ if (m.map) m.map.dispose(); m.dispose(); });
+      }
+    });
+  }
+}
+
+function solidMat(color){
+  return new THREE.MeshStandardMaterial({
+    color: color || 0xB0B4BB, roughness: 0.45, metalness: 0.1, side: THREE.DoubleSide
+  });
+}
+
+function buildDemo(index){
+  disposeGroup(demoGroup);
+  const name = SHAPES[index] || 'WIRE CUBE';
+  if (name === 'OFF') return;   // demo hidden; nothing to build
+
+  switch(name){
+    case 'WIRE CUBE': {
+      const geo = new THREE.BoxGeometry(1.3, 1.3, 1.3);
+      demoGroup.add(thickWire(geo, 0.028)); geo.dispose(); break;
+    }
+    case 'SOLID CUBE': {
+      demoGroup.add(new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 1.3), solidMat())); break;
+    }
+    case 'COLOR CUBE': {
+      // Six faces: R G B Y O P — great for lens calibration
+      const cols = [0xff3333, 0x3399ff, 0x33dd44, 0xffdd00, 0xff8800, 0xcc44cc];
+      demoGroup.add(new THREE.Mesh(
+        new THREE.BoxGeometry(1.3, 1.3, 1.3),
+        cols.map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.5, metalness: 0.05 }))
+      )); break;
+    }
+    case 'WIRE SPHERE': {
+      const geo = new THREE.SphereGeometry(1.05, 14, 10);
+      demoGroup.add(thickWire(geo, 0.018)); geo.dispose(); break;
+    }
+    case 'SOLID SPHERE': {
+      demoGroup.add(new THREE.Mesh(new THREE.SphereGeometry(1.05, 36, 26), solidMat())); break;
+    }
+    case 'TORUS': {
+      demoGroup.add(new THREE.Mesh(new THREE.TorusGeometry(0.78, 0.3, 18, 44), solidMat())); break;
+    }
+    case 'PYRAMID': {
+      const geo = new THREE.ConeGeometry(1.15, 1.7, 4, 1);
+      demoGroup.add(thickWire(geo, 0.028)); geo.dispose(); break;
+    }
+    case 'OCTA': {
+      const geo = new THREE.OctahedronGeometry(1.1);
+      demoGroup.add(thickWire(geo, 0.028)); geo.dispose(); break;
+    }
+    case 'ICOSA': {
+      const geo = new THREE.IcosahedronGeometry(1.1);
+      demoGroup.add(thickWire(geo, 0.028)); geo.dispose(); break;
+    }
+    case 'CRYSTAL': {
+      // Elongated diamond — OctahedronGeometry stretched on Y
+      const geo = new THREE.OctahedronGeometry(0.88);
+      geo.scale(1, 1.85, 1);
+      demoGroup.add(thickWire(geo, 0.022)); geo.dispose(); break;
+    }
+  }
+
+  demoGroup.rotation.set(0.3, 0.6, 0);
+}
+
+/* ---- video ---- */
+function initVideoMeshes(){
+  videoTexture = new THREE.VideoTexture(video);
+  videoTexture.colorSpace = THREE.SRGBColorSpace;
+  videoTexture.minFilter = THREE.LinearFilter;
+  videoTexture.magFilter = THREE.LinearFilter;
+  videoTexture.wrapS = THREE.ClampToEdgeWrapping;
+  videoTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+  // Use a separate VideoTexture instance for the right eye — cloning a
+  // VideoTexture is fragile across Three.js versions and can produce a
+  // texture that never auto-updates. Both instances point to the same
+  // <video> element so they decode no extra data.
+  const texR = new THREE.VideoTexture(video);
+  texR.colorSpace = THREE.SRGBColorSpace;
+  texR.minFilter = THREE.LinearFilter;
+  texR.magFilter = THREE.LinearFilter;
+  texR.wrapS = THREE.ClampToEdgeWrapping;
+  texR.wrapT = THREE.ClampToEdgeWrapping;
+
+  const geo = new THREE.PlaneGeometry(1, 1);
+  videoMeshL = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: videoTexture }));
+  videoMeshR = new THREE.Mesh(geo.clone(), new THREE.MeshBasicMaterial({ map: texR }));
+  videoMeshL.layers.set(1);
+  videoMeshR.layers.set(2);
+  videoGroup.add(videoMeshL, videoMeshR);
+  applyVideoLayout();
+}
+
+function applyVideoLayout(w, h){
+  const vw = w || video.videoWidth || 1920;
+  const vh = h || video.videoHeight || 1080;
+  const sourceW = state.sourceSbs ? vw / 2 : vw;
+  const height = 2.4;
+  const width = height * (sourceW / vh);
+  videoMeshL.scale.set(width, height, 1);
+  videoMeshR.scale.set(width, height, 1);
+
+  // Left/right halves of an SBS source; the full frame for a mono source.
+  const half = state.sourceSbs ? 0.5 : 1;
+  const setCrop = (tex, offsetX)=>{
+    tex.repeat.set(half, 1);
+    tex.offset.set(offsetX, 0);
+    tex.needsUpdate = true;
+  };
+  setCrop(videoMeshL.material.map, 0);
+  setCrop(videoMeshR.material.map, state.sourceSbs ? 0.5 : 0);
+}
+
+/* ---- final blit pass: every display adjustment happens here, so it works
+       identically for the demo, a model and a video ---- */
+function initBlit(){
+  quadScene = new THREE.Scene();
+  quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+  const geo = new THREE.BufferGeometry();
+  // two triangles, vertex order: TL, TR, BL, BR
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
+  geo.setAttribute('uvq', new THREE.BufferAttribute(new Float32Array(12), 3));
+  geo.setIndex([0, 2, 1, 1, 2, 3]);
+
+  quadMat = new THREE.ShaderMaterial({
+    uniforms: { map: { value: null }, distort: { value: 0 } },
+    vertexShader: `
+      attribute vec3 uvq;
+      varying vec3 vUvq;
+      void main(){
+        vUvq = uvq;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform sampler2D map;
+      uniform float distort;   // radial barrel warp — extreme PERSPECTIVE looks fish-eye
+      varying vec3 vUvq;
+      void main(){
+        vec2 uv = vUvq.xy / vUvq.z;
+        vec2 c = uv - 0.5;
+        uv += c * dot(c, c) * distort;
+        gl_FragColor = texture2D(map, uv);
+      }`,
+    depthTest: false,
+    depthWrite: false
+  });
+
+  quadMesh = new THREE.Mesh(geo, quadMat);
+  quadMesh.frustumCulled = false;
+  quadScene.add(quadMesh);
+  updateQuad();
+}
+
+function updateQuad(){
+  const kTop = Math.max(0.05, 1 + state.trpzdTop / 100);
+  const kBot = Math.max(0.05, 1 + state.trpzdBot / 100);
+  // Keep the widest edge inside the eye viewport so widening one edge tapers
+  // the other instead of pushing the image off-screen.
+  const fit = 1 / Math.max(kTop, kBot, 1);
+
+  const pos = quadMesh.geometry.attributes.position;
+  pos.setXYZ(0, -kTop * fit,  1, 0); // top-left
+  pos.setXYZ(1,  kTop * fit,  1, 0); // top-right
+  pos.setXYZ(2, -kBot * fit, -1, 0); // bottom-left
+  pos.setXYZ(3,  kBot * fit, -1, 0); // bottom-right
+  pos.needsUpdate = true;
+
+  // Perspective-correct keystone: weight each vertex by its edge width so the
+  // texture foreshortens toward the narrow edge instead of shearing.
+  const u0 = state.flipX ? 1 : 0, u1 = state.flipX ? 0 : 1;
+  const v0 = state.flipY ? 0 : 1, v1 = state.flipY ? 1 : 0; // v0 = top row
+  const uvq = quadMesh.geometry.attributes.uvq;
+  uvq.setXYZ(0, u0 * kTop, v0 * kTop, kTop);
+  uvq.setXYZ(1, u1 * kTop, v0 * kTop, kTop);
+  uvq.setXYZ(2, u0 * kBot, v1 * kBot, kBot);
+  uvq.setXYZ(3, u1 * kBot, v1 * kBot, kBot);
+  uvq.needsUpdate = true;
+}
+
+function applyEyeDistance(){
+  const meters = state.eyeDist / 1000;
+  camL.position.x = -meters / 2;
+  camR.position.x = state.sbs ? meters / 2 : -meters / 2;
+}
+
+/* POS X/Y, ZOOM and SCALE X/Y move and scale the *view*, not the finished
+   picture: they shift and stretch each eye's frustum so the scene is re-rendered
+   at the new framing. Nothing gets pushed outside the eye viewport and clipped,
+   and magnified content stays sharp instead of being upscaled after the fact. */
+/* PERSPECTIVE camera scope: near the middle of its range the image stays a
+   normal rectilinear projection; pushed toward either extreme (very narrow
+   or very wide), a radial barrel warp eases in on top, so the far ends of
+   the slider read as a fish-eye lens rather than just a wider flat frame. */
+const FISHEYE_MAX = 1.4;
+function fisheyeAmount(fov){
+  const mid = (SPEC.fov.min + SPEC.fov.max) / 2;
+  const half = (SPEC.fov.max - SPEC.fov.min) / 2;
+  const t = Math.min(1, Math.abs(fov - mid) / half);   // 0 at the middle, 1 at either extreme
+  const eased = Math.max(0, (t - 0.3) / 0.7);          // stay flat through the middle ~60%
+  return eased * eased * FISHEYE_MAX;
+}
+
+function applyEyeProjection(){
+  if (!camL) return;
+  camL.fov = camR.fov = state.fov;   // perspective intensity
+  if (quadMat) quadMat.uniforms.distort.value = fisheyeAmount(state.fov);
+  const { ew, eh } = eyeSize();
+  const dx = (state.posX / 100) * (ew / 2);
+  const dy = (state.posY / 100) * (eh / 2);
+  const zoom = 1 + state.zoom / 100;
+  const sx = Math.max(0.05, zoom * (1 + state.scaleX / 100));
+  const sy = Math.max(0.05, zoom * (1 + state.scaleY / 100));
+
+  [camL, camR].forEach(cam=>{
+    cam.aspect = ew / eh;
+    if (dx !== 0 || dy !== 0) cam.setViewOffset(ew, eh, -dx, dy, ew, eh);
+    else cam.clearViewOffset();
+    cam.updateProjectionMatrix();
+    cam.projectionMatrix.elements[0] *= sx;
+    cam.projectionMatrix.elements[5] *= sy;
+    cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+  });
+}
+
+function eyeSize(){
+  const w = window.innerWidth, h = window.innerHeight;
+  return { w, h, ew: state.sbs ? w / 2 : w, eh: h };
+}
+
+function onResize(){
+  const { w, h, ew, eh } = eyeSize();
+  const dpr = renderer.getPixelRatio();
+  renderer.setSize(w, h, false);
+
+  const rw = Math.max(2, Math.floor(ew * dpr));
+  const rh = Math.max(2, Math.floor(eh * dpr));
+  [rtL, rtR].forEach(rt=>{ if (rt) rt.dispose(); });
+  const opts = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true };
+  rtL = new THREE.WebGLRenderTarget(rw, rh, opts);
+  rtR = new THREE.WebGLRenderTarget(rw, rh, opts);
+  rtL.texture.colorSpace = THREE.SRGBColorSpace;
+  rtR.texture.colorSpace = THREE.SRGBColorSpace;
+
+  applyEyeProjection();
+}
+
+/* =========================================================================
+   Head tracking
+   ========================================================================= */
+const zee = new THREE.Vector3(0, 0, 1);
+const euler = new THREE.Euler();
+const q0 = new THREE.Quaternion();
+const q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+const rawQuat = new THREE.Quaternion();
+const zeroQuatInv = new THREE.Quaternion();
+const relQuat = new THREE.Quaternion();
+const tuneEuler = new THREE.Euler();
+let haveOrientation = false;
+let motionGranted = false;
+
+function screenAngleRad(){
+  let angle = 0;
+  if (screen.orientation && typeof screen.orientation.angle === 'number') angle = screen.orientation.angle;
+  else if (typeof window.orientation === 'number') angle = window.orientation;
+  return THREE.MathUtils.degToRad(angle);
+}
+
+function onDeviceOrientation(e){
+  if (e.alpha === null) return;
+  haveOrientation = true;
+  euler.set(
+    THREE.MathUtils.degToRad(e.beta),
+    THREE.MathUtils.degToRad(e.alpha),
+    -THREE.MathUtils.degToRad(e.gamma),
+    'YXZ'
+  );
+  rawQuat.setFromEuler(euler);
+  rawQuat.multiply(q1);
+  rawQuat.multiply(q0.setFromAxisAngle(zee, -screenAngleRad()));
+}
+
+function recenter(){
+  zeroQuatInv.copy(rawQuat).invert();
+  toast('RECENTERED');
+}
+
+async function enableMotion(){
+  if (motionGranted) return true;
+  try{
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function'){
+      const resp = await DeviceOrientationEvent.requestPermission();
+      if (resp !== 'granted'){ toast('MOTION DENIED'); return false; }
+    }
+  }catch(e){
+    console.error('[GYROS] motion permission error:', e);
+    toast('MOTION ERROR');
+    return false;
+  }
+  motionGranted = true;
+  // deviceorientationabsolute fires on some Android Chrome builds instead
+  // of deviceorientation; try absolute first, fall back to relative.
+  const orientEvt = ('ondeviceorientationabsolute' in window)
+    ? 'deviceorientationabsolute' : 'deviceorientation';
+  window.addEventListener(orientEvt, onDeviceOrientation);
+  hint.hidden = true;
+  setTimeout(recenter, 250);
+  return true;
+}
+
+/* =========================================================================
+   Render loop
+   ========================================================================= */
+const clock = new THREE.Clock();
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.1);
+
+  if (state.autoRotate){
+    if (state.content === 'demo'){
+      demoGroup.rotation.y += dt * 0.35;
+      demoGroup.rotation.x += dt * 0.12;
+    } else if (state.content === 'model'){
+      modelGroup.rotation.y += dt * 0.35;
+      modelGroup.rotation.x += dt * 0.12;
+    }
+  }
+
+  if (haveOrientation){
+    relQuat.copy(rawQuat).premultiply(zeroQuatInv);
+    tuneEuler.setFromQuaternion(relQuat, 'YXZ');
+    tuneEuler.y = state.freezeX ? 0 : tuneEuler.y * state.gyroMulX * (state.gyroFlipX ? -1 : 1);
+    tuneEuler.x = state.freezeY ? 0 : tuneEuler.x * state.gyroMulY * (state.gyroFlipY ? -1 : 1);
+    rig.quaternion.setFromEuler(tuneEuler);
+  }
+
+  const { w, h, ew, eh } = eyeSize();
+
+  renderer.setRenderTarget(rtL);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, rtL.width, rtL.height);
+  renderer.clear();
+  renderer.render(scene, camL);
+
+  if (state.sbs){
+    renderer.setRenderTarget(rtR);
+    renderer.setViewport(0, 0, rtR.width, rtR.height);
+    renderer.clear();
+    renderer.render(scene, camR);
+  }
+
+  renderer.setRenderTarget(null);
+  renderer.setScissorTest(false);
+  renderer.setViewport(0, 0, w, h);
+  renderer.clear();
+  renderer.setScissorTest(true);
+
+  quadMat.uniforms.map.value = rtL.texture;
+  renderer.setViewport(0, 0, ew, eh);
+  renderer.setScissor(0, 0, ew, eh);
+  renderer.render(quadScene, quadCam);
+
+  if (state.sbs){
+    quadMat.uniforms.map.value = rtR.texture;
+    renderer.setViewport(ew, 0, ew, eh);
+    renderer.setScissor(ew, 0, ew, eh);
+    renderer.render(quadScene, quadCam);
+  }
+  renderer.setScissorTest(false);
+}
+
+/* =========================================================================
+   Content switching
+   ========================================================================= */
+function applyContent(){
+  const demoOff = SHAPES[state.shape] === 'OFF';
+  demoGroup.visible  = state.content === 'demo' && !demoOff;
+  modelGroup.visible = state.content === 'model';
+  videoGroup.visible = state.content === 'video';
+  if (state.content !== 'video' && !video.paused) video.pause();
+}
+
+function applyAll(){
+  document.body.dataset.sbs = state.sbs ? '1' : '0';
+  applyEyeDistance();
+  updateQuad();
+  applyVideoLayout();
+  applyContent();
+  onResize();
+  saveState();
+}
+
+/* ---- model loading ---- */
+/* One loader for both sources: a picked file (blob URL) and a remote URL. */
+async function loadModel(url, ext, label){
+  try{
+    let object;
+    if (ext === 'obj'){
+      object = await new OBJLoader().loadAsync(url);
+      object.traverse(n=>{
+        if (n.isMesh){
+          n.material = modelMaterial();
+          // OBJ files often have no vn lines; compute smooth normals so
+          // MeshStandardMaterial lights correctly instead of appearing flat.
+          if (!n.geometry.attributes.normal) n.geometry.computeVertexNormals();
+        }
+      });
+    } else if (ext === 'stl'){
+      const geometry = await new STLLoader().loadAsync(url);
+      geometry.computeVertexNormals();
+      object = new THREE.Mesh(geometry, modelMaterial());
+    } else {
+      toast('USE .OBJ OR .STL');
+      return;
+    }
+    disposeGroup(modelGroup);
+    modelGroup.add(object);
+    frameModel();
+    state.content = 'model';
+    applyAll();
+    refreshMenu();
+    toast((label || 'MODEL LOADED').toUpperCase().slice(0, 28));
+  }catch(e){
+    console.error('[GYROS] model load failed:', e);
+    toast('COULD NOT LOAD MODEL');
+  }
+}
+
+const modelFile = document.getElementById('modelFile');
+modelFile.addEventListener('change', async ()=>{
+  const file = modelFile.files && modelFile.files[0];
+  if (!file) return;
+  // Warn early for very large files — OBJLoader parses text line-by-line in JS;
+  // beyond ~10 MB the tab will hang or crash.  5 MB is a comfortable ceiling.
+  if (file.size > 5 * 1024 * 1024){
+    toast('FILE TOO LARGE — USE MAX ~5 MB');
+    modelFile.value = '';
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  try{
+    await loadModel(url, (file.name.split('.').pop() || '').toLowerCase(), file.name);
+  }finally{
+    URL.revokeObjectURL(url);
+    modelFile.value = '';
+  }
+});
+
+function modelMaterial(){
+  return new THREE.MeshStandardMaterial({
+    color: 0xB0B4BB, roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide
+  });
+}
+
+function frameModel(){
+  // Measure with the group's own transform cleared, then convert the bounding
+  // box centre out of world space (the content group sits at z = -3) so the
+  // model ends up centred on the content group, not on the camera.
+  modelGroup.position.set(0, 0, 0);
+  modelGroup.rotation.set(0.3, 0.6, 0);  // nice initial angle matching demo shapes
+  modelGroup.scale.setScalar(1);
+  modelGroup.updateWorldMatrix(true, true);
+
+  const box = new THREE.Box3().setFromObject(modelGroup);
+  if (box.isEmpty()){
+    console.warn('[GYROS] frameModel: bounding box is empty — the OBJ may contain no face geometry (only lines/points), or all face indices are invalid.');
+    toast('MODEL HAS NO GEOMETRY');
+    return;
+  }
+  const size = box.getSize(new THREE.Vector3());
+  const center = world.worldToLocal(box.getCenter(new THREE.Vector3()));
+  const radius = Math.max(size.length() / 2, 1e-4);
+  const target = 1.2;                 // world units, matches the demo solids
+  const scale = target / radius;
+  modelGroup.scale.setScalar(scale);
+  modelGroup.position.copy(center).multiplyScalar(-scale);
+}
+
+/* ---- media type detection — File.type is sometimes empty (notably for
+   files enumerated through a folder/multi-file picker rather than a normal
+   single-file dialog), so fall back to the filename's extension. Also used
+   to rebuild a correctly-typed object URL, since a blob URL with no/wrong
+   MIME type can fail to decode as an image even when the bytes are fine. ---- */
+const MEDIA_EXT_MIME = {
+  jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif',
+  webp:'image/webp', bmp:'image/bmp', avif:'image/avif',
+  heic:'image/heic', heif:'image/heif', tif:'image/tiff', tiff:'image/tiff',
+  mp4:'video/mp4', m4v:'video/mp4', mov:'video/quicktime', webm:'video/webm',
+  mkv:'video/x-matroska', avi:'video/x-msvideo', '3gp':'video/3gpp'
+};
+function mimeFromName(name){
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return MEDIA_EXT_MIME[ext] || '';
+}
+function classifyMediaFile(file){
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('video/')) return 'video';
+  const mime = mimeFromName(file.name);
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  return null;
+}
+function mediaObjectURL(file){
+  if (file.type.startsWith('image/') || file.type.startsWith('video/')) return URL.createObjectURL(file);
+  const mime = mimeFromName(file.name);
+  return URL.createObjectURL(mime ? new Blob([file], { type: mime }) : file);
+}
+function isHiddenFile(file){
+  // covers dotfiles (.DS_Store, ._resource, .thumbnail.jpg, ...) and files
+  // living inside any hidden folder segment (e.g. "Trip/.thumbnails/x.jpg")
+  const relPath = file.webkitRelativePath || file.name || '';
+  return relPath.split('/').some(seg => seg.startsWith('.'));
+}
+
+/* ---- video loading ---- */
+const videoFile = document.getElementById('videoFile');
+videoFile.addEventListener('change', ()=>{
+  const file = videoFile.files && videoFile.files[0];
+  if (!file) return;
+  if (classifyMediaFile(file) === 'image') loadSBSImage(file);
+  else playVideo(URL.createObjectURL(file), file.name);
+  videoFile.value = '';
+});
+
+/* ---- shared media-display helpers — both the single-file loaders below
+   and the gallery further down reuse the same videoGroup infrastructure, so
+   a photo, a video, and a folder of either all land on screen the same way. ---- */
+function applyImageTexture(url, onDone, onError){
+  const loader = new THREE.TextureLoader();
+  loader.load(url, tex=>{
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    // Replace material on both eye meshes
+    const matL = new THREE.MeshBasicMaterial({ map: tex });
+    const matR = new THREE.MeshBasicMaterial({ map: tex.clone() });
+    matR.map.colorSpace = THREE.SRGBColorSpace;
+    [videoMeshL.material, videoMeshR.material].forEach(m=>m.dispose());
+    videoMeshL.material = matL;
+    videoMeshR.material = matR;
+    // Pause any running video
+    if (!video.paused) video.pause();
+    applyVideoLayout(tex.image.width, tex.image.height);
+    onDone();
+  }, undefined, onError);
+}
+
+async function startVideoPlayback(src){
+  video.src = src;
+  video.load();   // required on some browsers (mobile Safari) to pick up the new source
+  video.loop = true;
+  video.muted = false;
+  try{
+    await video.play();
+    return true;
+  }catch(e){
+    video.muted = true;
+    try{ await video.play(); return true; }
+    catch(e2){ return false; }
+  }
+}
+
+/* ---- SBS image loader — reuses the video plane infrastructure ---- */
+function loadSBSImage(file){
+  const url = mediaObjectURL(file);
+  const label = file.name;
+  const isSbs = /sbs/i.test(label);
+  applyImageTexture(url, () => {
+    if (state.sourceSbs !== isSbs){ state.sourceSbs = isSbs; refreshMenu(); }
+    state.content = 'video';   // reuse the video display group
+    applyAll();
+    refreshMenu();
+    toast(label.toUpperCase().slice(0, 28));
+    URL.revokeObjectURL(url);
+  }, () => {
+    toast('COULD NOT LOAD IMAGE');
+    URL.revokeObjectURL(url);
+  });
+}
+
+async function playVideo(src, label){
+  // Auto-enable SBS source when the filename hints at it
+  if (label && /sbs/i.test(label) && !state.sourceSbs){
+    state.sourceSbs = true;
+    refreshMenu();
+  }
+  const ok = await startVideoPlayback(src);
+  if (!ok){ toast('CANNOT PLAY THIS VIDEO'); return; }
+  const onMeta = ()=>{ applyVideoLayout(); video.removeEventListener('loadedmetadata', onMeta); };
+  if (video.readyState >= 1) applyVideoLayout(); else video.addEventListener('loadedmetadata', onMeta);
+  state.content = 'video';
+  applyAll();
+  refreshMenu();
+  if (label) toast(label.toUpperCase().slice(0, 28));
+}
+
+/* =========================================================================
+   Gallery — load several photos/videos at once (a picked folder, or a
+   multi-select) and step through them with the on-screen ‹ › arrows.
+   Every item lands on the same videoGroup infrastructure as a single loaded
+   image/video above; only the source URL and kind change per item.
+   ========================================================================= */
+const folderFiles = document.getElementById('folderFiles');
+const galleryPanesEl = document.getElementById('galleryPanes');
+
+let galleryItems = [];   // [{ name, url, kind: 'image'|'video', isSbs }]
+let galleryIdx = -1;
+
+function clearGallery(){
+  galleryItems.forEach(it => URL.revokeObjectURL(it.url));
+  galleryItems = [];
+  galleryIdx = -1;
+  document.body.dataset.gallery = '0';
+}
+
+function loadGalleryFiles(fileList){
+  const files = [...fileList]
+    .filter(f => !isHiddenFile(f))
+    .map(f => ({ file: f, kind: classifyMediaFile(f) }))
+    .filter(x => x.kind !== null);
+  if (!files.length){ toast('NO PHOTOS OR VIDEOS FOUND'); return; }
+  files.sort((a, b) => a.file.name.localeCompare(b.file.name, undefined, { numeric: true, sensitivity: 'base' }));
+  clearGallery();
+  galleryItems = files.map(({ file: f, kind }) => ({
+    name: f.name,
+    url: mediaObjectURL(f),
+    kind,
+    isSbs: /sbs/i.test(f.name)
+  }));
+  document.body.dataset.gallery = galleryItems.length > 1 ? '1' : '0';
+  showGalleryItem(0);
+}
+
+function updateGalleryLabel(item){
+  const caption = `${galleryIdx + 1} / ${galleryItems.length}`;
+  const name = item.name.toUpperCase().slice(0, 24);
+  galleryPanesEl.querySelectorAll('.galleryCaption').forEach(el => el.textContent = caption);
+  galleryPanesEl.querySelectorAll('.galleryName').forEach(el => el.textContent = name);
+}
+
+function showGalleryItem(idx){
+  if (!galleryItems.length) return;
+  galleryIdx = ((idx % galleryItems.length) + galleryItems.length) % galleryItems.length;
+  const item = galleryItems[galleryIdx];
+  updateGalleryLabel(item);   // update immediately — independent of load success
+  if (item.kind === 'image') showGalleryImage(item);
+  else showGalleryVideo(item);
+}
+
+function galleryPrev(){ showGalleryItem(galleryIdx - 1); }
+function galleryNext(){ showGalleryItem(galleryIdx + 1); }
+
+function showGalleryImage(item){
+  applyImageTexture(item.url, () => {
+    if (state.sourceSbs !== item.isSbs){ state.sourceSbs = item.isSbs; refreshMenu(); }
+    state.content = 'video';
+    applyAll();
+    refreshMenu();
+  }, () => {
+    toast('COULD NOT LOAD ' + item.name.toUpperCase().slice(0, 24));
+  });
+}
+
+async function showGalleryVideo(item){
+  if (state.sourceSbs !== item.isSbs){ state.sourceSbs = item.isSbs; refreshMenu(); }
+  const ok = await startVideoPlayback(item.url);
+  if (!ok){ toast('CANNOT PLAY ' + item.name.toUpperCase().slice(0, 24)); return; }
+  const onMeta = ()=>{ applyVideoLayout(); video.removeEventListener('loadedmetadata', onMeta); };
+  if (video.readyState >= 1) applyVideoLayout(); else video.addEventListener('loadedmetadata', onMeta);
+  state.content = 'video';
+  applyAll();
+  refreshMenu();
+}
+
+folderFiles.addEventListener('change', ()=>{
+  if (folderFiles.files && folderFiles.files.length) loadGalleryFiles(folderFiles.files);
+  folderFiles.value = '';
+});
+
+/* ---- gallery nav panes — one .galleryPane per eye when 3D SBS is on,
+   same one-pane-per-eye treatment as the bottom bar and the logo-menu ---- */
+function galleryPaneHTML(){
+  return `<button class="iconbtn galleryPrev" aria-label="Previous item">&#8249;</button>
+  <div class="galleryNav">
+    <div class="caption galleryCaption"></div>
+    <div class="name galleryName"></div>
+  </div>
+  <button class="iconbtn galleryNext" aria-label="Next item">&#8250;</button>`;
+}
+function buildGalleryPanes(){
+  const count = state.sbs ? 2 : 1;
+  if (galleryPanesEl.children.length === count) return;
+  galleryPanesEl.innerHTML = '';
+  for (let i = 0; i < count; i++){
+    const pane = document.createElement('div');
+    pane.className = 'galleryPane';
+    pane.innerHTML = galleryPaneHTML();
+    galleryPanesEl.appendChild(pane);
+  }
+  if (galleryItems.length) updateGalleryLabel(galleryItems[galleryIdx]);
+}
+galleryPanesEl.addEventListener('click', e=>{
+  if (e.target.closest('.galleryPrev')){ galleryPrev(); return; }
+  if (e.target.closest('.galleryNext')){ galleryNext(); return; }
+});
+
+/* =========================================================================
+   UI wiring
+   ========================================================================= */
+const menu = document.getElementById('menu');
+const helpDlg = document.getElementById('helpDlg');
+const loadTypeDlg = document.getElementById('loadTypeDlg');
+const loadDlg = document.getElementById('loadDlg');
+const urlDlg  = document.getElementById('urlDlg');
+const urlInput = document.getElementById('urlInput');
+const hint = document.getElementById('hint');
+const toastEls = document.querySelectorAll('.toast');
+
+const btnLoad = document.getElementById('btnLoad');
+const btnHelp = document.getElementById('btnHelp');
+const appTitle = document.getElementById('appTitle');
+const botbar = document.getElementById('botbar');
+
+let toastTimer = null;
+function toast(msg){
+  toastEls.forEach(el=>{ el.textContent = msg; el.classList.add('show'); });
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toastEls.forEach(el=>el.classList.remove('show')), 1400);
+}
+
+/* ---- top-level UI state ----
+   'view' — just watching, chrome is a title + a gear button
+   'osd'  — hardware-monitor-style settings, one item at a time
+   'list' — the full scrollable settings panel (opened from the OSD via the logo) */
+let uiState = 'view';
+function setUiState(next){
+  uiState = next;
+  document.body.dataset.ui = next;
+}
+
+/* =========================================================================
+   OSD — flat navigation. SECTION / ITEM on top, the current value below.
+   ↑/↓ move between items and wrap around at either end; long-press the
+   centre text to close; ‹/› or ←/→ change the value.
+   ========================================================================= */
+let osdItems = [];     // flat array of all menu items with sectionLabel
+let osdFocusIdx = 0;
+
+function buildOsdItems(){
+  osdItems = [];
+  MENU.forEach(section=>{
+    section.items.forEach(item=>{
+      if (item.type === 'hr') return;
+      osdItems.push({ ...item, sectionLabel: section.title });
+    });
+  });
+  osdFocusIdx = Math.max(0, Math.min(osdFocusIdx, osdItems.length - 1));
+}
+
+function renderOsd(){
+  if (uiState !== 'osd') return;
+  const item = osdItems[osdFocusIdx];
+  if (!item) return;
+  let val = '';
+  if (item.type === 'check') val = state[item.key] ? 'YES' : 'NO';
+  else if (item.type === 'step')  val = fmt(item.key, state[item.key]);
+  else if (item.type === 'enum')  val = item.options[state[item.key]];
+  botPanesEl.querySelectorAll('.osdParent').forEach(el => el.textContent = `${item.sectionLabel} / ${item.label}`);
+  botPanesEl.querySelectorAll('.osdName').forEach(el => el.textContent = val);
+}
+
+function osdChangeItem(dir){
+  const item = osdItems[osdFocusIdx];
+  if (!item) return;
+  switch(item.type){
+    case 'step':
+      stepValue(item.key, dir);   // already refreshes the menu
+      break;
+    case 'enum':
+      stepEnumValue(item, dir);
+      break;
+    case 'check':
+      state[item.key] = !state[item.key];
+      if (item.key === 'sbs'){ buildPanes(); buildBotPanes(); buildGalleryPanes(); }
+      applyAll();
+      refreshMenu();
+      saveState();
+      break;
+    case 'action':
+      handleAct(item.act, { dataset:{} });
+      break;
+  }
+  renderOsd();
+}
+
+function osdLeft(){  osdChangeItem(-1); }
+function osdRight(){ osdChangeItem(1);  }
+function osdUp(){
+  if (!osdItems.length) return;
+  osdFocusIdx = (osdFocusIdx - 1 + osdItems.length) % osdItems.length;
+  renderOsd();
+}
+function osdDown(){
+  if (!osdItems.length) return;
+  osdFocusIdx = (osdFocusIdx + 1) % osdItems.length;
+  renderOsd();
+}
+
+function stepEnumValue(node, dir){
+  const n = node.options.length;
+  state[node.key] = (state[node.key] + dir + n) % n;
+  if (node.key === 'shape'){
+    buildDemo(state.shape);
+    if (SHAPES[state.shape] !== 'OFF') state.content = 'demo';
+    applyAll();
+  }
+  saveState();
+  refreshMenu();
+}
+
+function openOsd(){
+  buildOsdItems();
+  setUiState('osd');
+  document.body.dataset.chrome = '1';
+  renderOsd();
+}
+function closeOsd(){
+  setUiState('view');
+}
+
+/* ---- the full settings list, opened from the OSD by tapping the GYROS logo ---- */
+function openList(){
+  buildPanes();
+  refreshMenu();
+  menu.hidden = false;
+  setUiState('list');
+  document.body.dataset.chrome = '1';
+  setMenuFocus(0, false);   // instant on open — avoids a flash of the unscrolled empty top
+}
+function closeList(){
+  menuFocusIdx = -1;
+  menuPanes.querySelectorAll('.kbfocus').forEach(el=>el.classList.remove('kbfocus'));
+  menu.hidden = true;
+  setUiState('osd');
+  renderOsd();
+}
+
+botbar.addEventListener('click', e=>{
+  if (e.target.closest('.gearBtn')){ if (uiState === 'osd') closeOsd(); else openOsd(); }
+});
+btnLoad.addEventListener('click', ()=>{ loadTypeDlg.hidden = false; });
+loadTypeDlg.addEventListener('click', e=>{
+  const row = e.target.closest('[data-loadtype]');
+  if (!row) return;
+  loadTypeDlg.hidden = true;
+  const type = row.dataset.loadtype;
+  if (type === 'folder') folderFiles.click();
+  else openLoadDlg(type);
+});
+appTitle.addEventListener('click', ()=>{
+  if (uiState === 'list') return;
+  // Reveal chrome if it was hidden
+  if (document.body.dataset.chrome === '0') document.body.dataset.chrome = '1';
+  if (uiState === 'view') openOsd(); // initialise OSD context
+  openList();
+});
+
+/* ---- load-source picker ---- */
+let loadDlgContent = 'model';
+function openLoadDlg(forContent){
+  loadDlgContent = forContent;
+  document.getElementById('loadDlgTitle').textContent =
+    forContent === 'video' ? 'LOAD VIDEO' : 'LOAD MODEL';
+  loadDlg.hidden = false;
+}
+document.getElementById('loadFileBtn').addEventListener('click', ()=>{
+  loadDlg.hidden = true;
+  if (loadDlgContent === 'video') videoFile.click();
+  else modelFile.click();
+});
+document.getElementById('loadUrlBtn').addEventListener('click', ()=>{
+  loadDlg.hidden = true;
+  openUrlDlg(loadDlgContent);
+});
+
+/* ---- URL dialog (video or model) ---- */
+let urlMode = 'video';
+function openUrlDlg(mode){
+  urlMode = mode;
+  const isVideo = mode === 'video';
+  document.getElementById('urlDlgTitle').textContent = isVideo ? 'VIDEO URL' : 'MODEL URL';
+  document.getElementById('urlDlgNote').textContent = isVideo
+    ? 'The server must allow cross-origin requests (CORS) or the video will not load.'
+    : 'Supports .obj and .stl URLs. The server must allow cross-origin requests (CORS).';
+  urlInput.placeholder = isVideo
+    ? 'https://example.com/clip.mp4'
+    : 'https://example.com/model.obj';
+  urlInput.value = '';
+  urlDlg.hidden = false;
+  urlInput.focus();
+}
+function submitUrl(){
+  const url = urlInput.value.trim();
+  if (!url){ urlDlg.hidden = true; return; }
+  urlDlg.hidden = true;
+  const label = url.split('/').pop().split('?')[0];
+  const ext = label.split('.').pop().toLowerCase();
+  if (urlMode === 'model') loadModel(url, ext, label);
+  else if (['jpg','jpeg','png','webp','gif','avif'].includes(ext)){
+    // Treat image URLs as SBS images — fetch as blob then hand to loadSBSImage
+    fetch(url)
+      .then(r=>r.blob())
+      .then(blob=>{ const f = new File([blob], label, { type: blob.type }); loadSBSImage(f); })
+      .catch(()=>toast('COULD NOT LOAD IMAGE'));
+  } else {
+    playVideo(url, label);
+  }
+}
+document.getElementById('urlOk').addEventListener('click', submitUrl);
+
+btnHelp.addEventListener('click', ()=>{ helpDlg.hidden = false; });
+
+/* Tap the OSD centre text: single = next item (↓), double = prev item (↑).
+   Closing the strip is done via Esc or by tapping the image area (stage),
+   see handleTap() — the centre text itself just steps through items. */
+let osdNavTapTimer = null, osdNavLastTap = 0;
+botbar.addEventListener('click', e=>{
+  if (!e.target.closest('.osdNav')) return;
+  const now = performance.now();
+  if (osdNavTapTimer && now - osdNavLastTap < TAP_MS){
+    clearTimeout(osdNavTapTimer); osdNavTapTimer = null; osdNavLastTap = 0;
+    osdUp();   // double-tap → previous (W / ↑)
+    return;
+  }
+  osdNavLastTap = now;
+  osdNavTapTimer = setTimeout(()=>{ osdNavTapTimer = null; osdDown(); }, TAP_MS);
+});
+
+botbar.addEventListener('click', e=>{
+  if (e.target.closest('.osdPrev')){ osdLeft();  return; }
+  if (e.target.closest('.osdNext')){ osdRight(); return; }
+  if (e.target.closest('.osdItemUp')){   osdUp();   return; }
+  if (e.target.closest('.osdItemDown')){ osdDown(); return; }
+});
+
+/* press-and-hold on OSD ‹/› with same exponential curve as menu +/- */
+let osdHoldTimer = null, osdHoldAccel = null;
+function stopOsdHold(){
+  clearTimeout(osdHoldTimer); clearTimeout(osdHoldAccel);
+  osdHoldTimer = osdHoldAccel = null;
+}
+botbar.addEventListener('pointerdown', e=>{
+  const btn = e.target.closest('.osdPrev,.osdNext');
+  if (!btn) return;
+  const dir = btn.classList.contains('osdPrev') ? -1 : 1;
+  stopOsdHold();
+  const item = osdItems[osdFocusIdx];
+  if (!item || (item.type !== 'step' && item.type !== 'enum')) return;
+  const minMs = item.type === 'enum' ? 80 : 15;
+  let ticks = 0;
+  const go = () => {
+    osdChangeItem(dir);
+    ticks++;
+    osdHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
+  };
+  osdHoldTimer = setTimeout(go, 400);
+});
+['pointerup','pointercancel','pointerleave'].forEach(ev=>{
+  botbar.addEventListener(ev, stopOsdHold);
+});
+
+/* every dialog closes on a tap outside its .paneInner content zone, and on Escape */
+document.querySelectorAll('.dialog').forEach(dlg=>{
+  dlg.addEventListener('click', e=>{
+    if (!e.target.closest('.paneInner')) dlg.hidden = true;
+  });
+});
+
+/* =========================================================================
+   Menu keyboard navigation (list mode)
+   ========================================================================= */
+let menuFocusIdx = -1;
+
+// Navigable rows from the first pane only (both panes are identical).
+function navItems(){
+  const pane = menuPanes.querySelector('.pane');
+  if (!pane) return [];
+  return [...pane.querySelectorAll('.row:not([hidden]),.textbtn:not([hidden])')];
+}
+
+// Highlight item at idx, scroll it into view, mirror highlight to every pane.
+function setMenuFocus(idx, smooth = true){
+  menuPanes.querySelectorAll('.kbfocus').forEach(el=>el.classList.remove('kbfocus'));
+  const items = navItems();
+  if (idx < 0 || idx >= items.length){ menuFocusIdx = -1; return; }
+  menuFocusIdx = idx;
+  [...menuPanes.querySelectorAll('.pane')].forEach(pane=>{
+    const paneItems = [...pane.querySelectorAll('.row:not([hidden]),.textbtn:not([hidden])')];
+    if (paneItems[idx]) paneItems[idx].classList.add('kbfocus');
+  });
+  // Keep the focused row vertically centred in the pane — the row stays fixed
+  // in the middle while the menu scrolls beneath it.
+  const pane = menuPanes.querySelector('.pane');
+  const item = items[idx];
+  if (pane && item){
+    const paneRect = pane.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    // Convert item's midpoint to a position in the pane's scroll coordinate space
+    const itemMid = itemRect.top - paneRect.top + pane.scrollTop + itemRect.height / 2;
+    pane.scrollTo({ top: itemMid - pane.clientHeight / 2, behavior: smooth ? 'smooth' : 'instant' });
+  }
+}
+
+/* =========================================================================
+   Keyboard hold-acceleration for ← / → in list mode
+   Declared before the keydown handler so there is zero temporal-dead-zone risk.
+   ========================================================================= */
+let kbHoldTimer = null, kbHoldAccel = null;
+function stopKbHold(){
+  clearTimeout(kbHoldTimer);
+  clearTimeout(kbHoldAccel);
+  kbHoldTimer = kbHoldAccel = null;
+}
+document.addEventListener('keyup', e=>{
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
+      e.key === 'a'         || e.key === 'd') stopKbHold();
+});
+
+/* =========================================================================
+   Keyboard: arrows drive the OSD (and the list when open)
+   ========================================================================= */
+document.addEventListener('keydown', e=>{
+  /* ---- Escape ---- */
+  if (e.key === 'Escape'){
+    if (!loadTypeDlg.hidden){ loadTypeDlg.hidden = true; return; }
+    if (!loadDlg.hidden){ loadDlg.hidden = true; return; }
+    if (!urlDlg.hidden){ urlDlg.hidden = true; return; }
+    if (!helpDlg.hidden){ helpDlg.hidden = true; return; }
+    if (uiState === 'list'){ closeList(); return; }
+    if (uiState === 'osd'){ closeOsd(); return; }
+    return;
+  }
+
+  /* ---- WASD → Arrow alias (applied before all other handling) ----
+     Lower-cased first so Shift+D (which reports e.key as "D") still aliases
+     to ArrowRight, keeping e.shiftKey intact for the Shift+arrow POS nudge. */
+  const WASD = { w:'ArrowUp', a:'ArrowLeft', s:'ArrowDown', d:'ArrowRight' };
+  const wasdArrow = WASD[e.key.toLowerCase()];
+  if (wasdArrow) Object.defineProperty(e, 'key', { value: wasdArrow });
+
+  /* ---- Arrow keys ---- */
+  const ARROWS = { ArrowLeft:1, ArrowRight:1, ArrowUp:1, ArrowDown:1 };
+  if (!ARROWS[e.key]) return;
+
+  // Never steal arrows from a focused text input (e.g. URL field).
+  if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
+  e.preventDefault(); // stop the browser from scrolling the page
+
+  // When chrome is hidden, reveal it first, then continue with the action.
+  if (document.body.dataset.chrome === '0') document.body.dataset.chrome = '1';
+
+  // View / idle mode — each arrow has a dedicated action:
+  //   ↑  open the OSD strip (gear-menu)
+  //   ↓  open the full settings list (logo-menu)
+  //   ←  decrease eye distance
+  //   →  increase eye distance
+  //   Shift + any arrow instead nudges POS X/Y — same direction sense as
+  //   dragging: Shift+→/↑ increase posX/posY, Shift+←/↓ decrease them.
+  if (uiState === 'view'){
+    if (e.shiftKey){
+      switch(e.key){
+        case 'ArrowLeft':  stepValue('posX', -1); break;
+        case 'ArrowRight': stepValue('posX', 1);  break;
+        case 'ArrowUp':    stepValue('posY', 1);  break;
+        case 'ArrowDown':  stepValue('posY', -1); break;
+      }
+      toast(`POS ${state.posX} / ${state.posY}`);
+      return;
+    }
+    switch(e.key){
+      case 'ArrowUp':
+        openOsd();
+        break;
+      case 'ArrowDown':
+        openOsd();    // initialise OSD context, then fall into the list
+        openList();
+        break;
+      case 'ArrowLeft':
+        stepValue('eyeDist', -1);
+        toast(`EYE ${state.eyeDist}`);
+        saveState();
+        break;
+      case 'ArrowRight':
+        stepValue('eyeDist', 1);
+        toast(`EYE ${state.eyeDist}`);
+        saveState();
+        break;
+    }
+    return;
+  }
+
+  // OSD mode: ↑/↓ navigate items; ←/→ change value (with hold-acceleration)
+  if (uiState === 'osd'){
+    switch(e.key){
+      case 'ArrowUp':    osdUp();   break;
+      case 'ArrowDown':  osdDown(); break;
+      case 'ArrowLeft':
+      case 'ArrowRight': {
+        if (e.repeat) break;
+        stopKbHold();
+        const dir = e.key === 'ArrowLeft' ? -1 : 1;
+        osdChangeItem(dir);
+        const osdItem = osdItems[osdFocusIdx];
+        if (osdItem && (osdItem.type === 'step' || osdItem.type === 'enum')){
+          const minMs = osdItem.type === 'enum' ? 80 : 15;
+          let ticks = 0;
+          const go = () => {
+            osdChangeItem(dir);
+            ticks++;
+            kbHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
+          };
+          kbHoldTimer = setTimeout(go, 400);
+        }
+        break;
+      }
+    }
+    return;
+  }
+
+  // List mode (full settings panel):
+  //   ↑  navigate up;  at first item → close list (back to OSD)
+  //   ↓  navigate down; at last item → close list (confirm)
+  //   ←  decrease step / cycle enum on the focused row
+  //   →  increase step / cycle enum on the focused row
+  if (uiState === 'list'){
+    switch (e.key){
+      case 'ArrowUp': {
+        if (menuFocusIdx <= 0) closeList();
+        else setMenuFocus(menuFocusIdx - 1);
+        break;
+      }
+      case 'ArrowDown': {
+        const items = navItems();
+        if (menuFocusIdx >= items.length - 1) closeList();
+        else setMenuFocus(menuFocusIdx + 1);
+        break;
+      }
+      case 'ArrowLeft':
+      case 'ArrowRight': {
+        // Suppress OS key-repeat — we drive our own accelerating timer.
+        if (e.repeat) break;
+        stopKbHold();
+
+        const items = navItems();
+        const cur = items[menuFocusIdx];
+        if (!cur) break;
+        const dir = e.key === 'ArrowLeft' ? -1 : 1;
+        const dirStr = String(dir);
+
+        // Resolve step or enum button at press time
+        const valBtn = cur.querySelector(
+          `[data-act="step"][data-dir="${dirStr}"],[data-act="enumstep"][data-dir="${dirStr}"]`
+        );
+        if (valBtn){
+          const act = valBtn.dataset.act;
+          const key = valBtn.dataset.key;
+          // Direct step call — no click event needed, more reliable inside a timer
+          const doStep = () => {
+            if (act === 'step') stepValue(key, dir);
+            else stepEnumValue(ENUM_SPEC[key], dir);
+          };
+          doStep(); // fire once immediately on press
+          // Exponential hold: same 60 ms → 15 ms curve as the +/- pointer hold
+          const minMs = act === 'enumstep' ? 80 : 5;
+          let ticks = 0;
+          const go = () => {
+            doStep();
+            ticks++;
+            kbHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
+          };
+          kbHoldTimer = setTimeout(go, 400);
+          break;
+        }
+        // bool — 2-value cycle, no hold (toggle on each press)
+        const boolBtn = cur.querySelector('[data-act="boolstep"]');
+        if (boolBtn){
+          const key = boolBtn.dataset.key;
+          cur.querySelector(`[data-act="boolstep"][data-dir="${state[key] ? '-1' : '1'}"]`)?.click();
+        } else if (cur.dataset.act){
+          // plain action row (RESET TO DEFAULTS, CLOSE, RECENTER, …) — nothing
+          // to step, so either arrow just submits it, same as a tap/click.
+          cur.click();
+        }
+        break;
+      }
+    }
+  }
+});
+urlInput.addEventListener('keydown', e=>{ if (e.key === 'Enter') submitUrl(); });
+
+/* menu interactions (delegated so both SBS panes work with one handler) */
+function stepValue(key, dir){
+  const spec = SPEC[key];
+  const next = THREE.MathUtils.clamp(state[key] + dir * spec.step, spec.min, spec.max);
+  state[key] = spec.dec ? Math.round(next * 10) / 10 : Math.round(next);
+  updateQuad();
+  applyEyeDistance();
+  applyEyeProjection();
+  refreshMenu();
+  saveState();
+}
+
+function handleAct(act, el){
+  const key = el.dataset.key;
+  switch (act){
+    case 'boolstep':
+      state[key] = Number(el.dataset.dir) > 0;
+      if (key === 'sbs'){ buildPanes(); buildBotPanes(); buildGalleryPanes(); }
+      applyAll();
+      refreshMenu();
+      break;
+    case 'step':
+      stepValue(key, Number(el.dataset.dir));   // already refreshes the menu
+      break;
+    case 'enumstep':
+      stepEnumValue(ENUM_SPEC[key], Number(el.dataset.dir));
+      break;
+    case 'recenter':  recenter(); break;
+    case 'closeList': closeList(); break;
+    case 'reset':
+      Object.assign(state, DEFAULTS, { content: state.content, shape: state.shape });
+      buildPanes();
+      buildBotPanes();
+      buildGalleryPanes();
+      applyAll();
+      refreshMenu();
+      toast('DEFAULTS RESTORED');
+      break;
+  }
+}
+
+menu.addEventListener('click', e=>{
+  // Focus (and centre) whichever row was tapped, regardless of whether it
+  // carries an action.  Finding the row in its own pane by index works for
+  // both single-pane and SBS two-pane layouts.
+  const clickedRow = e.target.closest('.row, .textbtn');
+  if (clickedRow){
+    const pane = clickedRow.closest('.pane');
+    if (pane){
+      const paneItems = [...pane.querySelectorAll('.row:not([hidden]),.textbtn:not([hidden])')];
+      const idx = paneItems.indexOf(clickedRow);
+      if (idx >= 0) setMenuFocus(idx);
+    }
+  }
+
+  const el = e.target.closest('[data-act]');
+  if (el && menu.contains(el)){ handleAct(el.dataset.act, el); return; }
+  // Close when clicking outside .paneInner OR directly on .paneInner itself —
+  // the latter catches the 50 vh empty padding above and below the row list.
+  if (!e.target.closest('.paneInner') || e.target.matches('.paneInner')) closeList();
+});
+
+/* Both eyes show the same menu, so they must scroll as one. */
+let syncingScroll = false;
+menuPanes.addEventListener('scroll', e=>{
+  const pane = e.target.closest && e.target.closest('.pane');
+  if (!pane || syncingScroll) return;
+  syncingScroll = true;
+  menuPanes.querySelectorAll('.pane').forEach(other=>{
+    if (other !== pane && other.scrollTop !== pane.scrollTop) other.scrollTop = pane.scrollTop;
+  });
+  requestAnimationFrame(()=>{ syncingScroll = false; });
+}, true); // capture: scroll events do not bubble
+
+/* press-and-hold on +/- steppers with exponential acceleration
+   Tick-count based: starts at 60 ms/tick (same initial feel as before),
+   each tick is ~12 % faster than the last, flooring at 15 ms for numeric
+   steps (~66 ticks/s) or 80 ms for enum so shapes stay readable. */
+let holdTimer = null, holdAccel = null;
+function stopHold(){
+  clearTimeout(holdTimer);
+  clearTimeout(holdAccel);
+  holdTimer = holdAccel = null;
+}
+
+menu.addEventListener('pointerdown', e=>{
+  const el = e.target.closest('[data-act="step"],[data-act="enumstep"]');
+  if (!el) return;
+  stopHold();   // cancel any stale hold before starting a new one
+  const minMs = el.dataset.act === 'enumstep' ? 80 : 5;
+  let ticks = 0;
+  function go(){
+    handleAct(el.dataset.act, el);
+    ticks++;
+    holdAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
+  }
+  holdTimer = setTimeout(go, 400);
+});
+['pointerup','pointercancel','pointerleave'].forEach(ev=>menu.addEventListener(ev, stopHold));
+
+/* =========================================================================
+   Gestures on the viewer — the headset has no other input
+     1 finger drag        pan            (POS X / POS Y)
+     pinch                zoom           (ZOOM XY)
+     2 fingers up/down    eye distance   (EYE DISTANCE)
+     tap                  show the controls (brings UI back from idle)
+     double tap           recenter
+   ========================================================================= */
+const TAP_SLOP = 10;      // px of movement still counted as a tap
+const TAP_MS = 320;       // also the double-tap window
+const MM_PER_PX = 0.5;    // two-finger vertical travel -> eye distance
+
+const pointers = new Map();
+let gesture = null;
+let tapTimer = null, lastTapAt = 0;
+
+function setValue(key, v){
+  const spec = SPEC[key];
+  const clamped = THREE.MathUtils.clamp(v, spec.min, spec.max);
+  state[key] = spec.dec ? Math.round(clamped * 10) / 10 : Math.round(clamped);
+}
+
+function twoFingerMetrics(){
+  const [a, b] = [...pointers.values()];
+  return { dist: Math.hypot(a.x - b.x, a.y - b.y), cy: (a.y + b.y) / 2 };
+}
+
+function handleTap(){
+  const now = performance.now();
+  if (tapTimer && now - lastTapAt < TAP_MS){
+    // Double tap → recenter
+    clearTimeout(tapTimer); tapTimer = null; lastTapAt = 0;
+    recenter();
+    return;
+  }
+  lastTapAt = now;
+  if (uiState === 'osd'){
+    // Tapping the image area exits the settings strip, mirroring Esc.
+    tapTimer = setTimeout(()=>{ tapTimer = null; closeOsd(); }, TAP_MS);
+    return;
+  }
+  // Single tap → toggle the controls (show if hidden, hide if visible)
+  document.body.dataset.chrome = document.body.dataset.chrome === '0' ? '1' : '0';
+  tapTimer = setTimeout(()=>{ tapTimer = null; }, TAP_MS);
+}
+
+/* Enable motion on any first user interaction.
+   touchstart and click are the most reliable user-activation events on
+   iOS Chrome (WKWebView) for DeviceOrientationEvent.requestPermission. */
+['touchstart', 'click', 'pointerdown'].forEach(ev=>{
+  document.addEventListener(ev, ()=>{ if (!motionGranted) enableMotion(); }, { passive: true });
+});
+/* The modal button is the clearest entry point on iOS. */
+document.getElementById('hintBtn').addEventListener('click', ()=>{ enableMotion(); });
+document.getElementById('hintBtn').addEventListener('touchstart', e=>{
+  e.stopPropagation();
+  enableMotion();
+}, { passive: true });
+
+stage.addEventListener('pointerdown', e=>{
+  pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, x0:e.clientX, y0:e.clientY, t:performance.now() });
+  if (pointers.size === 1){
+    gesture = { mode:'pan', moved:false, lastX:e.clientX, lastY:e.clientY };
+  } else if (pointers.size === 2){
+    gesture = Object.assign({ mode:'two' }, twoFingerMetrics());
+  }
+});
+
+stage.addEventListener('pointermove', e=>{
+  const p = pointers.get(e.pointerId);
+  if (!p || !gesture) return;
+  p.x = e.clientX; p.y = e.clientY;
+  const { ew, eh } = eyeSize();
+
+  if (gesture.mode === 'pan' && pointers.size === 1){
+    if (!gesture.moved && Math.hypot(p.x - p.x0, p.y - p.y0) < TAP_SLOP) return;
+    gesture.moved = true;
+    const dx = p.x - gesture.lastX, dy = p.y - gesture.lastY;
+    gesture.lastX = p.x; gesture.lastY = p.y;
+    setValue('posX', state.posX + (dx / (ew / 2)) * 100);
+    setValue('posY', state.posY - (dy / (eh / 2)) * 100);
+    toast(`POS ${state.posX} / ${state.posY}`);
+  } else if (gesture.mode === 'two' && pointers.size >= 2){
+    const { dist, cy } = twoFingerMetrics();
+    if (gesture.dist > 0 && dist > 0){
+      const factor = (1 + state.zoom / 100) * (dist / gesture.dist);
+      setValue('zoom', (factor - 1) * 100);
+    }
+    setValue('eyeDist', state.eyeDist - (cy - gesture.cy) * MM_PER_PX);
+    gesture.dist = dist; gesture.cy = cy;
+    toast(`ZOOM ${state.zoom}   EYE ${state.eyeDist}`);
+  } else {
+    return;
+  }
+  applyEyeDistance();
+  applyEyeProjection();
+});
+
+function endPointer(e){
+  const p = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+
+  if (gesture && gesture.mode === 'pan' && !gesture.moved &&
+      p && performance.now() - p.t < 500){
+    handleTap();
+  }
+  if (pointers.size === 0){
+    gesture = null;
+    saveState();
+    refreshMenu();
+  } else if (pointers.size === 1){
+    // one finger lifted mid-pinch: continue as a pan from where it is now
+    const [only] = [...pointers.values()];
+    gesture = { mode:'pan', moved:true, lastX:only.x, lastY:only.y };
+  }
+}
+stage.addEventListener('pointerup', endPointer);
+stage.addEventListener('pointercancel', endPointer);
+
+/* =========================================================================
+   Desktop wheel / trackpad gestures — complement to the pointer gestures
+     scroll (mouse wheel or trackpad 2-finger swipe)  →  zoom (ZOOM XY)
+     pinch on trackpad (macOS sends wheel + ctrlKey)   →  zoom (ZOOM XY)
+
+   Pan and tap already work via the pointer-event handlers above; mouse drag
+   maps to 1-pointer → pan, and click fires the tap path.
+   ========================================================================= */
+let wheelEndTimer = null;
+
+stage.addEventListener('wheel', e => {
+  // Skip while the full list panel or any dialog is open (let them scroll normally).
+  if (uiState === 'list' || !helpDlg.hidden || !urlDlg.hidden) return;
+  e.preventDefault();
+
+  const { eh } = eyeSize();
+  // Normalise to a consistent speed across deltaMode values:
+  //   mode 0 (px)   — trackpad / pinch raw pixels, keep as-is
+  //   mode 1 (line) — mouse wheel; map each line to ~8 px equivalent
+  //   mode 2 (page) — rare; map to screen height
+  const norm = e.deltaMode === 0 ? 1 : e.deltaMode === 1 ? 8 : eh;
+  const dz   = e.deltaY * norm;   // positive = zoom out (scroll/pinch in)
+
+  // Multiplicative zoom so it feels proportional at every zoom level.
+  const factor = (1 + state.zoom / 100) * Math.exp(-dz * 0.003);
+  setValue('zoom', (factor - 1) * 100);
+  toast(`ZOOM ${state.zoom}`);
+
+  applyEyeDistance();
+  applyEyeProjection();
+
+  // Commit to storage once the gesture settles (not on every event).
+  clearTimeout(wheelEndTimer);
+  wheelEndTimer = setTimeout(() => { saveState(); refreshMenu(); }, 150);
+}, { passive: false });   // passive:false required to call preventDefault()
+
+window.addEventListener('orientationchange', ()=>setTimeout(onResize, 200));
+
+/* wake lock — keep the screen on while the headset is on your face */
+let wakeLock = null;
+async function requestWakeLock(){
+  try{ if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }
+  catch(e){ /* best effort */ }
+}
+document.addEventListener('visibilitychange', ()=>{
+  if (document.visibilityState === 'visible') requestWakeLock();
+});
+
+/* =========================================================================
+   Boot
+   ========================================================================= */
+loadState();
+document.body.dataset.sbs = state.sbs ? '1' : '0';
+document.body.dataset.chrome = '0';   // idle screen starts with UI hidden; tap to reveal
+document.body.dataset.ui = 'view';
+document.body.dataset.gallery = '0';
+
+initThree();
+buildPanes();
+buildBotPanes();
+buildGalleryPanes();
+applyAll();
+animate();
+requestWakeLock();
+
+if (typeof DeviceOrientationEvent !== 'undefined' &&
+    typeof DeviceOrientationEvent.requestPermission === 'function'){
+  hint.hidden = false;          // iOS: needs a tap before motion is allowed
+} else {
+  enableMotion();
+}
+</script>
+</body>
+</html>
