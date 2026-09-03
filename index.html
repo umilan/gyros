@@ -70,8 +70,7 @@
   }
 
   body[data-chrome="0"] #topbar,
-  body[data-chrome="0"] #botbar,
-  body[data-chrome="0"] #galleryPanes{opacity:0;pointer-events:none;}
+  body[data-chrome="0"] #botbar{opacity:0;pointer-events:none;}
   /* Logo stays clickable in every state including hidden-chrome */
   body[data-chrome="0"] #appTitle{pointer-events:auto;}
 
@@ -126,11 +125,11 @@
     min-width:0;max-width:100%;
     pointer-events:auto;
   }
-  .osdNav .caption,.galleryNav .caption{
+  .osdNav .caption{
     color:var(--muted);font-size:11px;font-weight:600;letter-spacing:0.22em;
     text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
   }
-  .osdNav .name,.galleryNav .name{
+  .osdNav .name{
     min-width:0;max-width:100%;text-align:center;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     font-size:22px;font-weight:700;letter-spacing:0.06em;color:var(--text);
@@ -138,8 +137,7 @@
 
   /* the full settings list takes the whole screen; it has its own close (tap outside) */
   body[data-ui="list"] #topbar,
-  body[data-ui="list"] #botbar,
-  body[data-ui="list"] #galleryPanes{display:none;}
+  body[data-ui="list"] #botbar{display:none;}
 
   /* ---------------- overlays ---------------- */
   .overlay{position:fixed;inset:0;z-index:30;display:flex;}
@@ -260,27 +258,6 @@
   body[data-sbs="1"] .toastL{left:25%;}
   body[data-sbs="1"] .toastR{display:block;left:75%;}
 
-  /* gallery nav — ‹ › arrows over the image to step through a loaded
-     folder of photos/videos; one .galleryPane per eye when 3D SBS is on
-     (mirrors #botPanes / #menuPanes). Hidden unless >1 file is loaded. */
-  #galleryPanes{position:fixed;inset:0;z-index:25;display:flex;}
-  body[data-gallery="0"] #galleryPanes{display:none;}
-  .galleryPane{flex:1 1 0;min-width:0;position:relative;}
-  .galleryPrev,.galleryNext{
-    position:absolute;top:50%;transform:translateY(-50%);
-    background:rgba(0,0,0,0.35);border-radius:50%;
-  }
-  .galleryPrev{left:var(--pad-lg);}
-  .galleryNext{right:var(--pad-lg);}
-  /* persistent file-name readout, same spot the toast used to flash it in */
-  .galleryNav{
-    position:absolute;left:50%;bottom:88px;transform:translateX(-50%);
-    display:flex;flex-direction:column;align-items:center;gap:2px;
-    max-width:70%;pointer-events:none;
-  }
-  /* avoid stacking on top of the OSD strip / full list's own caption+name */
-  body[data-ui="osd"] .galleryNav,
-  body[data-ui="list"] .galleryNav{display:none;}
 </style>
 </head>
 <body>
@@ -312,8 +289,6 @@
   <div class="botPanes" id="botPanes"></div>
 </footer>
 
-<div class="galleryPanes" id="galleryPanes"></div>
-
 <div class="overlay" id="menu" hidden>
   <div class="panes" id="menuPanes"></div>
 </div>
@@ -330,7 +305,7 @@
       <p class="helpText"><b>DEMO</b> — rotating wireframe solid.</p>
       <p class="helpText"><b>3D MODEL</b> — local .obj or .stl file, max ~5 MB. Decimate high-poly meshes before loading.</p>
       <p class="helpText"><b>VIDEO</b> — local file or streaming URL. Files named with "SBS" auto-enable side-by-side stereo mode.</p>
-      <p class="helpText"><b>FOLDER</b> — pick several photos and videos at once (or a whole folder, where supported) and step through them with the <b>‹ ›</b> arrows over the image; the current file's position and name are shown below them.</p>
+      <p class="helpText"><b>FOLDER</b> — pick several photos and videos at once (or a whole folder, where supported). You're taken straight to the GALLERY row in the settings list, where <b>−/+</b> (or the settings strip's <b>‹/›</b>) steps through them by name. Reload the app to go back to the 3D demo shapes.</p>
       <div class="hr"></div>
       <div class="section">SETTINGS</div>
       <p class="helpText"><b>POSITIONING / ZOOM</b> — shift, scale and keystone (TRPZD) each eye image to align it with your lenses.</p>
@@ -1471,7 +1446,6 @@ async function playVideo(src, label, file){
    image/video above; only the source URL and kind change per item.
    ========================================================================= */
 const folderFiles = document.getElementById('folderFiles');
-const galleryPanesEl = document.getElementById('galleryPanes');
 
 let galleryItems = [];   // [{ name, url, kind: 'image'|'video', isSbs }]
 let galleryIdx = -1;
@@ -1481,6 +1455,21 @@ function clearGallery(){
   galleryItems = [];
   galleryIdx = -1;
   document.body.dataset.gallery = '0';
+}
+
+// Navigation for a loaded folder isn't a pair of on-screen arrows: it
+// repurposes the DEMO row (settings list + settings strip) so folder
+// browsing uses the exact same stepper as everything else. There's no UI
+// to switch back to the 3D demo shapes -- per design, reloading the app
+// is how you get them back.
+function focusGalleryRow(){
+  buildOsdItems();
+  const osdIdx = osdItems.findIndex(i => i.key === 'shape');
+  if (osdIdx >= 0) osdFocusIdx = osdIdx;
+  document.body.dataset.chrome = '1';
+  openList();
+  const rowIdx = menuRowIndexForKey('shape');
+  if (rowIdx >= 0) setMenuFocus(rowIdx);
 }
 
 function loadGalleryFiles(fileList){
@@ -1499,27 +1488,25 @@ function loadGalleryFiles(fileList){
     file: f
   }));
   document.body.dataset.gallery = galleryItems.length > 1 ? '1' : '0';
+  ENUM_SPEC.shape.label = 'GALLERY';
+  ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase().slice(0, 28));
+  menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
+    const labelEl = el.closest('.row')?.querySelector('.label');
+    if (labelEl) labelEl.textContent = 'GALLERY';
+  });
   showGalleryItem(0);
-}
-
-function updateGalleryLabel(item){
-  const caption = `${galleryIdx + 1} / ${galleryItems.length}`;
-  const name = item.name.toUpperCase().slice(0, 24);
-  galleryPanesEl.querySelectorAll('.galleryCaption').forEach(el => el.textContent = caption);
-  galleryPanesEl.querySelectorAll('.galleryName').forEach(el => el.textContent = name);
+  focusGalleryRow();
 }
 
 function showGalleryItem(idx){
   if (!galleryItems.length) return;
   galleryIdx = ((idx % galleryItems.length) + galleryItems.length) % galleryItems.length;
+  state.shape = galleryIdx;   // keep the repurposed GALLERY row in sync
+  refreshMenu();              // update the row's shown value immediately — independent of load success
   const item = galleryItems[galleryIdx];
-  updateGalleryLabel(item);   // update immediately — independent of load success
   if (item.kind === 'image') showGalleryImage(item);
   else showGalleryVideo(item);
 }
-
-function galleryPrev(){ showGalleryItem(galleryIdx - 1); }
-function galleryNext(){ showGalleryItem(galleryIdx + 1); }
 
 function showGalleryImage(item){
   applyImageTexture(item.url, (w, h) => {
@@ -1564,33 +1551,6 @@ async function showGalleryVideo(item){
 folderFiles.addEventListener('change', ()=>{
   if (folderFiles.files && folderFiles.files.length) loadGalleryFiles(folderFiles.files);
   folderFiles.value = '';
-});
-
-/* ---- gallery nav panes — one .galleryPane per eye when 3D SBS is on,
-   same one-pane-per-eye treatment as the bottom bar and the logo-menu ---- */
-function galleryPaneHTML(){
-  return `<button class="iconbtn galleryPrev" aria-label="Previous item">&#8249;</button>
-  <div class="galleryNav">
-    <div class="caption galleryCaption"></div>
-    <div class="name galleryName"></div>
-  </div>
-  <button class="iconbtn galleryNext" aria-label="Next item">&#8250;</button>`;
-}
-function buildGalleryPanes(){
-  const count = state.sbs ? 2 : 1;
-  if (galleryPanesEl.children.length === count) return;
-  galleryPanesEl.innerHTML = '';
-  for (let i = 0; i < count; i++){
-    const pane = document.createElement('div');
-    pane.className = 'galleryPane';
-    pane.innerHTML = galleryPaneHTML();
-    galleryPanesEl.appendChild(pane);
-  }
-  if (galleryItems.length) updateGalleryLabel(galleryItems[galleryIdx]);
-}
-galleryPanesEl.addEventListener('click', e=>{
-  if (e.target.closest('.galleryPrev')){ galleryPrev(); return; }
-  if (e.target.closest('.galleryNext')){ galleryNext(); return; }
 });
 
 /* =========================================================================
@@ -1670,7 +1630,7 @@ function osdChangeItem(dir){
       break;
     case 'check':
       state[item.key] = !state[item.key];
-      if (item.key === 'sbs'){ buildPanes(); buildBotPanes(); buildGalleryPanes(); }
+      if (item.key === 'sbs'){ buildPanes(); buildBotPanes(); }
       applyAll();
       refreshMenu();
       saveState();
@@ -1696,6 +1656,11 @@ function osdDown(){
 }
 
 function stepEnumValue(node, dir){
+  if (node.key === 'shape' && galleryItems.length){
+    showGalleryItem(state.shape + dir);   // already refreshes the menu
+    saveState();
+    return;
+  }
   const n = node.options.length;
   state[node.key] = (state[node.key] + dir + n) % n;
   if (node.key === 'shape'){
@@ -1898,6 +1863,17 @@ function setMenuFocus(idx, smooth = true){
     const itemMid = itemRect.top - paneRect.top + pane.scrollTop + itemRect.height / 2;
     pane.scrollTo({ top: itemMid - pane.clientHeight / 2, behavior: smooth ? 'smooth' : 'instant' });
   }
+}
+
+// Index of the navigable row whose stepper carries `[data-val="key"]`, so
+// a folder load can land the user precisely on the repurposed GALLERY row
+// without hardcoding its position in MENU.
+function menuRowIndexForKey(key){
+  const pane = menuPanes.querySelector('.pane');
+  if (!pane) return -1;
+  const target = pane.querySelector(`[data-val="${key}"]`)?.closest('.row');
+  if (!target) return -1;
+  return navItems().indexOf(target);
 }
 
 /* =========================================================================
@@ -2105,7 +2081,7 @@ function handleAct(act, el){
   switch (act){
     case 'boolstep':
       state[key] = Number(el.dataset.dir) > 0;
-      if (key === 'sbs'){ buildPanes(); buildBotPanes(); buildGalleryPanes(); }
+      if (key === 'sbs'){ buildPanes(); buildBotPanes(); }
       applyAll();
       refreshMenu();
       break;
@@ -2121,7 +2097,6 @@ function handleAct(act, el){
       Object.assign(state, DEFAULTS, { content: state.content, shape: state.shape });
       buildPanes();
       buildBotPanes();
-      buildGalleryPanes();
       applyAll();
       refreshMenu();
       toast('DEFAULTS RESTORED');
@@ -2367,7 +2342,6 @@ document.body.dataset.gallery = '0';
 initThree();
 buildPanes();
 buildBotPanes();
-buildGalleryPanes();
 applyAll();
 animate();
 requestWakeLock();
