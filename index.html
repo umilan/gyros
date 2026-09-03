@@ -1244,13 +1244,142 @@ function isHiddenFile(file){
   return relPath.split('/').some(seg => seg.startsWith('.'));
 }
 
+/* ---- SBS (side-by-side stereo) detection --------------------------------
+   Three layered signals, most to least authoritative:
+     1) MP4/MOV 'st3d' box (Google Spherical Video V2 stereo-mode metadata)
+        -- present mostly on VR/360-camera exports, but authoritative when
+        found: it says definitively mono / top-bottom / left-right.
+     2) The filename containing "sbs" -- the original, explicit author hint.
+     3) The media's own aspect ratio -- SBS content is essentially always
+        exactly double-width for its content, so a roughly-2x-normal aspect
+        ratio is a strong fallback signal for untitled files with no
+        metadata and no filename hint.
+   Metadata wins outright when present (even overriding a filename hint that
+   turns out to be wrong); filename and aspect ratio are equal-weight
+   fallbacks otherwise. Everything here fails soft to "no opinion" on any
+   parsing trouble -- a video that can't be read this way just falls back to
+   the filename/aspect checks, same as before this existed. */
+const MP4_STEREO_EXTS = new Set(['mp4', 'm4v', 'mov', '3gp']);
+
+function looksLikeSbsAspect(w, h){
+  if (!w || !h) return false;
+  const ratio = w / h;
+  // Ordinary single-eye video runs roughly 0.4 (tall/vertical) to 2.4
+  // (ultra-wide); a true SBS pair doubles that. Requiring both the combined
+  // ratio to be unusually wide AND its half to land back in a plausible
+  // single-eye range keeps this from mis-firing on genuine ultra-wide or
+  // panoramic video.
+  return ratio > 2.35 && (ratio / 2) > 0.4 && (ratio / 2) < 2.4;
+}
+
+async function mp4ReadBoxHeader(file, offset){
+  if (offset + 8 > file.size) return null;
+  const buf = await file.slice(offset, Math.min(offset + 16, file.size)).arrayBuffer();
+  if (buf.byteLength < 8) return null;
+  const dv = new DataView(buf);
+  let size = dv.getUint32(0);
+  const type = String.fromCharCode(dv.getUint8(4), dv.getUint8(5), dv.getUint8(6), dv.getUint8(7));
+  let headerSize = 8;
+  if (size === 1 && buf.byteLength >= 16){
+    size = dv.getUint32(8) * 4294967296 + dv.getUint32(12);   // 64-bit largesize
+    headerSize = 16;
+  } else if (size === 0){
+    size = file.size - offset;                                // extends to EOF
+  }
+  if (size < headerSize) return null;   // malformed -- bail rather than loop forever
+  return { start: offset, size, type, headerSize };
+}
+
+async function mp4FindChild(file, start, len, targetType){
+  let offset = start;
+  const end = start + len;
+  let steps = 0;
+  while (offset < end && steps++ < 20000){
+    const box = await mp4ReadBoxHeader(file, offset);
+    if (!box || box.size <= 0) break;
+    if (box.type === targetType) return box;
+    offset += box.size;
+  }
+  return null;
+}
+
+/* Returns 'left-right' | 'top-bottom' | 'mono' | null (no st3d box found,
+   not an ISO-BMFF file, or anything went wrong -- always fails soft). Only
+   reads box headers plus the handful of small container boxes on the way
+   to 'stsd', via File.slice(), so even multi-GB videos are read lazily and
+   cheaply regardless of where 'moov' sits in the file. */
+async function detectMp4Stereo3D(file){
+  try {
+    const moov = await mp4FindChild(file, 0, file.size, 'moov');
+    if (!moov) return null;
+    const trak = await mp4FindChild(file, moov.start + moov.headerSize, moov.size - moov.headerSize, 'trak');
+    if (!trak) return null;
+    const mdia = await mp4FindChild(file, trak.start + trak.headerSize, trak.size - trak.headerSize, 'mdia');
+    if (!mdia) return null;
+    const minf = await mp4FindChild(file, mdia.start + mdia.headerSize, mdia.size - mdia.headerSize, 'minf');
+    if (!minf) return null;
+    const stbl = await mp4FindChild(file, minf.start + minf.headerSize, minf.size - minf.headerSize, 'stbl');
+    if (!stbl) return null;
+    const stsd = await mp4FindChild(file, stbl.start + stbl.headerSize, stbl.size - stbl.headerSize, 'stsd');
+    if (!stsd) return null;
+
+    // stsd body = fullbox version/flags(4) + entry_count(4), then sample
+    // entries; each sample entry is itself a box whose fixed 78-byte
+    // VisualSampleEntry header precedes a normal nested-box list (codec
+    // config, pasp, colr, st3d, ...) -- scan each entry for 'st3d'.
+    let offset = stsd.start + stsd.headerSize + 8;
+    const stsdEnd = stsd.start + stsd.size;
+    let steps = 0;
+    while (offset < stsdEnd && steps++ < 1000){
+      const entry = await mp4ReadBoxHeader(file, offset);
+      if (!entry || entry.size <= 0) break;
+      const nestedStart = entry.start + entry.headerSize + 78;
+      const nestedLen = (entry.start + entry.size) - nestedStart;
+      if (nestedLen > 0){
+        const st3d = await mp4FindChild(file, nestedStart, nestedLen, 'st3d');
+        if (st3d){
+          const body = await file.slice(st3d.start + st3d.headerSize, st3d.start + st3d.headerSize + 5).arrayBuffer();
+          if (body.byteLength < 5) return null;
+          const stereoMode = new DataView(body).getUint8(4);   // after version(1) + flags(3)
+          return stereoMode === 2 ? 'left-right' : stereoMode === 1 ? 'top-bottom' : 'mono';
+        }
+      }
+      offset += entry.size;
+    }
+    return null;
+  } catch (err){
+    console.warn('[GYROS] st3d metadata read failed (non-fatal):', err);
+    return null;
+  }
+}
+
+/* Combines all three signals for one loaded item into a single decision.
+   `file` is the source File when available (local loads) so st3d metadata
+   can be checked; omit it for URL-based streaming loads, where only the
+   filename and (once dimensions are known) aspect ratio apply. `authoritative`
+   tells the caller whether the aspect-ratio fallback should still run once
+   the media's real dimensions are known -- it should not when metadata or
+   the filename already answered the question. */
+async function resolveSbsHint(label, file){
+  const filenameHint = !!(label && /sbs/i.test(label));
+  if (file){
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (MP4_STEREO_EXTS.has(ext)){
+      const mode = await detectMp4Stereo3D(file);
+      if (mode === 'left-right') return { value: true, authoritative: true };
+      if (mode === 'mono' || mode === 'top-bottom') return { value: false, authoritative: true };
+    }
+  }
+  return { value: filenameHint, authoritative: filenameHint };
+}
+
 /* ---- video loading ---- */
 const videoFile = document.getElementById('videoFile');
 videoFile.addEventListener('change', ()=>{
   const file = videoFile.files && videoFile.files[0];
   if (!file) return;
   if (classifyMediaFile(file) === 'image') loadSBSImage(file);
-  else playVideo(URL.createObjectURL(file), file.name);
+  else playVideo(URL.createObjectURL(file), file.name, file);
   videoFile.value = '';
 });
 
@@ -1274,7 +1403,7 @@ function applyImageTexture(url, onDone, onError){
     // Pause any running video
     if (!video.paused) video.pause();
     applyVideoLayout(tex.image.width, tex.image.height);
-    onDone();
+    onDone(tex.image.width, tex.image.height);
   }, undefined, onError);
 }
 
@@ -1297,8 +1426,9 @@ async function startVideoPlayback(src){
 function loadSBSImage(file){
   const url = mediaObjectURL(file);
   const label = file.name;
-  const isSbs = /sbs/i.test(label);
-  applyImageTexture(url, () => {
+  const filenameHint = /sbs/i.test(label);
+  applyImageTexture(url, (w, h) => {
+    const isSbs = filenameHint || looksLikeSbsAspect(w, h);
     if (state.sourceSbs !== isSbs){ state.sourceSbs = isSbs; refreshMenu(); }
     state.content = 'video';   // reuse the video display group
     applyAll();
@@ -1311,16 +1441,23 @@ function loadSBSImage(file){
   });
 }
 
-async function playVideo(src, label){
-  // Auto-enable SBS source when the filename hints at it
-  if (label && /sbs/i.test(label) && !state.sourceSbs){
-    state.sourceSbs = true;
+async function playVideo(src, label, file){
+  const sbsHint = await resolveSbsHint(label, file);
+  if (sbsHint.value !== state.sourceSbs){
+    state.sourceSbs = sbsHint.value;
     refreshMenu();
   }
   const ok = await startVideoPlayback(src);
   if (!ok){ toast('CANNOT PLAY THIS VIDEO'); return; }
-  const onMeta = ()=>{ applyVideoLayout(); video.removeEventListener('loadedmetadata', onMeta); };
-  if (video.readyState >= 1) applyVideoLayout(); else video.addEventListener('loadedmetadata', onMeta);
+  const onMeta = ()=>{
+    if (!sbsHint.authoritative && !state.sourceSbs && looksLikeSbsAspect(video.videoWidth, video.videoHeight)){
+      state.sourceSbs = true;
+      refreshMenu();
+    }
+    applyVideoLayout();
+    video.removeEventListener('loadedmetadata', onMeta);
+  };
+  if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
   state.content = 'video';
   applyAll();
   refreshMenu();
@@ -1358,7 +1495,8 @@ function loadGalleryFiles(fileList){
     name: f.name,
     url: mediaObjectURL(f),
     kind,
-    isSbs: /sbs/i.test(f.name)
+    isSbs: /sbs/i.test(f.name),
+    file: f
   }));
   document.body.dataset.gallery = galleryItems.length > 1 ? '1' : '0';
   showGalleryItem(0);
@@ -1384,7 +1522,11 @@ function galleryPrev(){ showGalleryItem(galleryIdx - 1); }
 function galleryNext(){ showGalleryItem(galleryIdx + 1); }
 
 function showGalleryImage(item){
-  applyImageTexture(item.url, () => {
+  applyImageTexture(item.url, (w, h) => {
+    if (!item.sbsChecked){
+      item.isSbs = item.isSbs || looksLikeSbsAspect(w, h);
+      item.sbsChecked = true;
+    }
     if (state.sourceSbs !== item.isSbs){ state.sourceSbs = item.isSbs; refreshMenu(); }
     state.content = 'video';
     applyAll();
@@ -1395,11 +1537,25 @@ function showGalleryImage(item){
 }
 
 async function showGalleryVideo(item){
+  if (!item.sbsChecked){
+    const sbsHint = await resolveSbsHint(item.name, item.file);
+    item.isSbs = sbsHint.value;
+    item.sbsAuthoritative = sbsHint.authoritative;
+    item.sbsChecked = true;
+  }
   if (state.sourceSbs !== item.isSbs){ state.sourceSbs = item.isSbs; refreshMenu(); }
   const ok = await startVideoPlayback(item.url);
   if (!ok){ toast('CANNOT PLAY ' + item.name.toUpperCase().slice(0, 24)); return; }
-  const onMeta = ()=>{ applyVideoLayout(); video.removeEventListener('loadedmetadata', onMeta); };
-  if (video.readyState >= 1) applyVideoLayout(); else video.addEventListener('loadedmetadata', onMeta);
+  const onMeta = ()=>{
+    if (!item.sbsAuthoritative && !state.sourceSbs && looksLikeSbsAspect(video.videoWidth, video.videoHeight)){
+      state.sourceSbs = true;
+      item.isSbs = true;
+      refreshMenu();
+    }
+    applyVideoLayout();
+    video.removeEventListener('loadedmetadata', onMeta);
+  };
+  if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
   state.content = 'video';
   applyAll();
   refreshMenu();
