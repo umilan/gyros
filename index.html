@@ -616,6 +616,14 @@ let renderer, scene, rig, camL, camR, world;
 let rtL, rtR, quadScene, quadCam, quadMesh, quadMat;
 let demoGroup, modelGroup, videoGroup;
 let videoTexture, videoMeshL, videoMeshR;
+// The real width/height of whatever is currently on screen, and whether it's a
+// still image. Needed because applyAll() re-calls applyVideoLayout() with no
+// arguments on every UI change (SBS toggle, gallery step, keystone, ...) --
+// for an actual <video> its element still reports the right videoWidth/Height
+// at that point, but a decoded image has nowhere else to report its size, so
+// without this it silently falls back to the hardcoded 1920x1080 default and
+// every non-16:9 photo gets stretched to fit that ratio.
+let mediaW = 0, mediaH = 0, usingImage = false;
 
 const CONTENT_DISTANCE = -3;
 
@@ -797,8 +805,9 @@ function initVideoMeshes(){
 }
 
 function applyVideoLayout(w, h){
-  const vw = w || video.videoWidth || 1920;
-  const vh = h || video.videoHeight || 1080;
+  if (w && h){ mediaW = w; mediaH = h; }
+  const vw = usingImage ? (mediaW || 1920) : (w || video.videoWidth || mediaW || 1920);
+  const vh = usingImage ? (mediaH || 1080) : (h || video.videoHeight || mediaH || 1080);
   const sourceW = state.sourceSbs ? vw / 2 : vw;
   const height = 2.4;
   const width = height * (sourceW / vh);
@@ -1353,6 +1362,7 @@ const videoFile = document.getElementById('videoFile');
 videoFile.addEventListener('change', ()=>{
   const file = videoFile.files && videoFile.files[0];
   if (!file) return;
+  setStandaloneMedia(file);
   if (classifyMediaFile(file) === 'image') loadSBSImage(file);
   else playVideo(URL.createObjectURL(file), file.name, file);
   videoFile.value = '';
@@ -1377,6 +1387,7 @@ function applyImageTexture(url, onDone, onError){
     videoMeshR.material = matR;
     // Pause any running video
     if (!video.paused) video.pause();
+    usingImage = true;
     applyVideoLayout(tex.image.width, tex.image.height);
     onDone(tex.image.width, tex.image.height);
   }, undefined, onError);
@@ -1417,6 +1428,7 @@ function loadSBSImage(file){
 }
 
 async function playVideo(src, label, file){
+  usingImage = false;
   const sbsHint = await resolveSbsHint(label, file);
   if (sbsHint.value !== state.sourceSbs){
     state.sourceSbs = sbsHint.value;
@@ -1455,6 +1467,31 @@ function clearGallery(){
   galleryItems = [];
   galleryIdx = -1;
   document.body.dataset.gallery = '0';
+}
+
+// A single video or photo picked via LOAD (not a folder) still shares this
+// same repurposed row -- without this, picking one after a folder was
+// loaded left the row stuck showing the old gallery item's name, even
+// though a totally different file is now on screen.
+function setStandaloneMedia(file){
+  clearGallery();
+  galleryItems = [{
+    name: file.name,
+    url: mediaObjectURL(file),
+    kind: classifyMediaFile(file),
+    isSbs: /sbs/i.test(file.name),
+    file
+  }];
+  galleryIdx = 0;
+  state.shape = 0;
+  document.body.dataset.gallery = '0';
+  ENUM_SPEC.shape.label = 'GALLERY';
+  ENUM_SPEC.shape.options = [file.name.toUpperCase().slice(0, 28)];
+  menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
+    const labelEl = el.closest('.row')?.querySelector('.label');
+    if (labelEl) labelEl.textContent = 'GALLERY';
+  });
+  refreshMenu();
 }
 
 // Navigation for a loaded folder isn't a pair of on-screen arrows: it
@@ -1524,6 +1561,7 @@ function showGalleryImage(item){
 }
 
 async function showGalleryVideo(item){
+  usingImage = false;
   if (!item.sbsChecked){
     const sbsHint = await resolveSbsHint(item.name, item.file);
     item.isSbs = sbsHint.value;
