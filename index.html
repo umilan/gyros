@@ -102,11 +102,11 @@
   .iconbtn:active{transform:scale(0.92);}
   .iconbtn svg{display:block;}
 
-  /* bottom bar: a single gear while viewing, an OSD strip while in settings —
+  /* bottom bar: a single gear while viewing, an OSD strip while in settings --
      duplicated into one .botPane per eye when 3D SBS is on */
   body[data-ui="osd"] .gearBtn{display:none;}
 
-  /* OSD bar — fills its .botPane; ‹ and › anchored to that pane's edges */
+  /* OSD bar -- fills its .botPane; ‹ and › anchored to that pane's edges */
   .osdBar{display:flex;flex:1;align-items:center;position:relative;}
   body[data-ui="view"] .osdBar{display:none;}
   /* Remove horizontal padding so buttons reach the pane edges */
@@ -114,7 +114,7 @@
   .osdNext{position:absolute;right:var(--pad-lg);top:50%;transform:translateY(-50%);}
 
   /* Nav column: ▲ (previous item) above, section/item label + value,
-     ▼ (next item) below — the same ‹ glyph as the corner buttons, rotated */
+     ▼ (next item) below -- the same ‹ glyph as the corner buttons, rotated */
   .osdNavWrap{
     flex:1;min-width:0;
     display:flex;flex-direction:column;align-items:center;gap:4px;
@@ -232,7 +232,7 @@
   }
   .dlgPane::-webkit-scrollbar{width:0;height:0;}
   .dlgPane .paneInner{cursor:default;}
-  /* URL input — full-width row, matches pane rhythm */
+  /* URL input -- full-width row, matches pane rhythm */
   .dlgInput{
     display:block;width:100%;box-sizing:border-box;
     padding:var(--pad) var(--pad-lg);
@@ -303,55 +303,33 @@
       <div class="paneTitle">HELP</div>
       <div class="hr"></div>
       <div class="section">OVERVIEW</div>
-      <p class="helpText"><b>GYROS</b> renders content twice — once per eye — for a phone-in-headset viewer. Turn your head to look around.</p>
+      <p class="helpText"><b>GYROS</b> renders content twice -- once per eye -- for a phone-in-headset viewer. Turn your head to look around.</p>
       <div class="hr"></div>
       <div class="section">CONTENT</div>
-      <p class="helpText"><b>DEMO</b> — rotating wireframe solid.</p>
-      <p class="helpText"><b>3D MODEL</b> — local .obj or .stl file, max ~5 MB. Decimate high-poly meshes before loading.</p>
-      <p class="helpText"><b>VIDEO</b> — local file or streaming URL. Files named with "SBS" auto-enable side-by-side stereo mode.</p>
-      <p class="helpText"><b>FOLDER</b> — pick several photos and videos at once (or a whole folder, where supported). You're taken straight to the GALLERY row in the settings list, where <b>−/+</b> (or the settings strip's <b>‹/›</b>) steps through them by name. Reload the app to go back to the 3D demo shapes.</p>
+      <p class="helpText"><b>DEMO</b> -- rotating wireframe solid. Also on the LOAD menu, to switch back after viewing a model, photo or video.</p>
+      <p class="helpText"><b>3D MODEL</b> -- local .obj or .stl file, max ~5 MB. Decimate high-poly meshes before loading.</p>
+      <p class="helpText"><b>VIDEO</b> -- local file or streaming URL. Files named with "SBS" auto-enable side-by-side stereo mode.</p>
+      <p class="helpText"><b>FOLDER</b> -- pick several photos and videos at once (or a whole folder, where supported). You're taken straight to the GALLERY row in the settings list, where <b>−/+</b> (or the settings strip's <b>‹/›</b>) steps through them by name. Pick DEMO from LOAD to go back to the 3D demo shapes.</p>
       <div class="hr"></div>
       <div class="section">SETTINGS</div>
-      <p class="helpText"><b>POSITIONING / ZOOM</b> — shift, scale and keystone (TRPZD) each eye image to align it with your lenses.</p>
-      <p class="helpText"><b>GYRO</b> — multiply, freeze or invert each axis of head tracking. RECENTER sets the current heading as forward.</p>
+      <p class="helpText"><b>POSITIONING / ZOOM</b> -- shift and zoom each eye image, and drag its 4 corners (TRAPEZOID) to align it with your lenses.</p>
+      <p class="helpText"><b>BRIGHTNESS</b> -- darkens or brightens the content; the settings list and menus are unaffected.</p>
+      <p class="helpText"><b>GYRO</b> -- multiply, freeze or invert each axis of head tracking. RECENTER sets the current heading as forward.</p>
       <div class="hr"></div>
       <div class="section">CONTROLS</div>
-      <p class="helpText"><b>GESTURES</b> — drag to pan, pinch to zoom, two fingers up/down adjusts eye distance, tap to show or hide the controls, double-tap to recenter.</p>
-      <p class="helpText"><b>SCROLL / PINCH</b> — mouse wheel or trackpad pinch zooms in and out.</p>
-      <p class="helpText"><b>KEYBOARD</b> — while viewing: <b>↑</b> opens the settings strip, <b>↓</b> opens the full list, <b>←/→</b> change eye distance, <b>Shift + arrows</b> shifts the image position (X/Y).</p>
-      <p class="helpText"><b>SETTINGS STRIP</b> — <b>↑/↓</b> move between items and wrap around at either end; tap the image, or press <b>Esc</b>, to close. <b>←/→</b> changes the value.</p>
-      <p class="helpText"><b>FULL LIST</b> — <b>↑/↓</b> move between items (past either end closes); <b>←/→</b> changes the value, or submits a highlighted row like RESET or CLOSE. <b>WASD</b> works too. <b>Esc</b> closes either.</p>
+      <p class="helpText"><b>GESTURES</b> -- drag to pan, pinch to zoom, two fingers up/down adjusts eye distance, tap to show or hide the controls, double-tap to recenter.</p>
+      <p class="helpText"><b>SCROLL / PINCH</b> -- mouse wheel or trackpad pinch zooms in and out.</p>
+      <p class="helpText"><b>KEYBOARD</b> -- while viewing: <b>↑</b> opens the settings strip, <b>↓</b> opens the full list, <b>←/→</b> change eye distance, <b>Shift + arrows</b> shifts the image position (X/Y), <b>R</b> resets all settings to defaults. With a video loaded: <b>Space</b> pauses or resumes it, <b>Shift + Space</b> plays it backwards.</p>
+      <p class="helpText"><b>SETTINGS STRIP</b> -- <b>↑/↓</b> move between items and wrap around at either end; tap the image, or press <b>Esc</b>, to close. <b>←/→</b> changes the value.</p>
+      <p class="helpText"><b>FULL LIST</b> -- <b>↑/↓</b> move between items (past either end closes); <b>←/→</b> changes the value, or submits a highlighted row like RESET or CLOSE. <b>WASD</b> works too. <b>Esc</b> closes either.</p>
     </div>
   </div>
 </div>
 
-<!-- Load: choose what kind of content to load -->
-<div class="overlay dialog" id="loadTypeDlg" hidden>
-  <div class="dlgPane">
-    <div class="paneInner">
-      <div class="paneTitle">LOAD</div>
-      <div class="hr"></div>
-      <button class="row" data-loadtype="model"><span class="label">3D MODEL (.OBJ / .STL)</span></button>
-      <div class="hr"></div>
-      <button class="row" data-loadtype="video"><span class="label">VIDEO / IMAGE</span></button>
-      <div class="hr"></div>
-      <button class="row" data-loadtype="folder"><span class="label">FOLDER (PHOTOS + VIDEOS)</span></button>
-    </div>
-  </div>
-</div>
-
-<!-- Source picker: FILE or URL -->
-<div class="overlay dialog" id="loadDlg" hidden>
-  <div class="dlgPane">
-    <div class="paneInner">
-      <div class="paneTitle" id="loadDlgTitle">LOAD</div>
-      <div class="hr"></div>
-      <button class="row" id="loadFileBtn"><span class="label">FROM FILE</span></button>
-      <div class="hr"></div>
-      <button class="row" id="loadUrlBtn"><span class="label">FROM URL</span></button>
-    </div>
-  </div>
-</div>
+<!-- Load: choose what kind of content to load. Unlike the other dialogs
+     below, this one is duplicated per eye when 3D SBS is on -- panes are
+     built in JS, same treatment as the settings list; see buildLoadTypeDlg(). -->
+<div class="overlay dialog" id="loadTypeDlg" hidden></div>
 
 <div class="overlay dialog" id="urlDlg" hidden>
   <div class="dlgPane">
@@ -400,9 +378,13 @@ const DEFAULTS = {
   shape: 0,               // index into SHAPES
   sourceSbs: false,       // video source is side-by-side stereo
   autoRotate: true,       // spin demo / loaded model
-  fov: 60,                 // camera field of view — controls perspective intensity
+  fov: 60,                 // camera field of view -- controls perspective intensity
+  brightness: 0,           // content brightness; shader multiplier is 1 + brightness/100
   posX: 0, posY: 0, eyeDist: 0,
-  zoom: 0, scaleX: 0, scaleY: 0, trpzdTop: 0, trpzdBot: 0,
+  zoom: 0, scaleX: 0, scaleY: 0,
+  trapezoid: 0,
+  cornerTLx: 0, cornerTLy: 0, cornerTRx: 0, cornerTRy: 0,
+  cornerBLx: 0, cornerBLy: 0, cornerBRx: 0, cornerBRy: 0,
   flipX: false, flipY: false,
   gyroMulX: 1, gyroMulY: 1,
   freezeX: false, freezeY: false,
@@ -432,7 +414,7 @@ function saveState(){
 }
 
 /* =========================================================================
-   Menu definition — one spec, rendered into every pane
+   Menu definition -- one spec, rendered into every pane
    ========================================================================= */
 const SHAPES = [
   'WIRE CUBE','SOLID CUBE','COLOR CUBE',
@@ -446,6 +428,7 @@ const MENU = [
     { type:'check', key:'sbs', label:'3D SBS' },
     { type:'check', key:'mirrorUI', label:'MIRROR UI' },
     { type:'step',  key:'fov', label:'PERSPECTIVE', min:10, max:120, step:1 },
+    { type:'step',  key:'brightness', label:'BRIGHTNESS', min:-100, max:100, step:2 },
     { type:'hr' }
   ]},
   { title:'CONTENT', items:[
@@ -461,9 +444,18 @@ const MENU = [
   { title:'ZOOM', items:[
     { type:'step', key:'zoom',     label:'ZOOM (XY)', min:-90, max:300, step:2 },
     { type:'step', key:'scaleX',   label:'SCALE X',   min:-90, max:300, step:2 },
-    { type:'step', key:'scaleY',   label:'SCALE Y',   min:-90, max:300, step:2 },
-    { type:'step', key:'trpzdTop', label:'TRPZD TOP', min:-10000, max:10000, step:100 },
-    { type:'step', key:'trpzdBot', label:'TRPZD BOT', min:-10000, max:10000, step:100 }
+    { type:'step', key:'scaleY',   label:'SCALE Y',   min:-90, max:300, step:2 }
+  ]},
+  { title:'TRAPEZOID', items:[
+    { type:'step', key:'trapezoid', label:'TRAPEZOID', min:-100, max:100, step:2 },
+    { type:'step', key:'cornerTLx', label:'CORNER TL X', min:-100, max:100, step:2 },
+    { type:'step', key:'cornerTLy', label:'CORNER TL Y', min:-100, max:100, step:2 },
+    { type:'step', key:'cornerTRx', label:'CORNER TR X', min:-100, max:100, step:2 },
+    { type:'step', key:'cornerTRy', label:'CORNER TR Y', min:-100, max:100, step:2 },
+    { type:'step', key:'cornerBLx', label:'CORNER BL X', min:-100, max:100, step:2 },
+    { type:'step', key:'cornerBLy', label:'CORNER BL Y', min:-100, max:100, step:2 },
+    { type:'step', key:'cornerBRx', label:'CORNER BR X', min:-100, max:100, step:2 },
+    { type:'step', key:'cornerBRy', label:'CORNER BR Y', min:-100, max:100, step:2 }
   ]},
   { title:'FLIP', items:[
     { type:'check', key:'flipX', label:'FLIP X' },
@@ -477,6 +469,10 @@ const MENU = [
     { type:'check', key:'gyroFlipX',label:'FLIP X' },
     { type:'check', key:'gyroFlipY',label:'FLIP Y' },
     { type:'action', act:'recenter', label:'RECENTER', textbtn:true }
+  ]},
+  { title:'ACTIONS', items:[
+    { type:'action', act:'reset',     label:'RESET TO DEFAULTS', textbtn:true },
+    { type:'action', act:'closeMenu', label:'CLOSE',             textbtn:true }
   ]}
 ];
 
@@ -530,12 +526,13 @@ function paneHTML(){
     + '<div class="paneTitle">MENU'
     + '<button class="paneCloseBtn" data-act="closeList" aria-label="Close settings">&#215;</button>'
     + '</div>';
+  // RESET TO DEFAULTS / CLOSE come from MENU's own ACTIONS section below --
+  // the pane is a straight render of MENU, nothing appended after the loop,
+  // so this is exactly what the OSD strip's flattened osdItems sees too.
   for (const section of MENU){
     html += `<div class="section">${section.title}</div>`;
     html += section.items.map(itemHTML).join('');
   }
-  html += '<button class="textbtn" data-act="reset">RESET TO DEFAULTS</button>';
-  html += '<button class="textbtn" data-act="closeList">CLOSE</button>';
   html += '</div>';
   return html;
 }
@@ -556,7 +553,7 @@ function buildPanes(){
   if (uiState === 'list' && menuFocusIdx >= 0) setMenuFocus(menuFocusIdx);
 }
 
-/* ---- bottom bar (gear / OSD strip) — same one-pane-per-eye treatment as
+/* ---- bottom bar (gear / OSD strip) -- same one-pane-per-eye treatment as
    the logo-menu above: one .botPane per eye when 3D SBS is on, one full-width
    pane otherwise. All instances share state and stay in sync. ---- */
 function botPaneHTML(){
@@ -571,8 +568,9 @@ function botPaneHTML(){
     <div class="osdNavWrap">
       <button class="iconbtn osdItemUp" aria-label="Previous item">&#8249;</button>
       <div class="osdNav">
-        <div class="caption osdParent"></div>
+        <div class="caption osdSection"></div>
         <div class="name osdName"></div>
+        <div class="caption osdLabel"></div>
       </div>
       <button class="iconbtn osdItemDown" aria-label="Next item">&#8249;</button>
     </div>
@@ -613,7 +611,7 @@ function refreshMenu(){
 }
 
 /* =========================================================================
-   Three.js — scene, stereo rig, content
+   Three.js -- scene, stereo rig, content
    ========================================================================= */
 const stage = document.getElementById('stage');
 const video = document.getElementById('video');
@@ -621,7 +619,7 @@ const video = document.getElementById('video');
 let renderer, scene, rig, camL, camR, world;
 let rtL, rtR, quadScene, quadCam, quadMesh, quadMat;
 let demoGroup, modelGroup, videoGroup;
-let videoTexture, videoMeshL, videoMeshR;
+let videoTexture, videoTextureR, videoMeshL, videoMeshR, videoMatL, videoMatR;
 // The real width/height of whatever is currently on screen, and whether it's a
 // still image. Needed because applyAll() re-calls applyVideoLayout() with no
 // arguments on every UI change (SBS toggle, gallery step, keystone, ...) --
@@ -741,7 +739,7 @@ function buildDemo(index){
       demoGroup.add(new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 1.3), solidMat())); break;
     }
     case 'COLOR CUBE': {
-      // Six faces: R G B Y O P — great for lens calibration
+      // Six faces: R G B Y O P -- great for lens calibration
       const cols = [0xff3333, 0x3399ff, 0x33dd44, 0xffdd00, 0xff8800, 0xcc44cc];
       demoGroup.add(new THREE.Mesh(
         new THREE.BoxGeometry(1.3, 1.3, 1.3),
@@ -771,7 +769,7 @@ function buildDemo(index){
       demoGroup.add(thickWire(geo, 0.028)); geo.dispose(); break;
     }
     case 'CRYSTAL': {
-      // Elongated diamond — OctahedronGeometry stretched on Y
+      // Elongated diamond -- OctahedronGeometry stretched on Y
       const geo = new THREE.OctahedronGeometry(0.88);
       geo.scale(1, 1.85, 1);
       demoGroup.add(thickWire(geo, 0.022)); geo.dispose(); break;
@@ -790,20 +788,22 @@ function initVideoMeshes(){
   videoTexture.wrapS = THREE.ClampToEdgeWrapping;
   videoTexture.wrapT = THREE.ClampToEdgeWrapping;
 
-  // Use a separate VideoTexture instance for the right eye — cloning a
+  // Use a separate VideoTexture instance for the right eye -- cloning a
   // VideoTexture is fragile across Three.js versions and can produce a
   // texture that never auto-updates. Both instances point to the same
   // <video> element so they decode no extra data.
-  const texR = new THREE.VideoTexture(video);
-  texR.colorSpace = THREE.SRGBColorSpace;
-  texR.minFilter = THREE.LinearFilter;
-  texR.magFilter = THREE.LinearFilter;
-  texR.wrapS = THREE.ClampToEdgeWrapping;
-  texR.wrapT = THREE.ClampToEdgeWrapping;
+  videoTextureR = new THREE.VideoTexture(video);
+  videoTextureR.colorSpace = THREE.SRGBColorSpace;
+  videoTextureR.minFilter = THREE.LinearFilter;
+  videoTextureR.magFilter = THREE.LinearFilter;
+  videoTextureR.wrapS = THREE.ClampToEdgeWrapping;
+  videoTextureR.wrapT = THREE.ClampToEdgeWrapping;
 
   const geo = new THREE.PlaneGeometry(1, 1);
-  videoMeshL = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: videoTexture }));
-  videoMeshR = new THREE.Mesh(geo.clone(), new THREE.MeshBasicMaterial({ map: texR }));
+  videoMatL = new THREE.MeshBasicMaterial({ map: videoTexture });
+  videoMatR = new THREE.MeshBasicMaterial({ map: videoTextureR });
+  videoMeshL = new THREE.Mesh(geo, videoMatL);
+  videoMeshR = new THREE.Mesh(geo.clone(), videoMatR);
   videoMeshL.layers.set(1);
   videoMeshR.layers.set(2);
   videoGroup.add(videoMeshL, videoMeshR);
@@ -837,30 +837,72 @@ function initBlit(){
   quadScene = new THREE.Scene();
   quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
+  // The mesh is a plain, static quad covering the full eye viewport -- its
+  // on-screen shape no longer encodes the trapezoid. The 4-corner pin lives
+  // entirely in the `quadXform` uniform (an inverse homography, rebuilt in
+  // updateQuad()/computeQuadInverse() whenever a corner, zoom or scale
+  // changes), which maps each screen pixel back to a texture (u,v) inside
+  // whatever quadrilateral the 4 corners currently describe -- so any corner
+  // can move independently, not just the top/bottom edge width as before.
   const geo = new THREE.BufferGeometry();
-  // two triangles, vertex order: TL, TR, BL, BR
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12), 3));
-  geo.setAttribute('uvq', new THREE.BufferAttribute(new Float32Array(12), 3));
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -1, 1, 0,   1, 1, 0,   -1, -1, 0,   1, -1, 0 // TL, TR, BL, BR
+  ]), 3));
   geo.setIndex([0, 2, 1, 1, 2, 3]);
 
   quadMat = new THREE.ShaderMaterial({
-    uniforms: { map: { value: null }, distort: { value: 0 } },
+    uniforms: {
+      map: { value: null },
+      distort: { value: 0 },
+      aspect: { value: 1 },
+      brightness: { value: 1 },
+      quadXform: { value: new THREE.Matrix3() },
+      flipX: { value: 0 },
+      flipY: { value: 0 }
+    },
     vertexShader: `
-      attribute vec3 uvq;
-      varying vec3 vUvq;
+      varying vec2 vPos;
       void main(){
-        vUvq = uvq;
+        vPos = position.xy;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }`,
     fragmentShader: `
       uniform sampler2D map;
-      uniform float distort;   // radial barrel warp — extreme PERSPECTIVE looks fish-eye
-      varying vec3 vUvq;
+      uniform float distort;      // 0..1 spherize/tunnel warp intensity -- see fisheyeAmount()
+      uniform float aspect;       // eye width/height, keeps the warp circular, not elliptical
+      uniform float brightness;   // 1 = unchanged; BRIGHTNESS setting is 1 + state.brightness/100
+      uniform mat3 quadXform;     // screen NDC (x,y,1) -> homogeneous (u,v) of the corner-pinned quad
+      uniform float flipX;
+      uniform float flipY;
+      varying vec2 vPos;
       void main(){
-        vec2 uv = vUvq.xy / vUvq.z;
-        vec2 c = uv - 0.5;
-        uv += c * dot(c, c) * distort;
-        gl_FragColor = texture2D(map, uv);
+        vec3 pqr = quadXform * vec3(vPos, 1.0);
+        vec2 uv = pqr.xy / pqr.z;
+        // Outside the 4 corners (or their zoomed/scaled footprint spills
+        // past the eye viewport) -- nothing to draw there.
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
+
+        float texU = mix(uv.x, 1.0 - uv.x, flipX);
+        float texV = mix(1.0 - uv.y, uv.y, flipY);
+        uv = vec2(texU, texV);
+
+        vec2 c = (uv - 0.5) * vec2(aspect, 1.0);
+        float r = length(c);
+        // Power-law radial remap, i.e. a "little planet" spherize, not a
+        // lens-correction bow: near the middle it pulls samples from further
+        // out, so source content packs tighter and tighter toward the
+        // center while what's left stretches into streaks radiating out to
+        // the edge -- the closer distort is to 1, the smaller that center
+        // gets and the more extreme the outward stretch.
+        if (distort > 0.0 && r > 0.0001){
+          float k = mix(1.0, 0.18, distort);
+          float newR = 0.5 * pow(r / 0.5, k);
+          c *= newR / r;
+        }
+        uv = c / vec2(aspect, 1.0) + 0.5;
+        vec4 col = texture2D(map, uv);
+        col.rgb *= brightness;
+        gl_FragColor = col;
       }`,
     depthTest: false,
     depthWrite: false
@@ -871,31 +913,86 @@ function initBlit(){
   quadScene.add(quadMesh);
   updateQuad();
 }
+/* Classic "square to quadrilateral" projective mapping (Heckbert), solved
+   for the unit square (u,v) -> the quad's 4 corners, then inverted (3x3
+   cofactor/adjugate) so the shader gets quad-NDC -> (u,v) directly, one
+   matrix multiply and a perspective divide per pixel. This is what lets any
+   of the 4 corners move independently (a true corner-pin), not just the old
+   symmetric top/bottom-edge-width keystone. Verified against a plain-JS
+   round-trip test (see the project's gyros-viewer skill notes) covering the
+   old symmetric-trapezoid shape, an arbitrary independently-moved-corner
+   quad, and a zoomed version of it. */
+function computeQuadInverse(TL, TR, BL, BR, out){
+  const [x00, y00] = TL, [x10, y10] = TR, [x01, y01] = BL, [x11, y11] = BR;
+  const dx1 = x10 - x11, dx2 = x01 - x11, dx3 = x00 - x10 + x11 - x01;
+  const dy1 = y10 - y11, dy2 = y01 - y11, dy3 = y00 - y10 + y11 - y01;
+  const denom = dx1 * dy2 - dx2 * dy1;
+  let g = 0, h = 0;
+  if (Math.abs(dx3) > 1e-9 || Math.abs(dy3) > 1e-9){
+    g = (dx3 * dy2 - dx2 * dy3) / denom;
+    h = (dx1 * dy3 - dx3 * dy1) / denom;
+  }
+  const a = x10 - x00 + g * x10, b = x01 - x00 + h * x01, c = x00;
+  const d = y10 - y00 + g * y10, e = y01 - y00 + h * y01, f = y00;
+  const i = 1;
+  const C11 =  (e * i - f * h), C12 = -(d * i - f * g), C13 =  (d * h - e * g);
+  const C21 = -(b * i - c * h), C22 =  (a * i - c * g), C23 = -(a * h - b * g);
+  const C31 =  (b * f - c * e), C32 = -(a * f - c * d), C33 =  (a * e - b * d);
+  let det = a * C11 + b * C12 + c * C13;
+  if (Math.abs(det) < 1e-9) det = det < 0 ? -1e-9 : 1e-9;
+  out.set(
+    C11 / det, C21 / det, C31 / det,
+    C12 / det, C22 / det, C32 / det,
+    C13 / det, C23 / det, C33 / det
+  );
+}
 
 function updateQuad(){
-  const kTop = Math.max(0.05, 1 + state.trpzdTop / 100);
-  const kBot = Math.max(0.05, 1 + state.trpzdBot / 100);
-  // Keep the widest edge inside the eye viewport so widening one edge tapers
-  // the other instead of pushing the image off-screen.
-  const fit = 1 / Math.max(kTop, kBot, 1);
+  // ZOOM (XY) / SCALE X / SCALE Y now scale all 4 corners together, out
+  // from the eye's centre, so they grow or shrink the whole trapezoid shape
+  // itself -- cropped by the eye viewport once it grows past 100% -- rather
+  // than only magnifying the content rendered inside a fixed-size frame.
+  const zoomMul = 1 + state.zoom / 100;
+  const sx = Math.max(0.05, zoomMul * (1 + state.scaleX / 100));
+  const sy = Math.max(0.05, zoomMul * (1 + state.scaleY / 100));
 
-  const pos = quadMesh.geometry.attributes.position;
-  pos.setXYZ(0, -kTop * fit,  1, 0); // top-left
-  pos.setXYZ(1,  kTop * fit,  1, 0); // top-right
-  pos.setXYZ(2, -kBot * fit, -1, 0); // bottom-left
-  pos.setXYZ(3,  kBot * fit, -1, 0); // bottom-right
-  pos.needsUpdate = true;
+  // Each corner is independently offset (percent of the eye's half-size)
+  // from its nominal position -- a true 4-corner pin, replacing the old
+  // trpzdTop/trpzdBot pair that could only taper the top and bottom edges
+  // symmetrically about the centre.
+  const TL = [(-1 + state.cornerTLx / 100) * sx, ( 1 + state.cornerTLy / 100) * sy];
+  const TR = [( 1 + state.cornerTRx / 100) * sx, ( 1 + state.cornerTRy / 100) * sy];
+  const BL = [(-1 + state.cornerBLx / 100) * sx, (-1 + state.cornerBLy / 100) * sy];
+  const BR = [( 1 + state.cornerBRx / 100) * sx, (-1 + state.cornerBRy / 100) * sy];
 
-  // Perspective-correct keystone: weight each vertex by its edge width so the
-  // texture foreshortens toward the narrow edge instead of shearing.
-  const u0 = state.flipX ? 1 : 0, u1 = state.flipX ? 0 : 1;
-  const v0 = state.flipY ? 0 : 1, v1 = state.flipY ? 1 : 0; // v0 = top row
-  const uvq = quadMesh.geometry.attributes.uvq;
-  uvq.setXYZ(0, u0 * kTop, v0 * kTop, kTop);
-  uvq.setXYZ(1, u1 * kTop, v0 * kTop, kTop);
-  uvq.setXYZ(2, u0 * kBot, v1 * kBot, kBot);
-  uvq.setXYZ(3, u1 * kBot, v1 * kBot, kBot);
-  uvq.needsUpdate = true;
+  // TRAPEZOID (single master slider, -100..100): scales the top pair's or
+  // bottom pair's X toward 0 -- at +-100 that pair's two corners land on the
+  // same point (0, that edge's Y), a true point merge, not just a squeeze.
+  // Layered on top of the per-corner X above (and therefore on zoom/scale
+  // too), so fine per-corner tweaks still apply underneath it.
+  // Clamp short of a fully-converged edge. This isn't just cosmetic: past
+  // roughly 70% convergence (rem below ~0.3) computeQuadInverse's homography
+  // becomes numerically unstable for a quad this acute and the whole shape
+  // collapses inward/shrinks vertically too, even though only X is being
+  // touched here and TL/TR (or BL/BR) keep their exact original Y. Verified
+  // visually against a flat test grid: rem 0.3 (trapezoid +-100) still spans
+  // the full eye height with a tight, clean point-like taper; rem 0.1
+  // (roughly +-90) already visibly shrinks and mis-renders.
+  const tAmt = state.trapezoid / 100;
+  if (tAmt > 0){
+    const rem = Math.max(1 - tAmt, 0.3);
+    TL[0] *= rem;
+    TR[0] *= rem;
+  } else if (tAmt < 0){
+    const rem = Math.max(1 - (-tAmt), 0.3);
+    BL[0] *= rem;
+    BR[0] *= rem;
+  }
+
+  computeQuadInverse(TL, TR, BL, BR, quadMat.uniforms.quadXform.value);
+  quadMat.uniforms.flipX.value = state.flipX ? 1 : 0;
+  quadMat.uniforms.flipY.value = state.flipY ? 1 : 0;
+  quadMat.uniforms.brightness.value = 1 + state.brightness / 100;
 }
 
 function applyEyeDistance(){
@@ -904,42 +1001,42 @@ function applyEyeDistance(){
   camR.position.x = state.sbs ? meters / 2 : -meters / 2;
 }
 
-/* POS X/Y, ZOOM and SCALE X/Y move and scale the *view*, not the finished
-   picture: they shift and stretch each eye's frustum so the scene is re-rendered
-   at the new framing. Nothing gets pushed outside the eye viewport and clipped,
-   and magnified content stays sharp instead of being upscaled after the fact. */
+/* POS X/Y move the *view*, not the finished picture: they shift each eye's
+   frustum so the scene is re-rendered at the new framing -- nothing gets
+   pushed outside the eye viewport and clipped. ZOOM (XY)/SCALE X/SCALE Y are
+   display-level now (see updateQuad()): they scale the corner-pinned quad
+   itself, so the whole trapezoid grows or shrinks and gets cropped by the
+   eye viewport past 100% instead of just re-rendering sharper/blurrier
+   content inside a fixed frame. */
 /* PERSPECTIVE camera scope: near the middle of its range the image stays a
    normal rectilinear projection; pushed toward either extreme (very narrow
-   or very wide), a radial barrel warp eases in on top, so the far ends of
-   the slider read as a fish-eye lens rather than just a wider flat frame. */
-const FISHEYE_MAX = 1.4;
+   or very wide), a radial spherize warp eases in on top -- the far ends of
+   the slider read as a "little planet" / tunnel lens, not just a wider flat
+   frame. Returns 0..1, fed to the quad shader's `distort` uniform. */
 function fisheyeAmount(fov){
   const mid = (SPEC.fov.min + SPEC.fov.max) / 2;
   const half = (SPEC.fov.max - SPEC.fov.min) / 2;
   const t = Math.min(1, Math.abs(fov - mid) / half);   // 0 at the middle, 1 at either extreme
   const eased = Math.max(0, (t - 0.3) / 0.7);          // stay flat through the middle ~60%
-  return eased * eased * FISHEYE_MAX;
+  return eased * eased;
 }
 
 function applyEyeProjection(){
   if (!camL) return;
   camL.fov = camR.fov = state.fov;   // perspective intensity
-  if (quadMat) quadMat.uniforms.distort.value = fisheyeAmount(state.fov);
   const { ew, eh } = eyeSize();
+  if (quadMat){
+    quadMat.uniforms.distort.value = fisheyeAmount(state.fov);
+    quadMat.uniforms.aspect.value = ew / eh;
+  }
   const dx = (state.posX / 100) * (ew / 2);
   const dy = (state.posY / 100) * (eh / 2);
-  const zoom = 1 + state.zoom / 100;
-  const sx = Math.max(0.05, zoom * (1 + state.scaleX / 100));
-  const sy = Math.max(0.05, zoom * (1 + state.scaleY / 100));
 
   [camL, camR].forEach(cam=>{
     cam.aspect = ew / eh;
     if (dx !== 0 || dy !== 0) cam.setViewOffset(ew, eh, -dx, dy, ew, eh);
     else cam.clearViewOffset();
     cam.updateProjectionMatrix();
-    cam.projectionMatrix.elements[0] *= sx;
-    cam.projectionMatrix.elements[5] *= sy;
-    cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
   });
 }
 
@@ -1099,7 +1196,10 @@ function applyContent(){
   demoGroup.visible  = state.content === 'demo' && !demoOff;
   modelGroup.visible = state.content === 'model';
   videoGroup.visible = state.content === 'video';
-  if (state.content !== 'video' && !video.paused) video.pause();
+  if (state.content !== 'video'){
+    if (!video.paused) video.pause();
+    stopReverse();
+  }
 }
 
 function applyAll(){
@@ -1153,7 +1253,7 @@ const modelFile = document.getElementById('modelFile');
 modelFile.addEventListener('change', async ()=>{
   const file = modelFile.files && modelFile.files[0];
   if (!file) return;
-  // Warn early for very large files — OBJLoader parses text line-by-line in JS;
+  // Warn early for very large files -- OBJLoader parses text line-by-line in JS;
   // beyond ~10 MB the tab will hang or crash.  5 MB is a comfortable ceiling.
   if (file.size > 5 * 1024 * 1024){
     toast('FILE TOO LARGE — USE MAX ~5 MB');
@@ -1198,8 +1298,7 @@ function frameModel(){
   modelGroup.scale.setScalar(scale);
   modelGroup.position.copy(center).multiplyScalar(-scale);
 }
-
-/* ---- media type detection — File.type is sometimes empty (notably for
+/* ---- media type detection -- File.type is sometimes empty (notably for
    files enumerated through a folder/multi-file picker rather than a normal
    single-file dialog), so fall back to the filename's extension. Also used
    to rebuild a correctly-typed object URL, since a blob URL with no/wrong
@@ -1375,7 +1474,7 @@ videoFile.addEventListener('change', ()=>{
   videoFile.value = '';
 });
 
-/* ---- shared media-display helpers — both the single-file loaders below
+/* ---- shared media-display helpers -- both the single-file loaders below
    and the gallery further down reuse the same videoGroup infrastructure, so
    a photo, a video, and a folder of either all land on screen the same way. ---- */
 function applyImageTexture(url, onDone, onError){
@@ -1385,19 +1484,41 @@ function applyImageTexture(url, onDone, onError){
     tex.minFilter = THREE.LinearFilter;
     tex.magFilter = THREE.LinearFilter;
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-    // Replace material on both eye meshes
+    // Replace material on both eye meshes. The outgoing material is only
+    // disposed when it's a previous image's material -- the persistent video
+    // materials (videoMatL/videoMatR) must survive being swapped out here so
+    // a video loaded afterward can reuse them; see restoreVideoMaterials().
     const matL = new THREE.MeshBasicMaterial({ map: tex });
     const matR = new THREE.MeshBasicMaterial({ map: tex.clone() });
     matR.map.colorSpace = THREE.SRGBColorSpace;
-    [videoMeshL.material, videoMeshR.material].forEach(m=>m.dispose());
-    videoMeshL.material = matL;
-    videoMeshR.material = matR;
+    [[videoMeshL, matL], [videoMeshR, matR]].forEach(([mesh, newMat])=>{
+      if (mesh.material !== videoMatL && mesh.material !== videoMatR) mesh.material.dispose();
+      mesh.material = newMat;
+    });
     // Pause any running video
     if (!video.paused) video.pause();
+    stopReverse();
     usingImage = true;
     applyVideoLayout(tex.image.width, tex.image.height);
     onDone(tex.image.width, tex.image.height);
   }, undefined, onError);
+}
+
+// Showing an image (loadSBSImage / a gallery photo) swaps the eye meshes onto
+// one-off image materials above, which leaves the persistent video materials
+// orphaned -- nothing pointed the meshes back at them, so a video loaded
+// afterward kept rendering the last photo's frozen texture instead of new
+// frames. Every video entry point (playVideo / showGalleryVideo) calls this
+// first to put the original video materials back before playback starts.
+function restoreVideoMaterials(){
+  if (videoMeshL.material !== videoMatL){
+    videoMeshL.material.dispose();
+    videoMeshL.material = videoMatL;
+  }
+  if (videoMeshR.material !== videoMatR){
+    videoMeshR.material.dispose();
+    videoMeshR.material = videoMatR;
+  }
 }
 
 async function startVideoPlayback(src){
@@ -1415,7 +1536,52 @@ async function startVideoPlayback(src){
   }
 }
 
-/* ---- SBS image loader — reuses the video plane infrastructure ---- */
+/* ---- transport controls (SPACE / Shift+SPACE, wired below) -------------
+   Native <video> playbackRate can't go negative in any browser that matters
+   here (Chrome ignores a negative value; Safari is unreliable), so reverse
+   playback is simulated: pause the element and step currentTime backward
+   every frame, at the same wall-clock rate forward playback would use. ---- */
+let reverseRAF = null;
+
+function stopReverse(){
+  if (reverseRAF != null){ cancelAnimationFrame(reverseRAF); reverseRAF = null; }
+}
+
+function stepReverse(now, last){
+  if (reverseRAF == null) return;   // stopped since this frame was scheduled
+  const dt = (now - last) / 1000;
+  let t = video.currentTime - dt;
+  if (t <= 0) t = video.loop ? (video.duration || 0) + t : 0;   // wrap, matching video.loop
+  video.currentTime = Math.max(0, t);
+  if (t <= 0 && !video.loop){ stopReverse(); return; }
+  reverseRAF = requestAnimationFrame(n => stepReverse(n, now));
+}
+
+function startReverse(){
+  if (!(video.duration > 0)) return;
+  if (!video.paused) video.pause();
+  stopReverse();
+  reverseRAF = requestAnimationFrame(n => stepReverse(n, n));
+}
+
+function togglePlayPause(){
+  if (reverseRAF != null){ stopReverse(); toast('PAUSED'); return; }
+  if (video.paused){ video.play().catch(()=>{}); toast('PLAY'); }
+  else { video.pause(); toast('PAUSED'); }
+}
+
+function toggleReverse(){
+  if (reverseRAF != null){
+    stopReverse();
+    video.play().catch(()=>{});
+    toast('PLAY');
+  } else {
+    startReverse();
+    toast('REVERSE');
+  }
+}
+
+/* ---- SBS image loader -- reuses the video plane infrastructure ---- */
 function loadSBSImage(file){
   const url = mediaObjectURL(file);
   const label = file.name;
@@ -1436,6 +1602,8 @@ function loadSBSImage(file){
 
 async function playVideo(src, label, file){
   usingImage = false;
+  stopReverse();
+  restoreVideoMaterials();
   const sbsHint = await resolveSbsHint(label, file);
   if (sbsHint.value !== state.sourceSbs){
     state.sourceSbs = sbsHint.value;
@@ -1457,9 +1625,8 @@ async function playVideo(src, label, file){
   refreshMenu();
   if (label) toast(label.toUpperCase().slice(0, 28));
 }
-
 /* =========================================================================
-   Gallery — load several photos/videos at once (a picked folder, or a
+   Gallery -- load several photos/videos at once (a picked folder, or a
    multi-select) and step through them with the on-screen ‹ › arrows.
    Every item lands on the same videoGroup infrastructure as a single loaded
    image/video above; only the source URL and kind change per item.
@@ -1546,7 +1713,7 @@ function showGalleryItem(idx){
   if (!galleryItems.length) return;
   galleryIdx = ((idx % galleryItems.length) + galleryItems.length) % galleryItems.length;
   state.shape = galleryIdx;   // keep the repurposed GALLERY row in sync
-  refreshMenu();              // update the row's shown value immediately — independent of load success
+  refreshMenu();              // update the row's shown value immediately -- independent of load success
   const item = galleryItems[galleryIdx];
   if (item.kind === 'image') showGalleryImage(item);
   else showGalleryVideo(item);
@@ -1569,6 +1736,8 @@ function showGalleryImage(item){
 
 async function showGalleryVideo(item){
   usingImage = false;
+  stopReverse();
+  restoreVideoMaterials();
   if (!item.sbsChecked){
     const sbsHint = await resolveSbsHint(item.name, item.file);
     item.isSbs = sbsHint.value;
@@ -1604,8 +1773,7 @@ folderFiles.addEventListener('change', ()=>{
 const menu = document.getElementById('menu');
 const helpDlg = document.getElementById('helpDlg');
 const loadTypeDlg = document.getElementById('loadTypeDlg');
-const loadDlg = document.getElementById('loadDlg');
-const urlDlg  = document.getElementById('urlDlg');
+const urlDlg = document.getElementById('urlDlg');
 const urlInput = document.getElementById('urlInput');
 const hint = document.getElementById('hint');
 const toastEls = document.querySelectorAll('.toast');
@@ -1623,9 +1791,9 @@ function toast(msg){
 }
 
 /* ---- top-level UI state ----
-   'view' — just watching, chrome is a title + a gear button
-   'osd'  — hardware-monitor-style settings, one item at a time
-   'list' — the full scrollable settings panel (opened from the OSD via the logo) */
+   'view' -- just watching, chrome is a title + a gear button
+   'osd'  -- hardware-monitor-style settings, one item at a time
+   'list' -- the full scrollable settings panel (opened from the OSD via the logo) */
 let uiState = 'view';
 function setUiState(next){
   uiState = next;
@@ -1633,9 +1801,10 @@ function setUiState(next){
 }
 
 /* =========================================================================
-   OSD — flat navigation. SECTION / ITEM on top, the current value below.
-   ↑/↓ move between items and wrap around at either end; long-press the
-   centre text to close; ‹/› or ←/→ change the value.
+   OSD -- flat navigation. Three centre rows: section name, current value,
+   setting name (top to bottom). ↑/↓ move between items and wrap around at
+   either end; long-press the centre text to close; ‹/› or ←/→ change the
+   value.
    ========================================================================= */
 let osdItems = [];     // flat array of all menu items with sectionLabel
 let osdFocusIdx = 0;
@@ -1645,6 +1814,7 @@ function buildOsdItems(){
   MENU.forEach(section=>{
     section.items.forEach(item=>{
       if (item.type === 'hr') return;
+      if (item.when && !item.when.split(',').includes(state.content)) return;
       osdItems.push({ ...item, sectionLabel: section.title });
     });
   });
@@ -1659,8 +1829,9 @@ function renderOsd(){
   if (item.type === 'check') val = state[item.key] ? 'YES' : 'NO';
   else if (item.type === 'step')  val = fmt(item.key, state[item.key]);
   else if (item.type === 'enum')  val = item.options[state[item.key]];
-  botPanesEl.querySelectorAll('.osdParent').forEach(el => el.textContent = `${item.sectionLabel} / ${item.label}`);
+  botPanesEl.querySelectorAll('.osdSection').forEach(el => el.textContent = item.sectionLabel);
   botPanesEl.querySelectorAll('.osdName').forEach(el => el.textContent = val);
+  botPanesEl.querySelectorAll('.osdLabel').forEach(el => el.textContent = item.label);
 }
 
 function osdChangeItem(dir){
@@ -1734,7 +1905,7 @@ function openList(){
   menu.hidden = false;
   setUiState('list');
   document.body.dataset.chrome = '1';
-  setMenuFocus(0, false);   // instant on open — avoids a flash of the unscrolled empty top
+  setMenuFocus(0, false);   // instant on open -- avoids a flash of the unscrolled empty top
 }
 function closeList(){
   menuFocusIdx = -1;
@@ -1747,14 +1918,87 @@ function closeList(){
 botbar.addEventListener('click', e=>{
   if (e.target.closest('.gearBtn')){ if (uiState === 'osd') closeOsd(); else openOsd(); }
 });
-btnLoad.addEventListener('click', ()=>{ loadTypeDlg.hidden = false; });
+/* Load picker -- the one dialog that's duplicated per eye when 3D SBS is on
+   (see the project's gyros-viewer skill for why the others aren't): it's
+   opened from the topbar, a moment the phone is still in the headset, unlike
+   Help/URL which assume the phone is already out. Single level -- every
+   source is one list, no FROM FILE/FROM URL chooser in between; local
+   sources first (each just opens the OS file/gallery picker -- on iOS that
+   picker itself offers Photo Library / Take Photo or Video / Choose File for
+   IMAGE/VIDEO, nothing extra to build here), a divider, then the two URL
+   entries. Same one-pane-per-eye treatment as buildPanes()/buildBotPanes(). */
+function loadTypePaneHTML(){
+  return `<div class="paneInner">
+      <div class="paneTitle">LOAD</div>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="demo"><span class="label">DEMO SHAPE</span></button>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="video"><span class="label">IMAGE / VIDEO</span></button>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="folder"><span class="label">FOLDER (PHOTOS + VIDEOS)</span></button>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="model"><span class="label">3D MODEL (.OBJ / .STL)</span></button>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="videoUrl"><span class="label">IMAGE / VIDEO URL</span></button>
+      <div class="hr"></div>
+      <button class="row" data-loadtype="modelUrl"><span class="label">3D MODEL URL</span></button>
+    </div>`;
+}
+function buildLoadTypeDlg(){
+  const count = state.sbs ? 2 : 1;
+  if (loadTypeDlg.children.length === count) return;
+  loadTypeDlg.innerHTML = '';
+  for (let i = 0; i < count; i++){
+    const pane = document.createElement('div');
+    pane.className = 'dlgPane';
+    pane.innerHTML = loadTypePaneHTML();
+    loadTypeDlg.appendChild(pane);
+  }
+}
+
+// Switches back to the rotating demo solid -- the only way back once a
+// model, photo/video or folder has been loaded, short of reloading the app.
+// Coming from a gallery/standalone load, the shape row has been repurposed
+// to list that media (see setStandaloneMedia/loadGalleryFiles above) and
+// state.shape indexes into it, not SHAPES, so that has to be undone too.
+function loadDemo(){
+  const wasGallery = ENUM_SPEC.shape.options !== SHAPES;
+  if (state.content === 'demo' && !wasGallery){
+    toast(SHAPES[state.shape]);
+    return;   // already browsing the demo shapes -- nothing to restore
+  }
+  if (wasGallery){
+    clearGallery();
+    ENUM_SPEC.shape.label = 'DEMO';
+    ENUM_SPEC.shape.options = SHAPES;
+    menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
+      const labelEl = el.closest('.row')?.querySelector('.label');
+      if (labelEl) labelEl.textContent = 'DEMO';
+    });
+    state.shape = 0;
+  }
+  state.content = 'demo';
+  if (!video.paused) video.pause();
+  stopReverse();
+  buildDemo(state.shape);
+  applyAll();
+  refreshMenu();
+  toast(SHAPES[state.shape]);
+}
+
+btnLoad.addEventListener('click', ()=>{ buildLoadTypeDlg(); loadTypeDlg.hidden = false; });
 loadTypeDlg.addEventListener('click', e=>{
   const row = e.target.closest('[data-loadtype]');
   if (!row) return;
   loadTypeDlg.hidden = true;
-  const type = row.dataset.loadtype;
-  if (type === 'folder') folderFiles.click();
-  else openLoadDlg(type);
+  switch (row.dataset.loadtype){
+    case 'demo':     loadDemo(); break;
+    case 'video':    videoFile.click(); break;
+    case 'folder':   folderFiles.click(); break;
+    case 'model':    modelFile.click(); break;
+    case 'videoUrl': openUrlDlg('video'); break;
+    case 'modelUrl': openUrlDlg('model'); break;
+  }
 });
 appTitle.addEventListener('click', ()=>{
   if (uiState === 'list') return;
@@ -1763,25 +2007,6 @@ appTitle.addEventListener('click', ()=>{
   if (uiState === 'view') openOsd(); // initialise OSD context
   openList();
 });
-
-/* ---- load-source picker ---- */
-let loadDlgContent = 'model';
-function openLoadDlg(forContent){
-  loadDlgContent = forContent;
-  document.getElementById('loadDlgTitle').textContent =
-    forContent === 'video' ? 'LOAD VIDEO' : 'LOAD MODEL';
-  loadDlg.hidden = false;
-}
-document.getElementById('loadFileBtn').addEventListener('click', ()=>{
-  loadDlg.hidden = true;
-  if (loadDlgContent === 'video') videoFile.click();
-  else modelFile.click();
-});
-document.getElementById('loadUrlBtn').addEventListener('click', ()=>{
-  loadDlg.hidden = true;
-  openUrlDlg(loadDlgContent);
-});
-
 /* ---- URL dialog (video or model) ---- */
 let urlMode = 'video';
 function openUrlDlg(mode){
@@ -1806,7 +2031,7 @@ function submitUrl(){
   const ext = label.split('.').pop().toLowerCase();
   if (urlMode === 'model') loadModel(url, ext, label);
   else if (['jpg','jpeg','png','webp','gif','avif'].includes(ext)){
-    // Treat image URLs as SBS images — fetch as blob then hand to loadSBSImage
+    // Treat image URLs as SBS images -- fetch as blob then hand to loadSBSImage
     fetch(url)
       .then(r=>r.blob())
       .then(blob=>{ const f = new File([blob], label, { type: blob.type }); loadSBSImage(f); })
@@ -1821,7 +2046,7 @@ btnHelp.addEventListener('click', ()=>{ helpDlg.hidden = false; });
 
 /* Tap the OSD centre text: single = next item (↓), double = prev item (↑).
    Closing the strip is done via Esc or by tapping the image area (stage),
-   see handleTap() — the centre text itself just steps through items. */
+   see handleTap() -- the centre text itself just steps through items. */
 let osdNavTapTimer = null, osdNavLastTap = 0;
 botbar.addEventListener('click', e=>{
   if (!e.target.closest('.osdNav')) return;
@@ -1897,7 +2122,7 @@ function setMenuFocus(idx, smooth = true){
     const paneItems = [...pane.querySelectorAll('.row:not([hidden]),.textbtn:not([hidden])')];
     if (paneItems[idx]) paneItems[idx].classList.add('kbfocus');
   });
-  // Keep the focused row vertically centred in the pane — the row stays fixed
+  // Keep the focused row vertically centred in the pane -- the row stays fixed
   // in the middle while the menu scrolls beneath it.
   const pane = menuPanes.querySelector('.pane');
   const item = items[idx];
@@ -1943,11 +2168,60 @@ document.addEventListener('keydown', e=>{
   /* ---- Escape ---- */
   if (e.key === 'Escape'){
     if (!loadTypeDlg.hidden){ loadTypeDlg.hidden = true; return; }
-    if (!loadDlg.hidden){ loadDlg.hidden = true; return; }
     if (!urlDlg.hidden){ urlDlg.hidden = true; return; }
     if (!helpDlg.hidden){ helpDlg.hidden = true; return; }
     if (uiState === 'list'){ closeList(); return; }
     if (uiState === 'osd'){ closeOsd(); return; }
+    return;
+  }
+
+  /* ---- Tab: swap between the full settings list and the OSD strip,
+     keeping the same focused row. The two are just different renderings of
+     the same MENU array in the same order (buildOsdItems() applies the same
+     'when' filtering navItems() gets for free from the live, already-
+     [hidden] DOM), so the focus index carries over directly -- no lookup by
+     key needed. Only meaningful while one of the two is actually open;
+     otherwise fall through to the browser's normal focus-cycling Tab. ---- */
+  if (e.key === 'Tab'){
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    if (uiState === 'list'){
+      e.preventDefault();
+      const idx = menuFocusIdx;
+      closeList();               // -> uiState 'osd', renders at the current osdFocusIdx
+      buildOsdItems();           // re-filter for freshness (content may have changed)
+      if (idx >= 0) osdFocusIdx = Math.max(0, Math.min(idx, osdItems.length - 1));
+      renderOsd();
+      return;
+    }
+    if (uiState === 'osd'){
+      e.preventDefault();
+      const idx = osdFocusIdx;
+      openList();                // -> uiState 'list', focused row 0 initially
+      setMenuFocus(idx, false);  // then land on the same row instead
+      return;
+    }
+    return;
+  }
+
+  /* ---- Space: pause/resume the loaded video; Shift+Space: play it
+     backwards (see stepReverse() above). Only meaningful for an actual
+     playing video -- usingImage is false only then, since a still image
+     reuses the same 'video' content type on the same <video> element. ---- */
+  if (e.code === 'Space'){
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    if (state.content !== 'video' || usingImage || !video.src) return;
+    e.preventDefault();
+    if (e.shiftKey) toggleReverse(); else togglePlayPause();
+    return;
+  }
+
+  /* ---- R: reset all settings to defaults, from any UI state (view,
+     OSD strip or full list) -- same effect as the RESET TO DEFAULTS row
+     in the full settings list, just reachable without opening it. ---- */
+  if (e.key === 'r' || e.key === 'R'){
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    e.preventDefault();
+    resetToDefaults();
     return;
   }
 
@@ -1970,12 +2244,12 @@ document.addEventListener('keydown', e=>{
   // When chrome is hidden, reveal it first, then continue with the action.
   if (document.body.dataset.chrome === '0') document.body.dataset.chrome = '1';
 
-  // View / idle mode — each arrow has a dedicated action:
+  // View / idle mode -- each arrow has a dedicated action:
   //   ↑  open the OSD strip (gear-menu)
   //   ↓  open the full settings list (logo-menu)
   //   ←  decrease eye distance
   //   →  increase eye distance
-  //   Shift + any arrow instead nudges POS X/Y — same direction sense as
+  //   Shift + any arrow instead nudges POS X/Y -- same direction sense as
   //   dragging: Shift+→/↑ increase posX/posY, Shift+←/↓ decrease them.
   if (uiState === 'view'){
     if (e.shiftKey){
@@ -2037,7 +2311,6 @@ document.addEventListener('keydown', e=>{
     }
     return;
   }
-
   // List mode (full settings panel):
   //   ↑  navigate up;  at first item → close list (back to OSD)
   //   ↓  navigate down; at last item → close list (confirm)
@@ -2058,7 +2331,7 @@ document.addEventListener('keydown', e=>{
       }
       case 'ArrowLeft':
       case 'ArrowRight': {
-        // Suppress OS key-repeat — we drive our own accelerating timer.
+        // Suppress OS key-repeat -- we drive our own accelerating timer.
         if (e.repeat) break;
         stopKbHold();
 
@@ -2075,7 +2348,7 @@ document.addEventListener('keydown', e=>{
         if (valBtn){
           const act = valBtn.dataset.act;
           const key = valBtn.dataset.key;
-          // Direct step call — no click event needed, more reliable inside a timer
+          // Direct step call -- no click event needed, more reliable inside a timer
           const doStep = () => {
             if (act === 'step') stepValue(key, dir);
             else stepEnumValue(ENUM_SPEC[key], dir);
@@ -2092,13 +2365,13 @@ document.addEventListener('keydown', e=>{
           kbHoldTimer = setTimeout(go, 400);
           break;
         }
-        // bool — 2-value cycle, no hold (toggle on each press)
+        // bool -- 2-value cycle, no hold (toggle on each press)
         const boolBtn = cur.querySelector('[data-act="boolstep"]');
         if (boolBtn){
           const key = boolBtn.dataset.key;
           cur.querySelector(`[data-act="boolstep"][data-dir="${state[key] ? '-1' : '1'}"]`)?.click();
         } else if (cur.dataset.act){
-          // plain action row (RESET TO DEFAULTS, CLOSE, RECENTER, …) — nothing
+          // plain action row (RESET TO DEFAULTS, CLOSE, RECENTER, …) -- nothing
           // to step, so either arrow just submits it, same as a tap/click.
           cur.click();
         }
@@ -2121,6 +2394,15 @@ function stepValue(key, dir){
   saveState();
 }
 
+function resetToDefaults(){
+  Object.assign(state, DEFAULTS, { content: state.content, shape: state.shape });
+  buildPanes();
+  buildBotPanes();
+  applyAll();
+  refreshMenu();
+  toast('DEFAULTS RESTORED');
+}
+
 function handleAct(act, el){
   const key = el.dataset.key;
   switch (act){
@@ -2138,13 +2420,12 @@ function handleAct(act, el){
       break;
     case 'recenter':  recenter(); break;
     case 'closeList': closeList(); break;
+    case 'closeMenu':
+      if (uiState === 'list') closeList();
+      else if (uiState === 'osd') closeOsd();
+      break;
     case 'reset':
-      Object.assign(state, DEFAULTS, { content: state.content, shape: state.shape });
-      buildPanes();
-      buildBotPanes();
-      applyAll();
-      refreshMenu();
-      toast('DEFAULTS RESTORED');
+      resetToDefaults();
       break;
   }
 }
@@ -2165,7 +2446,7 @@ menu.addEventListener('click', e=>{
 
   const el = e.target.closest('[data-act]');
   if (el && menu.contains(el)){ handleAct(el.dataset.act, el); return; }
-  // Close when clicking outside .paneInner OR directly on .paneInner itself —
+  // Close when clicking outside .paneInner OR directly on .paneInner itself --
   // the latter catches the 50 vh empty padding above and below the row list.
   if (!e.target.closest('.paneInner') || e.target.matches('.paneInner')) closeList();
 });
@@ -2209,7 +2490,7 @@ menu.addEventListener('pointerdown', e=>{
 ['pointerup','pointercancel','pointerleave'].forEach(ev=>menu.addEventListener(ev, stopHold));
 
 /* =========================================================================
-   Gestures on the viewer — the headset has no other input
+   Gestures on the viewer -- the headset has no other input
      1 finger drag        pan            (POS X / POS Y)
      pinch                zoom           (ZOOM XY)
      2 fingers up/down    eye distance   (EYE DISTANCE)
@@ -2302,6 +2583,7 @@ stage.addEventListener('pointermove', e=>{
   } else {
     return;
   }
+  updateQuad();        // ZOOM (XY) lives on the quad now, not the camera -- see updateQuad()
   applyEyeDistance();
   applyEyeProjection();
 });
@@ -2328,7 +2610,7 @@ stage.addEventListener('pointerup', endPointer);
 stage.addEventListener('pointercancel', endPointer);
 
 /* =========================================================================
-   Desktop wheel / trackpad gestures — complement to the pointer gestures
+   Desktop wheel / trackpad gestures -- complement to the pointer gestures
      scroll (mouse wheel or trackpad 2-finger swipe)  →  zoom (ZOOM XY)
      pinch on trackpad (macOS sends wheel + ctrlKey)   →  zoom (ZOOM XY)
 
@@ -2355,6 +2637,7 @@ stage.addEventListener('wheel', e => {
   setValue('zoom', (factor - 1) * 100);
   toast(`ZOOM ${state.zoom}`);
 
+  updateQuad();        // ZOOM (XY) lives on the quad now, not the camera -- see updateQuad()
   applyEyeDistance();
   applyEyeProjection();
 
@@ -2365,7 +2648,7 @@ stage.addEventListener('wheel', e => {
 
 window.addEventListener('orientationchange', ()=>setTimeout(onResize, 200));
 
-/* wake lock — keep the screen on while the headset is on your face */
+/* wake lock -- keep the screen on while the headset is on your face */
 let wakeLock = null;
 async function requestWakeLock(){
   try{ if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); }
