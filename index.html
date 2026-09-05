@@ -1941,6 +1941,7 @@ function renderOsd(){
   if (item.type === 'check') val = state[item.key] ? 'YES' : 'NO';
   else if (item.type === 'step')  val = fmt(item.key, state[item.key]);
   else if (item.type === 'enum')  val = item.options[state[item.key]];
+  else if (item.type === 'action') val = 'CONFIRM';   // fills the otherwise-empty VALUE slot for action rows
   botPanesEl.querySelectorAll('.osdSection').forEach(el => el.textContent = item.sectionLabel);
   botPanesEl.querySelectorAll('.osdName').forEach(el => el.textContent = val);
   botPanesEl.querySelectorAll('.osdLabel').forEach(el => el.textContent = item.label);
