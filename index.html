@@ -146,6 +146,12 @@
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     font-size:22px;font-weight:700;letter-spacing:0.06em;color:var(--text);
   }
+  /* Action rows (RECENTER, RESET TO DEFAULTS, CLOSE): the name and the "how
+     to confirm" caption together read as one instruction, so both go in the
+     accent colour -- the section caption above stays muted like every other
+     row. */
+  .osdNav.isAction .osdName,
+  .osdNav.isAction .osdLabel{color:var(--accent);}
 
   /* the full settings list takes the whole screen; it has its own close (tap outside) */
   body[data-ui="list"] #topbar,
@@ -1937,14 +1943,25 @@ function renderOsd(){
   if (uiState !== 'osd') return;
   const item = osdItems[osdFocusIdx];
   if (!item) return;
-  let val = '';
+  let val = '', label = item.label;
   if (item.type === 'check') val = state[item.key] ? 'YES' : 'NO';
   else if (item.type === 'step')  val = fmt(item.key, state[item.key]);
   else if (item.type === 'enum')  val = item.options[state[item.key]];
-  else if (item.type === 'action') val = 'CONFIRM';   // fills the otherwise-empty VALUE slot for action rows
+  else if (item.type === 'action'){
+    // Action rows have no value to show, so the big centre text is the
+    // action's own name instead, with the small caption underneath spelling
+    // out how to fire it (rather than the name being relegated to the
+    // caption and a bare "CONFIRM" sitting in the big VALUE slot).
+    val = item.label;
+    label = 'HIT LEFT OR RIGHT TO CONFIRM';
+  }
   botPanesEl.querySelectorAll('.osdSection').forEach(el => el.textContent = item.sectionLabel);
   botPanesEl.querySelectorAll('.osdName').forEach(el => el.textContent = val);
-  botPanesEl.querySelectorAll('.osdLabel').forEach(el => el.textContent = item.label);
+  botPanesEl.querySelectorAll('.osdLabel').forEach(el => el.textContent = label);
+  // Action rows: pick out both the name and the "how to confirm" caption in
+  // the accent colour, since together they're effectively one instruction
+  // rather than a value/label pair -- the section caption above stays muted.
+  botPanesEl.querySelectorAll('.osdNav').forEach(el => el.classList.toggle('isAction', item.type === 'action'));
 }
 
 function osdChangeItem(dir){
