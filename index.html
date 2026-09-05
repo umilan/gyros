@@ -28,6 +28,14 @@
   }
 
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  /* Every control here is driven by our own keyboard/pointer handlers, not
+     native Tab-through-and-Enter, so the browser's default keyboard-focus
+     ring (the blue outline Chrome/Safari draw on a focused button/input)
+     never means anything the user needs to see -- it only doubles up with
+     our own, deliberately different, .kbfocus highlight in the full list.
+     Killed globally; .kbfocus below still wins where it applies (higher
+     specificity than this universal rule). */
+  *:focus,*:focus-visible{outline:none;}
   [hidden]{display:none !important;}
   html,body{height:100%;margin:0;}
   body{
@@ -352,7 +360,7 @@
       <div class="section">CONTROLS</div>
       <p class="helpText"><b>GESTURES</b> — drag to pan (POS X/Y), pinch to content-zoom, two fingers up/down adjusts eye distance, tap to show or hide the controls, double-tap to recenter.</p>
       <p class="helpText"><b>SCROLL / PINCH</b> — mouse wheel or trackpad pinch zooms into the content (CONTENT ZOOM), not the on-screen picture box.</p>
-      <p class="helpText"><b>KEYBOARD</b> — there's no gear icon: the settings strip is always what appears when the controls are shown, so <b>↑/↓/←/→</b> go straight to navigating it (see SETTINGS STRIP below). <b>Tab</b> or clicking/tapping the <b>GYROS</b> logo opens the full list instead. <b>Shift + arrows</b> shifts the image position (X/Y). <b>R</b> resets all settings to defaults. With a video loaded: <b>Space</b> pauses or resumes it, <b>Shift + Space</b> plays it backwards.</p>
+      <p class="helpText"><b>KEYBOARD</b> — there's no gear icon: the settings strip is always what appears when the controls are shown, so <b>↑/↓/←/→</b> go straight to navigating it (see SETTINGS STRIP below). <b>Tab</b> or clicking/tapping the <b>GYROS</b> logo opens the full list instead. <b>Shift + arrows</b> shifts the image position (X/Y). <b>R</b> resets all settings to defaults. <b>O</b> opens the load menu from anywhere, including the idle screen. With a video loaded: <b>Space</b> pauses or resumes it, <b>Shift + Space</b> plays it backwards.</p>
       <p class="helpText"><b>SETTINGS STRIP</b> — <b>↑/↓</b> move between items and wrap around at either end; <b>←/→</b> changes the value; tap the image, or press <b>Esc</b>, to hide the controls. <b>Tab</b>, or the <b>GYROS</b> logo, opens the full list.</p>
       <p class="helpText"><b>FULL LIST</b> — <b>↑/↓</b> move between items (past either end closes); <b>←/→</b> changes the value, or submits a highlighted row like RESET or CLOSE. <b>WASD</b> works too. <b>Tab</b> or <b>Esc</b> returns to the settings strip.</p>
     </div>
@@ -2419,12 +2427,30 @@ document.addEventListener('keydown', e=>{
   /* ---- Space: pause/resume the loaded video; Shift+Space: play it
      backwards (see stepReverse() above). Only meaningful for an actual
      playing video -- usingImage is false only then, since a still image
-     reuses the same 'video' content type on the same <video> element. ---- */
+     reuses the same 'video' content type on the same <video> element.
+     preventDefault() unconditionally (not just when we actually act) so the
+     browser never gets a chance to run Space's OWN default action -- on the
+     idle screen (nothing loaded yet, content is still 'demo') that default
+     action used to be "activate whatever element still has native keyboard
+     focus", which after a previous tap could be the LOAD icon button,
+     reopening the load dialog with no code here asking for that. Explicit
+     opening is O below, not Space. ---- */
   if (e.code === 'Space'){
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
-    if (state.content !== 'video' || usingImage || !video.src) return;
     e.preventDefault();
+    if (state.content !== 'video' || usingImage || !video.src) return;
     if (e.shiftKey) toggleReverse(); else togglePlayPause();
+    return;
+  }
+
+  /* ---- O: open the LOAD dialog, from any UI state (idle screen included)
+     -- the deliberate keyboard equivalent of tapping the topbar's folder
+     icon, without needing chrome revealed first. ---- */
+  if (e.key === 'o' || e.key === 'O'){
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+    e.preventDefault();
+    buildLoadTypeDlg();
+    loadTypeDlg.hidden = false;
     return;
   }
 
