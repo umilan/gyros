@@ -322,7 +322,7 @@
       <div class="section">CONTROLS</div>
       <p class="helpText"><b>GESTURES</b> — drag to pan (POS X/Y), pinch to content-zoom, two fingers up/down adjusts eye distance, tap to show or hide the controls, double-tap to recenter.</p>
       <p class="helpText"><b>SCROLL / PINCH</b> — mouse wheel or trackpad pinch zooms into the content (CONTENT ZOOM), not the on-screen picture box.</p>
-      <p class="helpText"><b>KEYBOARD</b> — while viewing: <b>↑</b> opens the settings strip, <b>↓</b> opens the full list, <b>←/→</b> change eye distance, <b>Shift + arrows</b> shifts the image position (X/Y), <b>R</b> resets all settings to defaults. With a video loaded: <b>Space</b> pauses or resumes it, <b>Shift + Space</b> plays it backwards.</p>
+      <p class="helpText"><b>KEYBOARD</b> — the settings strip is shown by default, so <b>↑/↓/←/→</b> go straight to navigating it (see SETTINGS STRIP below). If it's been collapsed to just the gear icon: <b>↑</b> reopens the strip, <b>↓</b> opens the full list, <b>←/→</b> change eye distance, <b>Shift + arrows</b> shifts the image position (X/Y). <b>R</b> resets all settings to defaults. With a video loaded: <b>Space</b> pauses or resumes it, <b>Shift + Space</b> plays it backwards.</p>
       <p class="helpText"><b>SETTINGS STRIP</b> — <b>↑/↓</b> move between items and wrap around at either end; tap the image, or press <b>Esc</b>, to close. <b>←/→</b> changes the value.</p>
       <p class="helpText"><b>FULL LIST</b> — <b>↑/↓</b> move between items (past either end closes); <b>←/→</b> changes the value, or submits a highlighted row like RESET or CLOSE. <b>WASD</b> works too. <b>Esc</b> closes either.</p>
     </div>
@@ -1894,10 +1894,13 @@ function toast(msg){
 }
 
 /* ---- top-level UI state ----
-   'view' — just watching, chrome is a title + a gear button
-   'osd'  — hardware-monitor-style settings, one item at a time
+   'view' — just watching, chrome is a title + a gear button (reachable via
+            closeOsd(): Esc, a long-press on the OSD centre text, etc.)
+   'osd'  — hardware-monitor-style settings, one item at a time -- the default,
+            so the bottom settings strip is exposed directly (once chrome is
+            revealed) without an extra tap on a gear icon first
    'list' — the full scrollable settings panel (opened from the OSD via the logo) */
-let uiState = 'view';
+let uiState = 'osd';
 function setUiState(next){
   uiState = next;
   document.body.dataset.ui = next;
@@ -2656,6 +2659,16 @@ function handleTap(){
     return;
   }
   lastTapAt = now;
+  if (document.body.dataset.chrome === '0'){
+    // Chrome is hidden -- the first tap always reveals it (showing the OSD
+    // settings strip directly, since that's the default uiState), regardless
+    // of uiState. Without this, a tap while uiState is already 'osd' but
+    // chrome is still hidden would fall into the "exit OSD" branch below and
+    // do nothing visible at all.
+    document.body.dataset.chrome = '1';
+    tapTimer = setTimeout(()=>{ tapTimer = null; }, TAP_MS);
+    return;
+  }
   if (uiState === 'osd'){
     // Tapping the image area exits the settings strip, mirroring Esc.
     tapTimer = setTimeout(()=>{ tapTimer = null; closeOsd(); }, TAP_MS);
@@ -2795,12 +2808,13 @@ document.addEventListener('visibilitychange', ()=>{
 loadState();
 document.body.dataset.sbs = state.sbs ? '1' : '0';
 document.body.dataset.chrome = '0';   // idle screen starts with UI hidden; tap to reveal
-document.body.dataset.ui = 'view';
+document.body.dataset.ui = 'osd';     // settings strip is exposed directly once revealed -- no gear-icon step
 document.body.dataset.gallery = '0';
 
 initThree();
 buildPanes();
 buildTopPanes();
+buildOsdItems();   // populate osdItems before buildBotPanes()'s renderOsd() call needs them
 buildBotPanes();
 applyAll();
 animate();
