@@ -53,6 +53,8 @@
     pointer-events:none;z-index:20;
   }
   body[data-sbs="0"] #divider{display:none;}
+  /* Hide the divider along with the rest of the chrome on the idle screen */
+  body[data-chrome="0"] #divider{opacity:0;}
 
   /* ---------------- chrome bars ---------------- */
   .bar{
@@ -321,6 +323,7 @@
       <div class="hr"></div>
       <div class="section">SETTINGS</div>
       <p class="helpText"><b>CONTENT ZOOM</b> — zooms into the content itself (photo, video, model or demo). Pan with POS X/Y to explore once zoomed in.</p>
+      <p class="helpText"><b>ANGLE</b> — straightens a crooked photo or video, from zero, both ways: positive values rotate it clockwise, negative counter-clockwise.</p>
       <p class="helpText"><b>POSITIONING / ZOOM (XY)</b> — shift and resize the on-screen picture box, and drag its 4 corners (TRAPEZOID), to align it with your lenses. This does not change the content's framing, only where/how big it sits on screen.</p>
       <p class="helpText"><b>BRIGHTNESS</b> — darkens or brightens the content; the settings list and menus are unaffected.</p>
       <p class="helpText"><b>GYRO</b> — multiply, freeze or invert each axis of head tracking. RECENTER sets the current heading as forward.</p>
@@ -388,6 +391,9 @@ const DEFAULTS = {
   shape: 0,               // index into SHAPES
   sourceSbs: false,       // video source is side-by-side stereo
   autoRotate: true,       // spin demo / loaded model
+  contentAngle: 0,        // ANGLE (photo/video only): straightens content shot at a
+                            // tilt, -180..180 from zero. Positive = clockwise,
+                            // negative = counter-clockwise, as the viewer sees it.
   fov: 0,                  // PERSPECTIVE, -100..100: 0 = undistorted; negative is a
                             // concave/pinch warp, positive a convex/bulge warp — a
                             // pure 2D post-process, camera FOV is unaffected. See
@@ -454,7 +460,8 @@ const MENU = [
   { title:'CONTENT', items:[
     { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
     { type:'check', key:'autoRotate', label:'AUTO ROTATE' },
-    { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' }
+    { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
+    { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
   ]},
   { title:'POSITIONING', items:[
     { type:'step', key:'contentZoom', label:'CONTENT ZOOM', min:-90, max:300, step:2 },
@@ -663,6 +670,12 @@ function refreshMenu(){
   menuPanes.querySelectorAll('[data-when]').forEach(el=>{
     el.hidden = !el.dataset.when.split(',').includes(state.content);
   });
+  // Keep the settings-strip's flattened item list in sync with the same
+  // content-based filtering the full list just applied above via [hidden] --
+  // otherwise a 'when'-gated row (e.g. ANGLE, SBS SOURCE) stays unreachable
+  // from the strip after loading a photo/video until something else happens
+  // to rebuild it (e.g. a Tab round-trip through the full list).
+  buildOsdItems();
   renderOsd();
 }
 
@@ -1126,6 +1139,15 @@ function applyEyeProjection(){
   if (world){
     const contentZoomMul = Math.max(0.1, 1 + state.contentZoom / 100);
     world.scale.setScalar(Math.min(1, aspect) * contentZoomMul);
+  }
+
+  // ANGLE straightens a crooked photo/video by rotating just the video/photo
+  // plane (videoGroup) about its own center -- demo/model content is
+  // untouched. Three.js's own rotation.z is CCW-positive for an object in
+  // front of the camera, so it's negated here to match the ANGLE control's
+  // CW-positive / CCW-negative convention as the viewer sees it on screen.
+  if (videoGroup){
+    videoGroup.rotation.z = -THREE.MathUtils.degToRad(state.contentAngle);
   }
 }
 
