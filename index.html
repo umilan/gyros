@@ -24,6 +24,7 @@
     --rnd:28px;
     --radius:4px;
     --font:"Helvetica Neue",Helvetica,Arial,"Segoe UI",system-ui,sans-serif;
+    --ui-eye-shift:0px;  /* SBS EYE DIST, kept updated from JS -- see applyUiEyeDist() */
   }
 
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -81,6 +82,25 @@
     flex:1 1 0;min-width:0;
     display:flex;align-items:center;justify-content:center;
     padding:var(--pad);
+  }
+
+  /* SBS EYE DIST: nudges each eye's whole UI layer (topbar, OSD strip, full
+     settings list) toward or away from the divider, independent of EYE
+     DISTANCE (which only moves the 3D content's stereo cameras). translateX
+     doesn't affect the flex layout, so this just visually offsets each pane
+     -- exactly the "picture box" trick POS X/Y already use for content.
+     Only meaningful with two panes on screen, hence the [data-sbs="1"] gate;
+     :first-child/:last-child rather than nth-child(1/2) so it still targets
+     the right pane pair regardless of any earlier siblings. */
+  body[data-sbs="1"] #topPanes .topPane:first-child,
+  body[data-sbs="1"] #botPanes .botPane:first-child,
+  body[data-sbs="1"] #menu .panes .pane:first-child{
+    transform:translateX(calc(-1 * var(--ui-eye-shift)));
+  }
+  body[data-sbs="1"] #topPanes .topPane:last-child,
+  body[data-sbs="1"] #botPanes .botPane:last-child,
+  body[data-sbs="1"] #menu .panes .pane:last-child{
+    transform:translateX(var(--ui-eye-shift));
   }
 
   body[data-chrome="0"] #topbar,
@@ -326,6 +346,7 @@
       <p class="helpText"><b>ANGLE</b> — straightens a crooked photo or video, from zero, both ways: positive values rotate it clockwise, negative counter-clockwise.</p>
       <p class="helpText"><b>POSITIONING / ZOOM (XY)</b> — shift and resize the on-screen picture box, and drag its 4 corners (TRAPEZOID), to align it with your lenses. This does not change the content's framing, only where/how big it sits on screen.</p>
       <p class="helpText"><b>BRIGHTNESS</b> — darkens or brightens the content; the settings list and menus are unaffected.</p>
+      <p class="helpText"><b>SBS EYE DIST</b> — shifts the UI itself (topbar, settings strip, full list) toward or away from the divider in each eye, to line up with your lenses. Separate from EYE DISTANCE, which only affects the 3D content's stereo depth.</p>
       <p class="helpText"><b>GYRO</b> — multiply, freeze or invert each axis of head tracking. RECENTER sets the current heading as forward.</p>
       <div class="hr"></div>
       <div class="section">CONTROLS</div>
@@ -387,6 +408,12 @@ const STORE_KEY = 'gyrosSettings';
 const DEFAULTS = {
   sbs: true,
   mirrorUI: false,   // flips the whole page (canvas + UI text) for mirror-viewed rigs
+  uiEyeDist: 0,      // SBS EYE DIST: shifts each eye's UI layer (topbar, OSD strip,
+                     // full settings list) toward (-) or away from (+) the divider,
+                     // -100..100 = percent of half the eye width, same convention as
+                     // POS X. Separate from EYE DISTANCE below, which only moves the
+                     // 3D content's stereo cameras -- this lines up the UI chrome
+                     // itself with the headset lens centers. No effect with 3D SBS off.
   content: 'demo',        // demo | model | video
   shape: 0,               // index into SHAPES
   sourceSbs: false,       // video source is side-by-side stereo
@@ -453,6 +480,7 @@ const MENU = [
   { title:'GENERAL', items:[
     { type:'check', key:'sbs', label:'3D SBS' },
     { type:'check', key:'mirrorUI', label:'MIRROR UI' },
+    { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:2 },
     { type:'step',  key:'fov', label:'PERSPECTIVE', min:-100, max:100, step:1 },
     { type:'step',  key:'brightness', label:'BRIGHTNESS', min:-100, max:100, step:2 },
     { type:'hr' }
@@ -1156,6 +1184,16 @@ function eyeSize(){
   return { w, h, ew: state.sbs ? w / 2 : w, eh: h };
 }
 
+/* SBS EYE DIST: recomputes the per-eye UI shift in real pixels from the
+   percent-of-half-eye-width state value (same convention as POS X) and
+   writes it to the --ui-eye-shift custom property the CSS above reads. Has
+   to be redone on resize, since it depends on the live eye width. */
+function applyUiEyeDist(){
+  const { ew } = eyeSize();
+  const shiftPx = (state.uiEyeDist / 100) * (ew / 2);
+  document.body.style.setProperty('--ui-eye-shift', shiftPx + 'px');
+}
+
 function onResize(){
   const { w, h, ew, eh } = eyeSize();
   const dpr = renderer.getPixelRatio();
@@ -1171,6 +1209,7 @@ function onResize(){
   rtR.texture.colorSpace = THREE.SRGBColorSpace;
 
   applyEyeProjection();
+  applyUiEyeDist();
 }
 
 /* =========================================================================
@@ -2541,6 +2580,7 @@ function stepValue(key, dir){
   updateQuad();
   applyEyeDistance();
   applyEyeProjection();
+  applyUiEyeDist();
   refreshMenu();
   saveState();
 }
