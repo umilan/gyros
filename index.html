@@ -149,27 +149,41 @@
   /* OSD bar — fills its .botPane. Layout: ▲ (previous item) and ▼ (next item)
      anchored to the pane's far edges; SECTION / ‹ VALUE › / LABEL stacked in
      the middle, with ‹ and › flanking the value directly. */
-  .osdBar{display:flex;flex:1;align-items:center;position:relative;}
+  /* min-width:0 overrides the flex-item default min-width:auto (= content's
+     min-content size), which would otherwise let a long nowrap SECTION/VALUE/
+     LABEL string balloon .osdBar past its real .botPane width and defeat
+     every ellipsis/overlap rule downstream in .osdNav -- see osdNav's own
+     min-width:0 comment above for the matching column-axis version of this. */
+  .osdBar{display:flex;flex:1;min-width:0;align-items:center;position:relative;}
   /* ▲/▼ (previous/next item) anchored to the pane's far edges */
   .osdItemUp{position:absolute;left:0;top:50%;transform:translateY(-50%);}
   .osdItemUp:active{transform:translateY(-50%) scale(0.92);}
   .osdItemDown{position:absolute;right:0;top:50%;transform:translateY(-50%);}
   .osdItemDown:active{transform:translateY(-50%) scale(0.92);}
 
-  /* Centre column: SECTION caption, then ‹ VALUE › row, then LABEL caption */
+  /* Centre column: SECTION caption, then ‹ VALUE › row, then LABEL caption --
+     horizontal padding here matches the ▲/▼ iconbtns' own 40px width so this
+     column's centred text never renders under/behind them, no matter how
+     long the section title, value or label gets (see the ellipsis rules
+     below, and osdValueRow's iconbtn rule) -- keeps both readable and the
+     arrows' full tap targets clear and clickable at any content length. */
   .osdNav{
     flex:1;min-width:0;height:64px;
-    display:flex;flex-direction:column;align-items:center;gap:0px;
-    padding:0px;
+    display:flex;flex-direction:column;align-items:stretch;gap:0px;
+    padding:0 40px;
     pointer-events:auto;
   }
   .osdValueRow{
     display:flex;align-items:center;justify-content:center;gap:8px;
     min-width:0;max-width:100%;
   }
+  /* ‹/› (change value) must never shrink to make room for a long VALUE --
+     osdName's min-width:0 + ellipsis below absorbs all the squeeze instead,
+     so these two stay their full 40x40 tap size and never overlap it. */
+  .osdValueRow .iconbtn{flex:0 0 auto;}
   .osdNav .caption{
     color:var(--muted);font-size:11px;font-weight:600;letter-spacing:0.22em;
-    text-align:center;white-space:nowrap;overflow:visible;text-overflow:ellipsis;max-width:100%;
+    text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;
   }
   .osdNav .name{
     min-width:0;max-width:100%;text-align:center;
@@ -306,11 +320,24 @@
   body[data-sbs="1"] .toastL{left:25%;}
   body[data-sbs="1"] .toastR{display:block;left:75%;}
 
+  /* diagnostic overlay, opt-in via ?debug=1 -- see kbDebugLog() below.
+     pointer-events:none so it can never intercept a tap/click even while
+     shown. */
+  #kbdebug{
+    position:fixed;top:0;left:0;z-index:99999;pointer-events:none;
+    max-width:100vw;max-height:60vh;overflow:hidden;
+    margin:0;padding:6px 8px;
+    background:rgba(0,0,0,0.65);color:#7CFC7C;
+    font:10px/1.35 ui-monospace,Menlo,Consolas,monospace;
+    white-space:pre-wrap;word-break:break-word;
+  }
+
 </style>
 </head>
 <body>
 <div id="stage"></div>
 <div id="divider"></div>
+<pre id="kbdebug" hidden></pre>
 
 <header class="bar" id="topbar">
   <div class="topPanes" id="topPanes"></div>
@@ -1241,8 +1268,16 @@ function screenAngleRad(){
   return THREE.MathUtils.degToRad(angle);
 }
 
+let kbDebugLastOriLog = 0;
 function onDeviceOrientation(e){
   if (e.alpha === null) return;
+  if (kbDebugOn){
+    const now = performance.now();
+    if (now - kbDebugLastOriLog > 300){ // throttled -- this event fires very fast
+      kbDebugLastOriLog = now;
+      kbDebugLog('ORI beta=' + (+e.beta).toFixed(1) + ' gamma=' + (+e.gamma).toFixed(1) + ' alpha=' + (+e.alpha).toFixed(1));
+    }
+  }
   haveOrientation = true;
   euler.set(
     THREE.MathUtils.degToRad(e.beta),
@@ -1266,10 +1301,12 @@ async function enableMotion(){
     if (typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function'){
       const resp = await DeviceOrientationEvent.requestPermission();
+      if (kbDebugOn) kbDebugLog('MOTION PERMISSION ' + resp);
       if (resp !== 'granted'){ toast('MOTION DENIED'); return false; }
     }
   }catch(e){
     console.error('[GYROS] motion permission error:', e);
+    if (kbDebugOn) kbDebugLog('MOTION PERMISSION ERROR ' + e.message);
     toast('MOTION ERROR');
     return false;
   }
@@ -1278,6 +1315,7 @@ async function enableMotion(){
   // of deviceorientation; try absolute first, fall back to relative.
   const orientEvt = ('ondeviceorientationabsolute' in window)
     ? 'deviceorientationabsolute' : 'deviceorientation';
+  if (kbDebugOn) kbDebugLog('MOTION GRANTED, listening for ' + orientEvt);
   window.addEventListener(orientEvt, onDeviceOrientation);
   hint.hidden = true;
   setTimeout(recenter, 250);
@@ -1971,6 +2009,50 @@ function toast(msg){
   toastEls.forEach(el=>{ el.textContent = msg; el.classList.add('show'); });
   clearTimeout(toastTimer);
   toastTimer = setTimeout(()=>toastEls.forEach(el=>el.classList.remove('show')), 1400);
+}
+
+/* ---- diagnostic overlay, opt-in via ?debug=1 in the URL ----
+   Load the page as .../index.html?debug=1 to see a live, on-device log of
+   every keydown the page actually receives, window blur/focus and
+   visibilitychange transitions, and a throttled read of the device
+   orientation's beta (front-back tilt) angle. This exists to answer one
+   question empirically rather than by guessing: when keyboard input on an
+   external Bluetooth/USB keyboard "stops working" at some phone tilt, does
+   a KEY line still appear here at that moment (meaning the page IS getting
+   the event and something in-app would be swallowing it -- nothing in this
+   codebase currently does that) or does it not appear at all (meaning the
+   OS/browser/hardware never delivered the keydown to the page, which is
+   outside anything this file can control -- e.g. a Bluetooth link or a USB
+   cable that loses connection at certain phone angles). No production
+   behaviour changes unless ?debug=1 is present. */
+const kbDebugOn = /(?:^|[?&])debug=1(?:&|$)/.test(location.search);
+const kbDebugEl = document.getElementById('kbdebug');
+const kbDebugLines = [];
+function kbDebugLog(line){
+  if (!kbDebugOn) return;
+  const t = (performance.now() / 1000).toFixed(2);
+  kbDebugLines.push(t + 's  ' + line);
+  if (kbDebugLines.length > 24) kbDebugLines.shift();
+  kbDebugEl.textContent = kbDebugLines.join('\n');
+}
+if (kbDebugOn){
+  kbDebugEl.hidden = false;
+  kbDebugLog('DEBUG OVERLAY ON');
+  // Capture phase on window, ahead of every other listener in this file, so
+  // this fires even if some future change adds a stopPropagation() upstream
+  // -- it should always reflect exactly what the browser delivered.
+  window.addEventListener('keydown', e=>{
+    kbDebugLog('KEY down key=' + JSON.stringify(e.key) + ' code=' + e.code +
+      ' active=' + (document.activeElement ? document.activeElement.tagName : 'null'));
+  }, true);
+  window.addEventListener('keyup', e=>{
+    kbDebugLog('KEY up   key=' + JSON.stringify(e.key));
+  }, true);
+  window.addEventListener('blur', ()=> kbDebugLog('WINDOW BLUR'));
+  window.addEventListener('focus', ()=> kbDebugLog('WINDOW FOCUS'));
+  document.addEventListener('visibilitychange', ()=>{
+    kbDebugLog('VISIBILITY ' + document.visibilityState);
+  });
 }
 
 /* ---- top-level UI state ----
