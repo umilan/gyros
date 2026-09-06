@@ -2290,20 +2290,26 @@ botbar.addEventListener('click', e=>{
 
 /* press-and-hold on OSD ‹/› with same exponential curve as menu +/- */
 let osdHoldTimer = null, osdHoldAccel = null;
+// Same token guard as kbHoldToken/holdToken above -- see stopKbHold()'s
+// comment for the race this closes.
+let osdHoldToken = 0;
 function stopOsdHold(){
   clearTimeout(osdHoldTimer); clearTimeout(osdHoldAccel);
   osdHoldTimer = osdHoldAccel = null;
+  osdHoldToken++;
 }
 botbar.addEventListener('pointerdown', e=>{
   const btn = e.target.closest('.osdPrev,.osdNext');
   if (!btn) return;
   const dir = btn.classList.contains('osdPrev') ? -1 : 1;
   stopOsdHold();
+  const myHoldToken = osdHoldToken;
   const item = osdItems[osdFocusIdx];
   if (!item || (item.type !== 'step' && item.type !== 'enum')) return;
   const minMs = item.type === 'enum' ? 80 : 15;
   let ticks = 0;
   const go = () => {
+    if (myHoldToken !== osdHoldToken) return;   // stopped/restarted since we scheduled this tick
     osdChangeItem(dir);
     ticks++;
     osdHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
@@ -2313,6 +2319,9 @@ botbar.addEventListener('pointerdown', e=>{
 ['pointerup','pointercancel','pointerleave'].forEach(ev=>{
   botbar.addEventListener(ev, stopOsdHold);
 });
+// Safety net for the same missed-release scenario as the other hold timers.
+window.addEventListener('blur', stopOsdHold);
+document.addEventListener('visibilitychange', ()=>{ if (document.hidden) stopOsdHold(); });
 
 /* every dialog closes on a tap outside its .paneInner content zone, and on Escape */
 document.querySelectorAll('.dialog').forEach(dlg=>{
@@ -2372,15 +2381,36 @@ function menuRowIndexForKey(key){
    Declared before the keydown handler so there is zero temporal-dead-zone risk.
    ========================================================================= */
 let kbHoldTimer = null, kbHoldAccel = null;
+// Bumped by every stopKbHold() call. Each hold's self-rescheduling `go()`
+// closure (below) captures the token value in effect when IT started and
+// re-checks it before every step/reschedule -- so a `go()` invocation that
+// was already queued (as a timer macrotask) at the moment keyup fires still
+// runs to completion, but sees the bumped token and quits instead of
+// scheduling yet another setTimeout. Without this, that race (keyup firing
+// in the narrow window between a go() tick starting and it calling
+// setTimeout again) could leave an orphaned timer chain that clearTimeout()
+// can never reach, since nothing will ever call stopKbHold() again once the
+// key is already up -- the fast-increment "stuck, still incrementing with
+// no key held" bug this fixes.
+let kbHoldToken = 0;
 function stopKbHold(){
   clearTimeout(kbHoldTimer);
   clearTimeout(kbHoldAccel);
   kbHoldTimer = kbHoldAccel = null;
+  kbHoldToken++;
 }
 document.addEventListener('keyup', e=>{
   if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' ||
       e.key === 'a'         || e.key === 'd') stopKbHold();
 });
+// Safety net: a real keyup can go missing entirely if the window/tab loses
+// focus while the key is physically still down (alt-tab, a permission
+// prompt stealing focus, switching apps on mobile, …) -- browsers don't
+// guarantee a keyup fires for a key released while unfocused. Without this,
+// that's a second way to get stuck fast-incrementing forever with no key
+// held. Treat losing focus/visibility as "stop holding".
+window.addEventListener('blur', stopKbHold);
+document.addEventListener('visibilitychange', ()=>{ if (document.hidden) stopKbHold(); });
 
 /* =========================================================================
    Keyboard: arrows drive the OSD (and the list when open)
@@ -2508,6 +2538,7 @@ document.addEventListener('keydown', e=>{
       case 'ArrowRight': {
         if (e.repeat) break;
         stopKbHold();
+        const myHoldToken = kbHoldToken;   // see stopKbHold()'s comment above
         const dir = e.key === 'ArrowLeft' ? -1 : 1;
         osdChangeItem(dir);
         const osdItem = osdItems[osdFocusIdx];
@@ -2515,6 +2546,7 @@ document.addEventListener('keydown', e=>{
           const minMs = osdItem.type === 'enum' ? 80 : 15;
           let ticks = 0;
           const go = () => {
+            if (myHoldToken !== kbHoldToken) return;   // stopped/restarted since we scheduled this tick
             osdChangeItem(dir);
             ticks++;
             kbHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
@@ -2550,6 +2582,7 @@ document.addEventListener('keydown', e=>{
         // Suppress OS key-repeat — we drive our own accelerating timer.
         if (e.repeat) break;
         stopKbHold();
+        const myHoldToken = kbHoldToken;   // see stopKbHold()'s comment above
 
         const items = navItems();
         const cur = items[menuFocusIdx];
@@ -2574,6 +2607,7 @@ document.addEventListener('keydown', e=>{
           const minMs = act === 'enumstep' ? 80 : 5;
           let ticks = 0;
           const go = () => {
+            if (myHoldToken !== kbHoldToken) return;   // stopped/restarted since we scheduled this tick
             doStep();
             ticks++;
             kbHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
@@ -2686,19 +2720,28 @@ menuPanes.addEventListener('scroll', e=>{
    each tick is ~12 % faster than the last, flooring at 15 ms for numeric
    steps (~66 ticks/s) or 80 ms for enum so shapes stay readable. */
 let holdTimer = null, holdAccel = null;
+// Same token guard as kbHoldToken above, and for the same reason: a pointerup
+// firing in the narrow window between a go() tick starting and it calling
+// setTimeout again must not leave an orphaned timer chain that nothing will
+// ever clearTimeout() again -- that's a stuck, still-incrementing stepper
+// with no button held down. See stopKbHold()'s longer comment for the race.
+let holdToken = 0;
 function stopHold(){
   clearTimeout(holdTimer);
   clearTimeout(holdAccel);
   holdTimer = holdAccel = null;
+  holdToken++;
 }
 
 menu.addEventListener('pointerdown', e=>{
   const el = e.target.closest('[data-act="step"],[data-act="enumstep"]');
   if (!el) return;
   stopHold();   // cancel any stale hold before starting a new one
+  const myHoldToken = holdToken;
   const minMs = el.dataset.act === 'enumstep' ? 80 : 5;
   let ticks = 0;
   function go(){
+    if (myHoldToken !== holdToken) return;   // stopped/restarted since we scheduled this tick
     handleAct(el.dataset.act, el);
     ticks++;
     holdAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
@@ -2706,6 +2749,10 @@ menu.addEventListener('pointerdown', e=>{
   holdTimer = setTimeout(go, 400);
 });
 ['pointerup','pointercancel','pointerleave'].forEach(ev=>menu.addEventListener(ev, stopHold));
+// Safety net for the same missed-release scenario as kbHold's blur/visibility
+// listeners (e.g. a permission prompt steals focus mid-press on a touch device).
+window.addEventListener('blur', stopHold);
+document.addEventListener('visibilitychange', ()=>{ if (document.hidden) stopHold(); });
 
 /* =========================================================================
    Gestures on the viewer — the headset has no other input
