@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v1.6</title>
+<title>GYROS v1.7</title>
 <style>
   :root{
     --bg:#000000;
@@ -328,6 +328,7 @@
     width:100%;min-height:var(--row-h);
     padding:0 var(--pad-lg);
     transition:background-color .15s ease;
+    cursor:pointer;
   }
   .btKeyLabel{
     color:var(--text);font-size:15px;font-weight:600;letter-spacing:0.1em;
@@ -475,7 +476,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '1.6';
+const APP_VERSION = '1.7';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -2610,12 +2611,16 @@ function renderBtKeysList(){
     const uid = state === 'listening' ? 'LISTENING…'
       : c.captured ? `${c.captured.code} · ${c.captured.keyCode}`
       : '—';
-    return `<div class="btKeyRow" data-cmd="${c.cmd}" data-state="${state}">
+    // A divider between RIGHT (idx 3) and ESC (idx 4) -- rows use data-idx
+    // (not DOM position) for lookups, so this extra node never throws off
+    // focus/click indexing.
+    const divider = idx === 4 ? '<div class="hr"></div>' : '';
+    return `${divider}<div class="btKeyRow" data-cmd="${c.cmd}" data-idx="${idx}" data-state="${state}">
       <span class="btKeyLabel">${c.label}</span>
       <span class="btKeyUid">${uid}</span>
     </div>`;
   }).join('');
-  btKeysList.children[btKeysFocusIdx]?.scrollIntoView({ block:'nearest' });
+  btKeysList.querySelector(`[data-idx="${btKeysFocusIdx}"]`)?.scrollIntoView({ block:'nearest' });
 }
 
 // Reset the CURSOR/listening state every time the dialog opens (always
@@ -2682,6 +2687,52 @@ function handleBtKeysDlgKeydown(e){
 }
 
 document.getElementById('btKeysCloseBtn').addEventListener('click', ()=>{ btKeysDlg.hidden = true; });
+
+// Tap/click is a second way to drive the same state machine as ↑↓←→/Esc
+// above, for anyone without a physical keyboard handy: a single tap on a
+// row moves the cursor there AND arms it (the ↑↓ + ←/→ combo in one
+// gesture); a double tap on an already-'set' row clears it directly,
+// mirroring listening + Esc without the visual detour through 'listening'.
+// Built on the browser's own click/dblclick events (which fire in order --
+// click, click, dblclick -- on a real double-click AND on a fast double-tap
+// on touch, since double-tap-to-zoom is disabled globally via
+// user-scalable=no) rather than hand-rolled timing: that's the same
+// contract every OS/browser already double-click-detects with, so it holds
+// up across mouse and touch without guessing at a timing window here.
+let btKeysRowTapTimer = null;
+btKeysList.addEventListener('click', e=>{
+  const row = e.target.closest('.btKeyRow');
+  if (!row) return;
+  const idx = Number(row.dataset.idx);
+  if (Number.isNaN(idx)) return;
+  // Defer the single-tap action so a following dblclick (fired right after
+  // this event on a real double-click/double-tap) can cancel it instead.
+  clearTimeout(btKeysRowTapTimer);
+  btKeysRowTapTimer = setTimeout(()=>{
+    btKeysRowTapTimer = null;
+    btKeysFocusIdx = idx;
+    btKeysListening = true;
+    renderBtKeysList();
+  }, 0);
+});
+btKeysList.addEventListener('dblclick', e=>{
+  const row = e.target.closest('.btKeyRow');
+  if (!row) return;
+  const idx = Number(row.dataset.idx);
+  if (Number.isNaN(idx)) return;
+  clearTimeout(btKeysRowTapTimer);
+  btKeysRowTapTimer = null;
+  if (BT_KEY_COMMANDS[idx].captured){
+    BT_KEY_COMMANDS[idx].captured = null;
+    btKeysFocusIdx = idx;
+    btKeysListening = false;
+  } else {
+    // Nothing to clear -- land on the same outcome a single tap would.
+    btKeysFocusIdx = idx;
+    btKeysListening = true;
+  }
+  renderBtKeysList();
+});
 
 /* =========================================================================
    Keyboard: arrows drive the OSD (and the list when open)
