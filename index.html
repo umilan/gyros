@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v1.7</title>
+<title>GYROS v2.0</title>
 <style>
   :root{
     --bg:#000000;
@@ -361,6 +361,42 @@
   body[data-sbs="1"] .toastL{left:25%;}
   body[data-sbs="1"] .toastR{display:block;left:75%;}
 
+  /* Content navigator — points back toward the loaded content once the gyro
+     has carried the view off it. Opacity is driven from JS in proportion to
+     the angular distance: invisible while you're looking straight at the
+     content, fully opaque when it's directly behind you (the far side of the
+     view sphere). Deliberately NOT gated on [data-chrome] -- it's a spatial
+     aid for exactly the "chrome hidden, where did my content go" case -- but
+     it does stay out of the way of any open overlay (see the :has() rule).
+     Centred per eye with the same left:25%/75% trick as the toasts; only the
+     inner <svg> rotates, so the badge itself never leaves the centre. */
+  .navArrow{
+    position:fixed;left:50%;top:50%;
+    transform:translate(-50%,-50%);
+    z-index:25;                 /* under the bars (40) and every overlay */
+    width:88px;height:88px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    background:rgba(20,20,20,0.72);
+    color:var(--accent);
+    opacity:0;                  /* real value written by updateNavArrow() */
+    pointer-events:none;
+    transition:opacity .18s linear;
+  }
+  .navArrow svg{width:40px;height:40px;display:block;}
+  .navArrowR{display:none;}
+  body[data-sbs="1"] .navArrowL{
+    left:25%;
+    transform:translate(-50%,-50%) translateX(calc(-1 * var(--ui-eye-shift)));
+  }
+  body[data-sbs="1"] .navArrowR{
+    display:flex;left:75%;
+    transform:translate(-50%,-50%) translateX(var(--ui-eye-shift));
+  }
+  /* Settings list / any dialog is open -> the arrow has nothing to add and
+     would just float over the panel, so drop it entirely. Wins over the
+     display:flex above on specificity, so no !important needed. */
+  body:has(.overlay:not([hidden])) .navArrow{display:none;}
+
   /* diagnostic overlay, opt-in via ?debug=1 -- see kbDebugLog() below.
      pointer-events:none so it can never intercept a tap/click even while
      shown. */
@@ -448,6 +484,18 @@
 <div class="toast toastL"></div>
 <div class="toast toastR"></div>
 
+<!-- Content navigator: the arrow points back toward the loaded content
+     whenever head tracking has turned the view away from it. The glyph is
+     drawn pointing UP, and updateNavArrow() rotates it clockwise by the
+     on-screen bearing of the content, so 0deg reads as "it's above you".
+     aria-hidden: it's a purely visual orientation cue duplicated per eye. -->
+<div class="navArrow navArrowL" aria-hidden="true">
+  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4,12l1.41,1.41L11,7.83V20h2V7.83l5.58,5.59L20,12l-8,-8L4,12z"></path></svg>
+</div>
+<div class="navArrow navArrowR" aria-hidden="true">
+  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M4,12l1.41,1.41L11,7.83V20h2V7.83l5.58,5.59L20,12l-8,-8L4,12z"></path></svg>
+</div>
+
 <input type="file" id="modelFile" accept=".obj,.stl,.usdz" hidden>
 <input type="file" id="videoFile" accept="video/*,image/*" multiple hidden>
 <input type="file" id="folderFiles" accept="image/*,video/*" webkitdirectory multiple hidden>
@@ -476,7 +524,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '1.7';
+const APP_VERSION = '2.0';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -523,7 +571,11 @@ const DEFAULTS = {
   flipX: false, flipY: false,
   gyroMulX: 1, gyroMulY: 1,
   freezeX: false, freezeY: false,
-  gyroFlipX: false, gyroFlipY: false
+  gyroFlipX: false, gyroFlipY: false,
+  trackingAlgo: 0          // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
+                            // (raw gyroscope integration) -- see TRACKING_ALGOS
+                            // and onDeviceMotion(). Defaults to CLASSIC so
+                            // existing sessions see no behaviour change.
 };
 
 const state = Object.assign({}, DEFAULTS);
@@ -557,6 +609,11 @@ const SHAPES = [
   'PYRAMID','OCTA','ICOSA','CRYSTAL',
   'OFF'
 ];
+
+// TRACKING (GYRO section): which head-orientation pipeline animate() uses --
+// see onDeviceOrientation()/onDeviceMotion() near "Head tracking" below for
+// the two implementations and why GYRO (BETA) exists.
+const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)'];
 
 const MENU = [
   { title:'GENERAL', items:[
@@ -600,6 +657,7 @@ const MENU = [
     { type:'check', key:'flipY', label:'FLIP Y' }
   ]},
   { title:'GYRO', items:[
+    { type:'enum',  key:'trackingAlgo', label:'TRACKING', options:TRACKING_ALGOS },
     { type:'step',  key:'gyroMulX', label:'X MULTIPLY', min:0, max:5, step:0.1, dec:1 },
     { type:'step',  key:'gyroMulY', label:'Y MULTIPLY', min:0, max:5, step:0.1, dec:1 },
     { type:'check', key:'freezeX',  label:'FREEZE X' },
@@ -1318,6 +1376,85 @@ const tuneEuler = new THREE.Euler();
 let haveOrientation = false;
 let motionGranted = false;
 
+/* -------------------------------------------------------------------------
+   GYRO (BETA) tracking algorithm -- TRACKING setting, state.trackingAlgo===1.
+
+   CLASSIC (above/below) rebuilds an absolute orientation from the phone's
+   alpha/beta/gamma angles on every single event. Held upright in a headset
+   that's beta ~ 90 deg -- and any real turn is never a mathematically
+   perfect single-axis rotation (bodies wobble a little turning around) --
+   that decode is where a few degrees of incidental roll or compass/
+   magnetometer noise (headset magnets/metal sit right next to the phone)
+   turns into a curved drift of "fixed" content, worse the further you've
+   turned. There's also no freeze/damp control for roll the way X/Y have,
+   so whatever leaks through is never clamped.
+
+   GYRO (BETA) sidesteps the decode entirely: it integrates the raw
+   gyroscope (devicemotion's rotationRate, deg/s about the device's own
+   instantaneous local axes) directly into a quaternion every tick --
+   standard body-frame angular-velocity integration, q(t+dt) = q(t) times
+   a small rotation built from the current tick's rate vector. That
+   composition is valid at any orientation, so there's no beta-dependent
+   singularity and no magnetometer involved at all. The honest trade-off:
+   with no absolute reference, it can drift slowly over a long session --
+   RECENTER (or double-tap) re-zeros it exactly like CLASSIC. It doesn't
+   erase drift that reflects a REAL tilt in how you physically turned --
+   that part is correct rendering, not a bug -- only the extra, non-physical
+   coupling CLASSIC's decode step introduces.
+   ------------------------------------------------------------------------- */
+const gyroIntegQuat = new THREE.Quaternion();   // accumulated since last recenter
+const gyroDeltaQuat = new THREE.Quaternion();
+const gyroAxis = new THREE.Vector3();
+let gyroLastT = 0;
+let haveMotionRate = false;
+let motionRateUnavailableWarned = false;
+let gyroAvailabilityTimer = null;
+
+// Some browsers (seen in headless Chromium, and plausibly a real device
+// mid-sensor-startup) fire an early devicemotion event with an empty/
+// incomplete rotationRate before real readings start arriving. Warning on
+// that FIRST bad sample would false-positive and permanently latch --
+// instead give it a grace window after switching into GYRO (BETA) (or
+// after motion is granted, if it was already selected) and only warn if
+// no valid reading showed up by the time it elapses.
+function scheduleGyroAvailabilityCheck(){
+  clearTimeout(gyroAvailabilityTimer);
+  if (state.trackingAlgo !== 1) return;
+  gyroAvailabilityTimer = setTimeout(()=>{
+    if (state.trackingAlgo === 1 && !haveMotionRate && !motionRateUnavailableWarned){
+      motionRateUnavailableWarned = true;
+      toast('GYRO ROTATION UNAVAILABLE — USING CLASSIC');
+    }
+  }, 1500);
+}
+
+function onDeviceMotion(e){
+  const r = e.rotationRate;
+  if (!r || r.beta === null || r.beta === undefined || r.gamma === null ||
+      r.gamma === undefined || r.alpha === null || r.alpha === undefined){
+    return;   // scheduleGyroAvailabilityCheck() is what decides "unavailable"
+  }
+  const now = performance.now();
+  if (!gyroLastT){ gyroLastT = now; return; }   // first sample just seeds the clock
+  const dt = Math.min(Math.max((now - gyroLastT) / 1000, 0), 0.1);   // clamp vs. backgrounding gaps
+  gyroLastT = now;
+  if (dt <= 0) return;
+  haveMotionRate = true;
+  // rotationRate per the W3C spec: alpha = deg/s about the device's local Z,
+  // beta = about local X, gamma = about local Y -- exactly the body-frame
+  // angular-velocity vector this integration wants.
+  gyroAxis.set(
+    THREE.MathUtils.degToRad(r.beta),
+    THREE.MathUtils.degToRad(r.gamma),
+    THREE.MathUtils.degToRad(r.alpha)
+  );
+  const angle = gyroAxis.length() * dt;
+  if (angle > 1e-8){
+    gyroDeltaQuat.setFromAxisAngle(gyroAxis.normalize(), angle);
+    gyroIntegQuat.multiply(gyroDeltaQuat);   // body-frame rate -> right-multiply
+  }
+}
+
 function screenAngleRad(){
   let angle = 0;
   if (screen.orientation && typeof screen.orientation.angle === 'number') angle = screen.orientation.angle;
@@ -1349,6 +1486,8 @@ function onDeviceOrientation(e){
 
 function recenter(){
   zeroQuatInv.copy(rawQuat).invert();
+  gyroIntegQuat.identity();
+  gyroLastT = 0;   // reseed the integration clock so we don't eat a stale gap as one huge dt
   toast('RECENTERED');
 }
 
@@ -1360,6 +1499,18 @@ async function enableMotion(){
       const resp = await DeviceOrientationEvent.requestPermission();
       if (kbDebugOn) kbDebugLog('MOTION PERMISSION ' + resp);
       if (resp !== 'granted'){ toast('MOTION DENIED'); return false; }
+    }
+    // DeviceMotionEvent (rotationRate, for GYRO (BETA)) needs its own iOS
+    // permission gate, separate from DeviceOrientationEvent above. Requested
+    // unconditionally -- not just when GYRO (BETA) is the current TRACKING
+    // setting -- so switching to it later mid-session works immediately
+    // with no further permission prompt. Not fatal if denied: CLASSIC still
+    // works, and GYRO (BETA) falls back to CLASSIC data (see animate()) with
+    // a one-time toast.
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function'){
+      const respM = await DeviceMotionEvent.requestPermission();
+      if (kbDebugOn) kbDebugLog('DEVICEMOTION PERMISSION ' + respM);
     }
   }catch(e){
     console.error('[GYROS] motion permission error:', e);
@@ -1374,9 +1525,95 @@ async function enableMotion(){
     ? 'deviceorientationabsolute' : 'deviceorientation';
   if (kbDebugOn) kbDebugLog('MOTION GRANTED, listening for ' + orientEvt);
   window.addEventListener(orientEvt, onDeviceOrientation);
+  window.addEventListener('devicemotion', onDeviceMotion);
   hint.hidden = true;
   setTimeout(recenter, 250);
+  scheduleGyroAvailabilityCheck();   // covers GYRO (BETA) already being the saved setting
   return true;
+}
+
+/* =========================================================================
+   Content navigator arrow
+
+   With head tracking on you can turn away from the content far enough to
+   lose it entirely -- there's no horizon or room to orient against, just
+   black. This points the way back.
+
+   The geometry is simple because the content never moves: `world` sits at
+   (0, 0, CONTENT_DISTANCE) and only ever gets scaled, so from the rig at the
+   origin the content is always straight down world -Z. Everything is
+   therefore a comparison between that fixed axis and where `rig` (the gyro's
+   final, already tuned/frozen/flipped orientation -- see animate()) is
+   pointing:
+     opacity  = angle between the two / PI, i.e. 0 looking straight at the
+                content, 1 when it is exactly behind you (the far side of the
+                view sphere -- the longest distance there is).
+     rotation = the content direction expressed in the rig's own frame, so
+                atan2(x, y) is the clockwise screen bearing to it, which is
+                exactly what CSS rotate() wants for an up-pointing glyph.
+   FLIP X/Y mirror the rendered eye image, so the bearing is mirrored to
+   match -- otherwise the arrow would point away from content that the flip
+   has moved to the other side of the view.
+   ========================================================================= */
+const navArrowEls = [...document.querySelectorAll('.navArrow')];
+const navArrowIcons = navArrowEls.map(el => el.querySelector('svg'));
+const NAV_CONTENT_DIR = new THREE.Vector3(0, 0, -1);  // world.position, normalised
+const navFwd = new THREE.Vector3();
+const navLocal = new THREE.Vector3();
+const navQuatInv = new THREE.Quaternion();
+// Last values actually written to the DOM -- the render loop runs at 60fps
+// and most frames change nothing worth a style recalc.
+let navLastOpacity = -1, navLastDeg = 1e9;
+
+function updateNavArrow(){
+  if (!navArrowEls.length || !rig) return;
+
+  // Nothing on screen to navigate back to -- don't point at an empty spot.
+  const nothingToPointAt = state.content === 'demo' && SHAPES[state.shape] === 'OFF';
+
+  navFwd.copy(NAV_CONTENT_DIR).applyQuaternion(rig.quaternion);
+  const away = navFwd.angleTo(NAV_CONTENT_DIR);       // 0 .. PI
+  const opacity = nothingToPointAt ? 0 : away / Math.PI;
+
+  navQuatInv.copy(rig.quaternion).invert();
+  navLocal.copy(NAV_CONTENT_DIR).applyQuaternion(navQuatInv);
+  const x = state.flipX ? -navLocal.x : navLocal.x;
+  const y = state.flipY ? -navLocal.y : navLocal.y;
+  const deg = Math.atan2(x, y) * 180 / Math.PI;
+
+  if (Math.abs(opacity - navLastOpacity) > 0.004){
+    navLastOpacity = opacity;
+    navArrowEls.forEach(el => { el.style.opacity = opacity.toFixed(3); });
+  }
+  // Skip the rotation write while it's invisible anyway, and don't bother
+  // with sub-degree changes.
+  if (opacity > 0.01 && Math.abs(deg - navLastDeg) > 0.5){
+    navLastDeg = deg;
+    navArrowIcons.forEach(el => { el.style.transform = `rotate(${deg.toFixed(1)}deg)`; });
+  }
+}
+
+/* =========================================================================
+   Bottom-menu auto-hide -- if the OSD strip has been sitting idle (no taps,
+   keys, drags, or wheel input) for BOTMENU_IDLE_MS, hide chrome exactly as
+   a manual tap-to-hide would. Scoped to the OSD strip only: the full
+   settings list and any dialog (Learn BT Keys, the URL prompt) are left
+   alone -- being open there already means active use, and closing one back
+   to the OSD strip is itself a click/key event that restarts the clock.
+   ========================================================================= */
+const BOTMENU_IDLE_MS = 10000;
+let lastActivityAt = performance.now();
+function botMenuShouldIdleHide(){
+  return document.body.dataset.chrome === '1' && uiState === 'osd'
+    && btKeysDlg.hidden && urlDlg.hidden;
+}
+['pointerdown', 'pointermove', 'keydown', 'wheel'].forEach(ev=>{
+  window.addEventListener(ev, ()=>{ lastActivityAt = performance.now(); }, { passive:true, capture:true });
+});
+function checkBotMenuIdle(){
+  if (botMenuShouldIdleHide() && performance.now() - lastActivityAt >= BOTMENU_IDLE_MS){
+    document.body.dataset.chrome = '0';
+  }
 }
 
 /* =========================================================================
@@ -1398,13 +1635,21 @@ function animate(){
     }
   }
 
-  if (haveOrientation){
-    relQuat.copy(rawQuat).premultiply(zeroQuatInv);
+  // GYRO (BETA) falls back to CLASSIC data when rotationRate never showed up
+  // on this device/browser (see onDeviceMotion()) -- haveOrientation is kept
+  // as the single readiness gate either way so the view is never just frozen.
+  const useGyroAlgo = state.trackingAlgo === 1 && haveMotionRate;
+  if (haveOrientation || useGyroAlgo){
+    if (useGyroAlgo) relQuat.copy(gyroIntegQuat);
+    else relQuat.copy(rawQuat).premultiply(zeroQuatInv);
     tuneEuler.setFromQuaternion(relQuat, 'YXZ');
     tuneEuler.y = state.freezeX ? 0 : tuneEuler.y * state.gyroMulX * (state.gyroFlipX ? -1 : 1);
     tuneEuler.x = state.freezeY ? 0 : tuneEuler.x * state.gyroMulY * (state.gyroFlipY ? -1 : 1);
     rig.quaternion.setFromEuler(tuneEuler);
   }
+
+  updateNavArrow();   // reads rig.quaternion, so it runs after the gyro step
+  checkBotMenuIdle();
 
   const { w, h, ew, eh } = eyeSize();
 
@@ -2233,6 +2478,11 @@ function stepEnumValue(node, dir){
     if (SHAPES[state.shape] !== 'OFF') state.content = 'demo';
     applyAll();
   }
+  if (node.key === 'trackingAlgo'){
+    recenter();   // avoid a jump: each algorithm accumulates its own reference
+    motionRateUnavailableWarned = false;   // give GYRO (BETA) a fresh verdict each time it's selected
+    scheduleGyroAvailabilityCheck();
+  }
   saveState();
   refreshMenu();
 }
@@ -2460,6 +2710,7 @@ botbar.addEventListener('pointerdown', e=>{
   let ticks = 0;
   const go = () => {
     if (myHoldToken !== osdHoldToken) return;   // stopped/restarted since we scheduled this tick
+    lastActivityAt = performance.now();   // holding a stepper counts as activity even with no new pointerdown
     osdChangeItem(dir);
     ticks++;
     osdHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
