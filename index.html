@@ -15,6 +15,7 @@
   :root{
     --bg:#000000;
     --accent:#F6C41C;
+    --accent-10p:#F6C41C33;
     --ink:#111111;
     --text:#FFFFFF;
     --muted:#9A9A9A;
@@ -26,6 +27,7 @@
     --gap:8px;
     --rnd:28px;
     --radius:4px;
+    --icon-hit-size:96px;
     --font:"Helvetica Neue",Helvetica,Arial,"Segoe UI",system-ui,sans-serif;
     --ui-eye-shift:0px;  /* SBS EYE DIST, kept updated from JS -- see applyUiEyeDist() */
   }
@@ -125,7 +127,7 @@
     color:var(--muted);
     font-size:16px;font-weight:600;letter-spacing:0.32em;
     pointer-events:none;
-    transition:opacity .12s ease;
+    transition:opacity .55s ease;
   }
   body[data-ui="osd"] .title{pointer-events:auto;cursor:pointer;}
   body[data-ui="osd"] .title:hover{opacity:.75;}
@@ -138,12 +140,16 @@
     appearance:none;background:none;border:0;padding:0;margin:0;
     width:40px;height:40px;
     display:inline-flex;align-items:center;justify-content:center;
+    position:relative;
     border-radius:50%;
     color:var(--accent);cursor:pointer;
-    transition:background-color .12s ease,transform .12s ease;
+    transition:background-color .55s ease,transform .55s ease;
   }
-  .iconbtn:hover{background:rgba(255,255,255,0.10);}
+  .iconbtn::before{content:"";position:absolute;inset:calc((40px - var(--icon-hit-size)) / 2);border-radius:50%;opacity:0;transition:opacity .99s ease;}
+  .iconbtn:hover{background:var(--accent-10p);}
+  .iconbtn:hover::before{background:rgba(255,255,255,0.10);}
   .iconbtn:active{background:rgba(255,255,255,0.16);transform:scale(0.92);}
+  .iconbtn:active::before{background:rgba(255,255,255,0.16);}
   .iconbtn svg{display:block;width:24px;height:24px;}
 
   /* bottom bar: the OSD strip -- always what's there once chrome is revealed,
@@ -178,7 +184,7 @@
     pointer-events:auto;
   }
   .osdValueRow{
-    display:flex;align-items:center;justify-content:center;gap:8px;
+    display:flex;align-items:center;justify-content:space-around;gap:16px;
     min-width:0;max-width:100%;
   }
   /* ‹/› (change value) must never shrink to make room for a long VALUE --
@@ -236,7 +242,7 @@
     position:absolute;right:var(--pad-lg);top:50%;transform:translateY(-50%);
     appearance:none;border:0;background:none;color:var(--muted);
     font-size:20px;line-height:1;padding:4px 2px;cursor:pointer;
-    font-family:var(--font);transition:color .12s ease;
+    font-family:var(--font);transition:color .55s ease;
   }
   .paneCloseBtn:hover{color:var(--text);}
 
@@ -252,7 +258,7 @@
     font-family:var(--font);font-size:15px;font-weight:600;letter-spacing:0.1em;
     text-align:left;
   }
-  button.row{cursor:pointer;transition:background .12s ease;}
+  button.row{cursor:pointer;transition:background .55s ease;}
   button.row:hover{background:rgba(255,255,255,0.07);}
   button.row:active{background:rgba(255,255,255,0.14);}
   .row .label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -278,10 +284,15 @@
     display:block;width:100%;margin-top:var(--pad-lg);padding:var(--pad) var(--pad-lg);
     background:none;border:0;color:var(--accent);cursor:pointer;
     font-family:var(--font);font-size:14px;font-weight:700;letter-spacing:0.18em;
-    text-align:center;transition:opacity .12s ease;
+    text-align:center;transition:opacity .55s ease;
   }
   .textbtn:hover{opacity:.75;}
   .textbtn:active{opacity:.55;}
+  .dialog button:focus{background:rgba(246,196,28,0.18);}
+  .dialog .keyboardFocus{background:rgba(246,196,28,0.18);}
+  .dialog .textbtn:focus{opacity:1;color:var(--accent);}
+  .dialog .textbtn.keyboardFocus{opacity:1;color:var(--accent);}
+  .dialog .paneCloseBtn:focus{color:var(--accent);border-radius:50%;}
 
   /* -- all dialogs share the same panel bg as the settings list, via .overlay above ---- */
   .dialog{
@@ -327,7 +338,7 @@
     display:flex;align-items:center;justify-content:space-between;gap:var(--pad);
     width:100%;min-height:var(--row-h);
     padding:0 var(--pad-lg);
-    transition:background-color .15s ease;
+    transition:background-color .55s ease;
     cursor:pointer;
   }
   .btKeyLabel{
@@ -339,6 +350,7 @@
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60%;
   }
   .btKeyRow[data-state="focused"]{background:rgba(246,196,28,0.10);outline:1px solid rgba(246,196,28,0.40);outline-offset:-1px;}
+  .btKeyRow:focus{background:rgba(246,196,28,0.18);outline:1px solid var(--accent);outline-offset:-1px;}
   .btKeyRow[data-state="set"] .btKeyUid{color:var(--accent);font-weight:600;}
   .btKeyRow[data-state="listening"]{outline:1px solid var(--accent);outline-offset:-1px;animation:btKeyListenPulse 1s ease-in-out infinite;}
   .btKeyRow[data-state="listening"] .btKeyUid{color:var(--accent);font-weight:700;}
@@ -350,11 +362,11 @@
   /* one toast, centred; a second copy appears on the right eye when SBS is
      active, mirroring the bottom bar and settings list */
   .toast{
-    position:fixed;left:50%;bottom:88px;transform:translateX(-50%);
+    position:fixed;left:50%;bottom:96px;transform:translateX(-50%);
     z-index:60;padding:var(--gap) var(--pad);
     background:rgba(0,0,0,0.5);border-radius:var(--radius);
-    color:var(--muted);font-size:12px;letter-spacing:0.18em;
-    opacity:0;transition:opacity .2s ease;pointer-events:none;
+    color:var(--muted);font-size:10px;letter-spacing:0.18em;
+    opacity:0;transition:opacity 0.55s ease;pointer-events:none;
   }
   .toast.show{opacity:1;}
   .toastR{display:none;}
@@ -380,7 +392,7 @@
     color:var(--accent);
     opacity:0;                  /* real value written by updateNavArrow() */
     pointer-events:none;
-    transition:opacity .18s linear;
+    transition:opacity .55s linear;
   }
   .navArrow svg{width:40px;height:40px;display:block;}
   .navArrowR{display:none;}
@@ -452,13 +464,14 @@
      Rows are rendered by renderBtKeysList(); see handleBtKeysDlgKeydown()
      for the full state machine. -->
 <div class="overlay dialog" id="btKeysDlg" hidden>
-  <div id="btKeysPane" class="dlgPane">
+  <div class="dlgPane">
     <div class="paneInner">
-      <div class="paneTitle">LEARN BT KEYS<button class="paneCloseBtn" id="btKeysCloseBtn" aria-label="Close">&#215;</button></div>
+      <div class="paneTitle">LEARN BT KEYS</div>
       <div class="hr"></div>
       <p class="helpText"><b>↑/↓</b> select a command below. <b>←/→</b> starts listening for it — press the button on your Bluetooth remote you want mapped to it. <b>Esc</b> while listening cancels, or clears an already-set one.</p>
       <div class="section">COMMANDS</div>
-      <div class="btKeysList" id="btKeysList"></div>
+      <div class="btKeysList"></div>
+      <button class="textbtn btKeysBottomClose">CLOSE</button>
     </div>
   </div>
 </div>
@@ -535,6 +548,7 @@ const STORE_KEY = 'gyrosSettings';
 const DEFAULTS = {
   sbs: true,
   mirrorUI: false,   // flips the whole page (canvas + UI text) for mirror-viewed rigs
+  mode: 0,           // DEMO | IMAGE / VIDEO | 3D OBJECT | MEDIA FOLDER
   uiEyeDist: 0,      // SBS EYE DIST: shifts each eye's UI layer (topbar, OSD strip,
                      // full settings list) toward (-) or away from (+) the divider,
                      // -100..100 = percent of half the eye width, same convention as
@@ -595,6 +609,7 @@ function loadState(){
     }
     // content and shape are session-ish: a model/video source cannot be restored
     if (state.content !== 'demo') state.content = 'demo';
+    state.mode = 0;
   }catch(e){ /* ignore corrupt settings */ }
 }
 let saveTimer = null;
@@ -614,6 +629,8 @@ const SHAPES = [
   'PYRAMID','OCTA','ICOSA','CRYSTAL',
   'OFF'
 ];
+const CHOOSE_SOURCE = ['CHOOSE'];
+const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER'];
 
 // TRACKING (GYRO section): which head-orientation pipeline animate() uses --
 // see onDeviceOrientation()/onDeviceMotion() near "Head tracking" below for
@@ -635,8 +652,8 @@ const MENU = [
     { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1 }
   ]},
   { title:'CONTENT', items:[
+    { type:'enum',  key:'mode',    label:'MODE', options:MODES },
     { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
-    { type:'check', key:'autoRotate', label:'AUTO ROTATE' },
     { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
   ]},
@@ -688,6 +705,7 @@ MENU.forEach(s => s.items.forEach(i => {
   if (i.type === 'step') SPEC[i.key] = i;
   if (i.type === 'enum') ENUM_SPEC[i.key] = i;
 }));
+ENUM_SPEC.shape.options = SHAPES;
 
 function itemHTML(item){
   const when = (item.when ? ` data-when="${item.when}"` : '')
@@ -891,7 +909,7 @@ const CONTENT_DISTANCE = -3;
 
 function initThree(){
   renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setPixelRatio(1);
   renderer.autoClear = false;
   renderer.setClearColor(0x000000, 1);
   stage.appendChild(renderer.domElement);
@@ -1385,6 +1403,8 @@ const zeroQuatInv = new THREE.Quaternion();
 const relQuat = new THREE.Quaternion();
 const tuneEuler = new THREE.Euler();
 let haveOrientation = false;
+let recenterPending = false;
+let recenterHoldUntil = 0;
 let motionGranted = false;
 
 /* -------------------------------------------------------------------------
@@ -1493,17 +1513,43 @@ function onDeviceOrientation(e){
   rawQuat.setFromEuler(euler);
   rawQuat.multiply(q1);
   rawQuat.multiply(q0.setFromAxisAngle(zee, -screenAngleRad()));
+  if (recenterPending){
+    zeroQuatInv.copy(rawQuat).invert();
+    recenterPending = false;
+  }
 }
 
 function recenter(){
-  zeroQuatInv.copy(rawQuat).invert();
+  recenterPending = true;
+  recenterHoldUntil = performance.now() + 500;
+  haveOrientation = false;
+  zeroQuatInv.identity();
   gyroIntegQuat.identity();
   gyroLastT = 0;   // reseed the integration clock so we don't eat a stale gap as one huge dt
-  // Also zero the pan (POS X/Y) so the loaded content's own geometric
-  // center -- not wherever it had been panned to -- lands at the view
-  // center, same as gyro recentering "wherever you're looking" to forward.
+  rig.quaternion.identity();
+  camL.rotation.set(0, 0, 0);
+  camR.rotation.set(0, 0, 0);
+  camL.clearViewOffset();
+  camR.clearViewOffset();
+  // Restore the viewer framing as well as the sensor heading. Otherwise a
+  // previous pan or corner-pin adjustment can leave the cube at an edge after
+  // a double-tap recenter.
   state.posX = 0;
   state.posY = 0;
+  state.contentZoom = 0;
+  state.zoom = 0;
+  state.scaleX = 0;
+  state.scaleY = 0;
+  state.trapezoid = 0;
+  state.cornerTLx = 0;
+  state.cornerTLy = 0;
+  state.cornerTRx = 0;
+  state.cornerTRy = 0;
+  state.cornerBLx = 0;
+  state.cornerBLy = 0;
+  state.cornerBRx = 0;
+  state.cornerBRy = 0;
+  updateQuad();
   applyEyeProjection();
   refreshMenu();
   saveState();
@@ -1658,8 +1704,8 @@ function animate(){
 
   if (state.autoRotate){
     if (state.content === 'demo'){
-      demoGroup.rotation.y += dt * 0.35;
-      demoGroup.rotation.x += dt * 0.12;
+      demoGroup.rotation.y += dt * 0.35 * demoRotateDirection;
+      demoGroup.rotation.x += dt * 0.12 * demoRotateDirection;
     } else if (state.content === 'model'){
       modelGroup.rotation.y += dt * 0.35;
       modelGroup.rotation.x += dt * 0.12;
@@ -1670,7 +1716,7 @@ function animate(){
   // on this device/browser (see onDeviceMotion()) -- haveOrientation is kept
   // as the single readiness gate either way so the view is never just frozen.
   const useGyroAlgo = state.trackingAlgo === 1 && haveMotionRate;
-  if (haveOrientation || useGyroAlgo){
+  if (performance.now() >= recenterHoldUntil && (haveOrientation || useGyroAlgo)){
     if (useGyroAlgo) relQuat.copy(gyroIntegQuat);
     else relQuat.copy(rawQuat).premultiply(zeroQuatInv);
     tuneEuler.setFromQuaternion(relQuat, 'YXZ');
@@ -1785,6 +1831,7 @@ async function loadModel(url, ext, label){
     disposeGroup(modelGroup);
     modelGroup.add(object);
     frameModel();
+    state.mode = 2;
     state.content = 'model';
     applyAll();
     refreshMenu();
@@ -2106,6 +2153,7 @@ async function startVideoPlayback(src){
    playback is simulated: pause the element and step currentTime backward
    every frame, at the same wall-clock rate forward playback would use. ---- */
 let reverseRAF = null;
+let demoRotateDirection = 1;
 
 function stopReverse(){
   if (reverseRAF != null){ cancelAnimationFrame(reverseRAF); reverseRAF = null; }
@@ -2145,6 +2193,107 @@ function toggleReverse(){
   }
 }
 
+function toggleForward(){
+  if (reverseRAF != null){
+    stopReverse();
+    video.play().catch(()=>{});
+    toast('PLAY');
+  } else if (video.paused){
+    video.play().catch(()=>{});
+    toast('PLAY');
+  } else {
+    video.pause();
+    toast('PAUSED');
+  }
+}
+
+function toggleBackward(){
+  if (reverseRAF != null){
+    stopReverse();
+    toast('PAUSED');
+  } else {
+    startReverse();
+    toast('REVERSE');
+  }
+}
+
+function toggleDemoRotation(direction){
+  if (state.autoRotate && demoRotateDirection === direction){
+    state.autoRotate = false;
+    toast('PAUSED');
+  } else {
+    demoRotateDirection = direction;
+    state.autoRotate = true;
+    toast(direction > 0 ? 'FORWARD' : 'BACKWARD');
+  }
+  saveState();
+  refreshMenu();
+}
+
+const BRACKET_FRAME_STEP = 0.1;
+let bracketHoldKey = null;
+let bracketHoldDelay = null;
+let bracketHoldInterval = null;
+let bracketHoldActive = false;
+
+function stepBracketFrame(direction){
+  if (state.content === 'demo'){
+    if (state.autoRotate){
+      state.autoRotate = false;
+      refreshMenu();
+      saveState();
+    }
+    demoRotateDirection = direction;
+    demoGroup.rotation.y += 0.35 * BRACKET_FRAME_STEP * direction;
+    demoGroup.rotation.x += 0.12 * BRACKET_FRAME_STEP * direction;
+    return;
+  }
+  if (state.content !== 'video' || usingImage || !video.src) return;
+  stopReverse();
+  video.pause();
+  if (!(video.duration > 0)) return;
+  let next = video.currentTime + BRACKET_FRAME_STEP * direction;
+  if (video.loop) next = (next + video.duration) % video.duration;
+  else next = THREE.MathUtils.clamp(next, 0, video.duration);
+  video.currentTime = next;
+}
+
+function stopBracketHold(){
+  if (!bracketHoldKey) return;
+  const key = bracketHoldKey;
+  const wasActive = bracketHoldActive;
+  clearTimeout(bracketHoldDelay);
+  clearInterval(bracketHoldInterval);
+  bracketHoldKey = null;
+  bracketHoldDelay = null;
+  bracketHoldInterval = null;
+  bracketHoldActive = false;
+  if (!wasActive){
+    const direction = key === ']' ? 1 : -1;
+    if (state.content === 'demo') toggleDemoRotation(direction);
+    else if (state.content === 'video' && !usingImage && video.src){
+      if (direction > 0) toggleForward(); else toggleBackward();
+    }
+  }
+}
+
+function startBracketHold(key){
+  if (bracketHoldKey || (key !== '[' && key !== ']')) return;
+  bracketHoldKey = key;
+  bracketHoldActive = false;
+  const direction = key === ']' ? 1 : -1;
+  bracketHoldDelay = setTimeout(()=>{
+    bracketHoldActive = true;
+    stepBracketFrame(direction);
+    bracketHoldInterval = setInterval(()=>stepBracketFrame(direction), BRACKET_FRAME_STEP * 1000);
+  }, 250);
+}
+
+document.addEventListener('keyup', e=>{
+  if (e.key === '[' || e.key === ']') stopBracketHold();
+});
+window.addEventListener('blur', stopBracketHold);
+
 /* ---- SBS image loader — reuses the video plane infrastructure ---- */
 function loadSBSImage(file){
   const url = mediaObjectURL(file);
@@ -2153,6 +2302,7 @@ function loadSBSImage(file){
   applyImageTexture(url, (w, h) => {
     const isSbs = filenameHint || looksLikeSbsAspect(w, h);
     if (state.sourceSbs !== isSbs){ state.sourceSbs = isSbs; refreshMenu(); }
+    state.mode = 1;
     state.content = 'video';   // reuse the video display group
     applyAll();
     refreshMenu();
@@ -2185,6 +2335,7 @@ async function playVideo(src, label, file){
   };
   if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
   state.content = 'video';
+  state.mode = 1;
   applyAll();
   refreshMenu();
   if (label) toast(label.toUpperCase().slice(0, 28));
@@ -2264,6 +2415,7 @@ function loadGalleryFiles(fileList){
     file: f
   }));
   document.body.dataset.gallery = galleryItems.length > 1 ? '1' : '0';
+  state.mode = 3;
   ENUM_SPEC.shape.label = 'GALLERY';
   ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase().slice(0, 28));
   menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
@@ -2291,6 +2443,7 @@ function showGalleryImage(item){
       item.sbsChecked = true;
     }
     if (state.sourceSbs !== item.isSbs){ state.sourceSbs = item.isSbs; refreshMenu(); }
+    state.mode = 3;
     state.content = 'video';
     applyAll();
     refreshMenu();
@@ -2322,6 +2475,7 @@ async function showGalleryVideo(item){
     video.removeEventListener('loadedmetadata', onMeta);
   };
   if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
+  state.mode = 3;
   state.content = 'video';
   applyAll();
   refreshMenu();
@@ -2337,7 +2491,7 @@ folderFiles.addEventListener('change', ()=>{
    ========================================================================= */
 const menu = document.getElementById('menu');
 const btKeysDlg = document.getElementById('btKeysDlg');
-const btKeysList = document.getElementById('btKeysList');
+const btKeysList = btKeysDlg.querySelector('.btKeysList');
 const loadTypeDlg = document.getElementById('loadTypeDlg');
 const urlDlg = document.getElementById('urlDlg');
 const urlInput = document.getElementById('urlInput');
@@ -2497,6 +2651,10 @@ function osdDown(){
 }
 
 function stepEnumValue(node, dir){
+  if (node.key === 'shape' && !galleryItems.length && ENUM_SPEC.shape.options === CHOOSE_SOURCE){
+    openModeChooser();
+    return;
+  }
   if (node.key === 'shape' && galleryItems.length){
     showGalleryItem(state.shape + dir);   // already refreshes the menu
     saveState();
@@ -2504,6 +2662,14 @@ function stepEnumValue(node, dir){
   }
   const n = node.options.length;
   state[node.key] = (state[node.key] + dir + n) % n;
+  if (node.key === 'mode'){
+    if (galleryItems.length) clearGallery();
+    ENUM_SPEC.shape.options = state.mode === 0 ? SHAPES : CHOOSE_SOURCE;
+    state.shape = 0;
+    refreshMenu();
+    saveState();
+    return;
+  }
   if (node.key === 'shape'){
     buildDemo(state.shape);
     if (SHAPES[state.shape] !== 'OFF') state.content = 'demo';
@@ -2516,6 +2682,18 @@ function stepEnumValue(node, dir){
   }
   saveState();
   refreshMenu();
+}
+
+function openModeChooser(){
+  switch (state.mode){
+    case 0:
+      buildLoadTypeDlg();
+      loadTypeDlg.hidden = false;
+      break;
+    case 1: videoFile.click(); break;
+    case 2: modelFile.click(); break;
+    case 3: folderFiles.click(); break;
+  }
 }
 
 /* Tapping the image, or Esc, while the OSD strip is showing -- there's no
@@ -2566,6 +2744,8 @@ function loadTypePaneHTML(){
       <button class="row" data-loadtype="videoUrl"><span class="label">IMAGE / VIDEO URL</span></button>
       <div class="hr"></div>
       <button class="row" data-loadtype="modelUrl"><span class="label">3D MODEL URL</span></button>
+      <div class="hr"></div>
+      <button class="textbtn" data-loadtype="close">CLOSE</button>
     </div>`;
 }
 function buildLoadTypeDlg(){
@@ -2579,6 +2759,58 @@ function buildLoadTypeDlg(){
     loadTypeDlg.appendChild(pane);
   }
 }
+
+function loadTypeButtons(){
+  return [...loadTypeDlg.querySelectorAll('.dlgPane:first-child button')];
+}
+
+function markLoadTypeFocus(index){
+  loadTypeDlg.querySelectorAll('.dlgPane').forEach(pane=>{
+    [...pane.querySelectorAll('button')].forEach((button, buttonIndex)=>{
+      button.classList.toggle('keyboardFocus', buttonIndex === index);
+    });
+  });
+}
+
+function focusLoadTypeButton(index = 0){
+  const buttons = loadTypeButtons();
+  if (buttons.length){
+    const nextIndex = (index + buttons.length) % buttons.length;
+    markLoadTypeFocus(nextIndex);
+    buttons[nextIndex].focus();
+  }
+}
+
+function handleLoadTypeDlgKeydown(e){
+  const buttons = loadTypeButtons();
+  if (!buttons.length) return;
+  if (e.key === 'Escape'){
+    e.preventDefault();
+    loadTypeDlg.hidden = true;
+    return;
+  }
+  if (e.key !== 'Tab' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown' &&
+      e.key !== 'Enter' && e.key !== ' '){
+    return;
+  }
+  e.preventDefault();
+  const current = buttons.indexOf(document.activeElement);
+  if (e.key === 'Enter' || e.key === ' '){
+    (current >= 0 ? buttons[current] : buttons[0]).click();
+    return;
+  }
+  const direction = e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1;
+  focusLoadTypeButton(current < 0 ? 0 : current + direction);
+}
+
+loadTypeDlg.addEventListener('focusin', e=>{
+  const button = e.target.closest('button');
+  if (!button) return;
+  const pane = button.closest('.dlgPane');
+  if (!pane) return;
+  const index = [...pane.querySelectorAll('button')].indexOf(button);
+  if (index >= 0) markLoadTypeFocus(index);
+});
 
 // Switches back to the rotating demo solid -- the only way back once a
 // model, photo/video or folder has been loaded, short of reloading the app.
@@ -2601,6 +2833,7 @@ function loadDemo(){
     });
     state.shape = 0;
   }
+  state.mode = 0;
   state.content = 'demo';
   if (!video.paused) video.pause();
   stopReverse();
@@ -2611,7 +2844,11 @@ function loadDemo(){
 }
 
 topbar.addEventListener('click', e=>{
-  if (e.target.closest('.btnLoad')){ buildLoadTypeDlg(); loadTypeDlg.hidden = false; }
+  if (e.target.closest('.btnLoad')){
+    buildLoadTypeDlg();
+    loadTypeDlg.hidden = false;
+    focusLoadTypeButton();
+  }
 });
 loadTypeDlg.addEventListener('click', e=>{
   const row = e.target.closest('[data-loadtype]');
@@ -2624,6 +2861,7 @@ loadTypeDlg.addEventListener('click', e=>{
     case 'model':    modelFile.click(); break;
     case 'videoUrl': openUrlDlg('video'); break;
     case 'modelUrl': openUrlDlg('model'); break;
+    case 'close':    break;
   }
 });
 topbar.addEventListener('click', e=>{
@@ -2862,14 +3100,14 @@ document.addEventListener('visibilitychange', ()=>{ if (document.hidden) stopKbH
    the same page load.
    ========================================================================= */
 const BT_KEY_COMMANDS = [
-  { cmd:'UP',          label:'UP',            captured:null },
-  { cmd:'DOWN',        label:'DOWN',          captured:null },
-  { cmd:'LEFT',        label:'LEFT',          captured:null },
-  { cmd:'RIGHT',       label:'RIGHT',         captured:null },
-  { cmd:'ESC',         label:'ESC',           captured:null },
-  { cmd:'TAB',         label:'TAB',           captured:null },
-  { cmd:'SPACE',       label:'SPACE',         captured:null },
-  { cmd:'SHIFT_SPACE', label:'SHIFT + SPACE', captured:null },
+  { cmd:'UP',          label:'UP (W)',        captured:null },
+  { cmd:'DOWN',        label:'DOWN (S)',      captured:null },
+  { cmd:'LEFT',        label:'LEFT (A)',      captured:null },
+  { cmd:'RIGHT',       label:'RIGHT (D)',     captured:null },
+  { cmd:'ESC',         label:'ESC (X)',       captured:null },
+  { cmd:'TAB',         label:'TAB (Z)',       captured:null },
+  { cmd:'SPACE',       label:'SPACE ([)',     captured:null },
+  { cmd:'SHIFT_SPACE', label:'SHIFT + SPACE (])', captured:null },
 ];
 let btKeysFocusIdx = 0;
 let btKeysListening = false;
@@ -2888,7 +3126,7 @@ function stateFor(idx){
 }
 
 function renderBtKeysList(){
-  btKeysList.innerHTML = BT_KEY_COMMANDS.map((c, idx) => {
+  const rows = BT_KEY_COMMANDS.map((c, idx) => {
     const state = stateFor(idx);
     const uid = state === 'listening' ? 'LISTENING…'
       : c.captured ? `${c.captured.code} · ${c.captured.keyCode}`
@@ -2897,12 +3135,28 @@ function renderBtKeysList(){
     // (not DOM position) for lookups, so this extra node never throws off
     // focus/click indexing.
     const divider = idx === 4 ? '<div class="hr"></div>' : '';
-    return `${divider}<div class="btKeyRow" data-cmd="${c.cmd}" data-idx="${idx}" data-state="${state}">
+    return `${divider}<div class="btKeyRow" tabindex="-1" data-cmd="${c.cmd}" data-idx="${idx}" data-state="${state}">
       <span class="btKeyLabel">${c.label}</span>
       <span class="btKeyUid">${uid}</span>
     </div>`;
   }).join('');
-  btKeysList.querySelector(`[data-idx="${btKeysFocusIdx}"]`)?.scrollIntoView({ block:'nearest' });
+  btKeysDlg.querySelectorAll('.btKeysList').forEach(list=>{
+    list.innerHTML = rows;
+    list.querySelector(`[data-idx="${btKeysFocusIdx}"]`)?.scrollIntoView({ block:'nearest' });
+  });
+}
+
+function buildBtKeysDlg(){
+  const count = state.sbs ? 2 : 1;
+  if (btKeysDlg.children.length === count) return;
+  const paneHTML = btKeysDlg.querySelector('.dlgPane').innerHTML;
+  btKeysDlg.innerHTML = '';
+  for (let i = 0; i < count; i++){
+    const pane = document.createElement('div');
+    pane.className = 'dlgPane';
+    pane.innerHTML = paneHTML;
+    btKeysDlg.appendChild(pane);
+  }
 }
 
 // Reset the CURSOR/listening state every time the dialog opens (always
@@ -2910,10 +3164,25 @@ function renderBtKeysList(){
 // values alone -- re-opening to check or add one more mapping shouldn't
 // wipe out ones already set.
 function openBtKeysDlg(){
+  buildBtKeysDlg();
   btKeysFocusIdx = 0;
   btKeysListening = false;
-  renderBtKeysList();
   btKeysDlg.hidden = false;
+  renderBtKeysList();
+  focusBtCommand(0);
+}
+
+function focusBtCommand(index){
+  btKeysFocusIdx = index;
+  renderBtKeysList();
+  btKeysDlg.querySelector('.btKeysList')?.querySelector(`[data-idx="${index}"]`)?.focus();
+}
+
+function focusBtClose(button){
+  btKeysFocusIdx = -1;
+  btKeysListening = false;
+  renderBtKeysList();
+  button.focus();
 }
 
 // While the dialog is open, this runs first (see the keydown handler's
@@ -2923,6 +3192,33 @@ function openBtKeysDlg(){
 // closing other UI, etc.) ever sees it.
 function handleBtKeysDlgKeydown(e){
   e.preventDefault();
+
+  const bottomClose = btKeysDlg.querySelector('.btKeysBottomClose');
+  if (!btKeysListening && (e.key === 'Tab' || e.key === 'Enter' || e.key === ' ')){
+    if (e.key === 'Enter' || e.key === ' '){
+      if (document.activeElement === bottomClose) btKeysDlg.hidden = true;
+      return;
+    }
+    focusBtClose(bottomClose);
+    return;
+  }
+
+  if (!btKeysListening && (e.key === 'ArrowUp' || e.key === 'ArrowDown')){
+    const currentRow = document.activeElement?.closest('.btKeyRow');
+    const currentIndex = currentRow ? Number(currentRow.dataset.idx) : -1;
+    if (document.activeElement === bottomClose){
+      if (e.key === 'ArrowUp') focusBtCommand(BT_KEY_COMMANDS.length - 1);
+      else focusBtCommand(0);
+    } else if (currentIndex >= 0){
+      const next = currentIndex + (e.key === 'ArrowDown' ? 1 : -1);
+      if (next < 0) focusBtClose(bottomClose);
+      else if (next >= BT_KEY_COMMANDS.length) focusBtClose(bottomClose);
+      else focusBtCommand(next);
+    } else {
+      focusBtCommand(btKeysFocusIdx);
+    }
+    return;
+  }
 
   if (btKeysListening){
     if (e.key === 'Escape'){
@@ -2968,7 +3264,24 @@ function handleBtKeysDlgKeydown(e){
   }
 }
 
-document.getElementById('btKeysCloseBtn').addEventListener('click', ()=>{ btKeysDlg.hidden = true; });
+btKeysDlg.addEventListener('click', e=>{
+  if (e.target.closest('.btKeysBottomClose')){
+    btKeysDlg.hidden = true;
+    return;
+  }
+  const row = e.target.closest('.btKeyRow');
+  if (!row) return;
+  const idx = Number(row.dataset.idx);
+  if (Number.isNaN(idx)) return;
+  // Defer the single-tap action so a following dblclick can cancel it.
+  clearTimeout(btKeysRowTapTimer);
+  btKeysRowTapTimer = setTimeout(()=>{
+    btKeysRowTapTimer = null;
+    btKeysFocusIdx = idx;
+    btKeysListening = true;
+    renderBtKeysList();
+  }, 0);
+});
 
 // Tap/click is a second way to drive the same state machine as ↑↓←→/Esc
 // above, for anyone without a physical keyboard handy: a single tap on a
@@ -2982,22 +3295,7 @@ document.getElementById('btKeysCloseBtn').addEventListener('click', ()=>{ btKeys
 // contract every OS/browser already double-click-detects with, so it holds
 // up across mouse and touch without guessing at a timing window here.
 let btKeysRowTapTimer = null;
-btKeysList.addEventListener('click', e=>{
-  const row = e.target.closest('.btKeyRow');
-  if (!row) return;
-  const idx = Number(row.dataset.idx);
-  if (Number.isNaN(idx)) return;
-  // Defer the single-tap action so a following dblclick (fired right after
-  // this event on a real double-click/double-tap) can cancel it instead.
-  clearTimeout(btKeysRowTapTimer);
-  btKeysRowTapTimer = setTimeout(()=>{
-    btKeysRowTapTimer = null;
-    btKeysFocusIdx = idx;
-    btKeysListening = true;
-    renderBtKeysList();
-  }, 0);
-});
-btKeysList.addEventListener('dblclick', e=>{
+btKeysDlg.addEventListener('dblclick', e=>{
   const row = e.target.closest('.btKeyRow');
   if (!row) return;
   const idx = Number(row.dataset.idx);
@@ -3025,6 +3323,16 @@ document.addEventListener('keydown', e=>{
      also drives the OSD/list underneath. Must be the very first check. ---- */
   if (!btKeysDlg.hidden){
     handleBtKeysDlgKeydown(e);
+    return;
+  }
+
+  // Keyboard aliases shown in the Bluetooth command list. Keep capture mode
+  // above this block so learning X/Z/[ ] records the real incoming key.
+  if (e.key === 'x' || e.key === 'X') Object.defineProperty(e, 'key', { value:'Escape' });
+  else if (e.key === 'z' || e.key === 'Z') Object.defineProperty(e, 'key', { value:'Tab' });
+
+  if (!loadTypeDlg.hidden){
+    handleLoadTypeDlgKeydown(e);
     return;
   }
 
@@ -3076,9 +3384,13 @@ document.addEventListener('keydown', e=>{
      focus", which after a previous tap could be the LOAD icon button,
      reopening the load dialog with no code here asking for that. Explicit
      opening is O below, not Space. ---- */
-  if (e.code === 'Space'){
+  if (e.code === 'Space' || e.key === '[' || e.key === ']'){
     if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
     e.preventDefault();
+    if (e.key === '[' || e.key === ']'){
+      if (!e.repeat) startBracketHold(e.key);
+      return;
+    }
     if (state.content !== 'video' || usingImage || !video.src) return;
     if (e.shiftKey) toggleReverse(); else togglePlayPause();
     return;
@@ -3092,6 +3404,7 @@ document.addEventListener('keydown', e=>{
     e.preventDefault();
     buildLoadTypeDlg();
     loadTypeDlg.hidden = false;
+    focusLoadTypeButton();
     return;
   }
 
