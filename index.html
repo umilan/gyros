@@ -1852,7 +1852,7 @@ function frameModel(){
    MIME type can fail to decode as an image even when the bytes are fine. ---- */
 const MEDIA_EXT_MIME = {
   jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif',
-  webp:'image/webp', bmp:'image/bmp', avif:'image/avif',
+  webp:'image/webp', bmp:'image/bmp', avif:'image/avif', svg:'image/svg+xml',
   heic:'image/heic', heif:'image/heif', tif:'image/tiff', tiff:'image/tiff',
   mp4:'video/mp4', m4v:'video/mp4', mov:'video/quicktime', webm:'video/webm',
   mkv:'video/x-matroska', avi:'video/x-msvideo', '3gp':'video/3gpp'
@@ -2650,7 +2650,7 @@ function submitUrl(){
   const ext = label.includes('.') ? label.split('.').pop().toLowerCase() : '';
   if (urlMode === 'model'){ loadModel(url, ext, label); return; }
 
-  const IMG_EXTS = ['jpg','jpeg','png','webp','gif','avif'];
+  const IMG_EXTS = ['jpg','jpeg','png','webp','gif','avif','svg'];
   const VID_EXTS = ['mp4','m4v','mov','webm','mkv','avi','3gp'];
   // A fetch() to a URL blocked by CORS (or just unreachable) rejects with
   // the same generic error either way -- the browser deliberately doesn't
