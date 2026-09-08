@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.0</title>
+<title>GYROS v2.6</title>
 <style>
   :root{
     --bg:#000000;
@@ -524,7 +524,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.0';
+const APP_VERSION = '2.6';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -572,10 +572,15 @@ const DEFAULTS = {
   gyroMulX: 1, gyroMulY: 1,
   freezeX: false, freezeY: false,
   gyroFlipX: false, gyroFlipY: false,
-  trackingAlgo: 0          // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
+  trackingAlgo: 0,         // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
                             // (raw gyroscope integration) -- see TRACKING_ALGOS
                             // and onDeviceMotion(). Defaults to CLASSIC so
                             // existing sessions see no behaviour change.
+  menuTimeout: 10          // seconds the bottom OSD strip sits idle before
+                            // auto-hiding, see checkBotMenuIdle(). Defaults to
+                            // 10, matching the original fixed 10-second
+                            // timeout so existing sessions see no behaviour
+                            // change. 0 = OFF disables auto-hide.
 };
 
 const state = Object.assign({}, DEFAULTS);
@@ -619,10 +624,15 @@ const MENU = [
   { title:'GENERAL', items:[
     { type:'check', key:'sbs', label:'3D SBS' },
     { type:'check', key:'mirrorUI', label:'MIRROR UI' },
-    { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:2 },
-    { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:2 },
+    { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
+    { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
     { type:'step',  key:'fov', label:'PERSPECTIVE', min:-100, max:100, step:1 },
-    { type:'step',  key:'brightness', label:'BRIGHTNESS', min:-100, max:100, step:2 }
+    { type:'step',  key:'brightness', label:'BRIGHTNESS', min:-100, max:100, step:1 },
+    // Seconds the bottom OSD strip sits idle before auto-hiding, in 1s
+    // increments -- see checkBotMenuIdle() near "Bottom-menu auto-hide"
+    // below. 0 displays as OFF and disables the auto-hide entirely
+    // (fmt() special-cases this key: "OFF" at 0, "<n>S" otherwise).
+    { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1 }
   ]},
   { title:'CONTENT', items:[
     { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
@@ -631,26 +641,26 @@ const MENU = [
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
   ]},
   { title:'POSITIONING', items:[
-    { type:'step', key:'posX',    label:'POS X',        min:-100, max:100, step:1 },
-    { type:'step', key:'posY',    label:'POS Y',        min:-100, max:100, step:1 }
+    { type:'step', key:'posX',    label:'POS X',        min:-200, max:200, step:1 },
+    { type:'step', key:'posY',    label:'POS Y',        min:-200, max:200, step:1 }
   ]},
   { title:'ZOOM', items:[
-    { type:'step', key:'contentZoom', label:'CONTENT ZOOM', min:-90, max:300, step:2 },
-    { type:'step', key:'zoom',     label:'ZOOM (XY)', min:-90, max:300, step:2 },
-    { type:'step', key:'scaleX',   label:'SCALE X',   min:-90, max:300, step:2 },
-    { type:'step', key:'scaleY',   label:'SCALE Y',   min:-90, max:300, step:2 }
+    { type:'step', key:'contentZoom', label:'CONTENT ZOOM', min:-90, max:300, step:1 },
+    { type:'step', key:'zoom',     label:'ZOOM (XY)', min:-90, max:300, step:1 },
+    { type:'step', key:'scaleX',   label:'SCALE X',   min:-90, max:300, step:1 },
+    { type:'step', key:'scaleY',   label:'SCALE Y',   min:-90, max:300, step:1 }
   ]},
   { title:'TRAPEZOID', items:[
-    { type:'step', key:'trapezoid', label:'TRAPEZOID', min:-100, max:100, step:2 },
+    { type:'step', key:'trapezoid', label:'TRAPEZOID', min:-100, max:100, step:1 },
     { type:'check', key:'trapezoidCorners', label:'TRAPEZOID CORNERS' },
-    { type:'step', key:'cornerTLx', label:'CORNER TL X', min:-100, max:100, step:2, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerTLy', label:'CORNER TL Y', min:-100, max:100, step:2, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerTRx', label:'CORNER TR X', min:-100, max:100, step:2, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerTRy', label:'CORNER TR Y', min:-100, max:100, step:2, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerBLx', label:'CORNER BL X', min:-100, max:100, step:2, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerBLy', label:'CORNER BL Y', min:-100, max:100, step:2, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerBRx', label:'CORNER BR X', min:-100, max:100, step:2, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerBRy', label:'CORNER BR Y', min:-100, max:100, step:2, whenTrue:'trapezoidCorners' }
+    { type:'step', key:'cornerTLx', label:'CORNER TL X', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
+    { type:'step', key:'cornerTLy', label:'CORNER TL Y', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
+    { type:'step', key:'cornerTRx', label:'CORNER TR X', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
+    { type:'step', key:'cornerTRy', label:'CORNER TR Y', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
+    { type:'step', key:'cornerBLx', label:'CORNER BL X', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
+    { type:'step', key:'cornerBLy', label:'CORNER BL Y', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
+    { type:'step', key:'cornerBRx', label:'CORNER BR X', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
+    { type:'step', key:'cornerBRy', label:'CORNER BR Y', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' }
   ]},
   { title:'FLIP', items:[
     { type:'check', key:'flipX', label:'FLIP X' },
@@ -831,6 +841,7 @@ function buildBotPanes(){
 function fmt(key, v){
   if (typeof v === 'boolean') return v ? 'YES' : 'NO';
   if (ENUM_SPEC[key]) return ENUM_SPEC[key].options[v];
+  if (key === 'menuTimeout') return v <= 0 ? 'OFF' : `${Math.round(v)}S`;
   const dec = SPEC[key] && SPEC[key].dec ? SPEC[key].dec : 0;
   return dec ? v.toFixed(dec) : String(Math.round(v));
 }
@@ -1545,9 +1556,13 @@ async function enableMotion(){
    therefore a comparison between that fixed axis and where `rig` (the gyro's
    final, already tuned/frozen/flipped orientation -- see animate()) is
    pointing:
-     opacity  = angle between the two / PI, i.e. 0 looking straight at the
-                content, 1 when it is exactly behind you (the far side of the
-                view sphere -- the longest distance there is).
+     opacity  = angle between the two / PI, remapped so it stays 0 for the
+                first NAV_ARROW_DEADZONE fraction of that range (near the
+                content, the arrow would just be visual noise -- you're
+                basically already looking at it) and only starts fading in
+                once you're clearly turned away, reaching 1 when the content
+                is exactly behind you (the far side of the view sphere --
+                the longest distance there is).
      rotation = the content direction expressed in the rig's own frame, so
                 atan2(x, y) is the clockwise screen bearing to it, which is
                 exactly what CSS rotate() wants for an up-pointing glyph.
@@ -1558,6 +1573,10 @@ async function enableMotion(){
 const navArrowEls = [...document.querySelectorAll('.navArrow')];
 const navArrowIcons = navArrowEls.map(el => el.querySelector('svg'));
 const NAV_CONTENT_DIR = new THREE.Vector3(0, 0, -1);  // world.position, normalised
+// Below this fraction of the max possible distance (angle/PI), the arrow
+// stays fully hidden -- only once you're unambiguously turned away does it
+// start fading in, ramping up to fully opaque at the max distance.
+const NAV_ARROW_DEADZONE = 1 / 3;
 const navFwd = new THREE.Vector3();
 const navLocal = new THREE.Vector3();
 const navQuatInv = new THREE.Quaternion();
@@ -1573,7 +1592,9 @@ function updateNavArrow(){
 
   navFwd.copy(NAV_CONTENT_DIR).applyQuaternion(rig.quaternion);
   const away = navFwd.angleTo(NAV_CONTENT_DIR);       // 0 .. PI
-  const opacity = nothingToPointAt ? 0 : away / Math.PI;
+  const awayFrac = away / Math.PI;                    // 0 .. 1
+  const opacity = nothingToPointAt ? 0
+    : Math.max(0, (awayFrac - NAV_ARROW_DEADZONE) / (1 - NAV_ARROW_DEADZONE));
 
   navQuatInv.copy(rig.quaternion).invert();
   navLocal.copy(NAV_CONTENT_DIR).applyQuaternion(navQuatInv);
@@ -1595,23 +1616,25 @@ function updateNavArrow(){
 
 /* =========================================================================
    Bottom-menu auto-hide -- if the OSD strip has been sitting idle (no taps,
-   keys, drags, or wheel input) for BOTMENU_IDLE_MS, hide chrome exactly as
-   a manual tap-to-hide would. Scoped to the OSD strip only: the full
-   settings list and any dialog (Learn BT Keys, the URL prompt) are left
-   alone -- being open there already means active use, and closing one back
-   to the OSD strip is itself a click/key event that restarts the clock.
+   keys, drags, or wheel input) for the MENU TIMEOUT setting's duration
+   (state.menuTimeout, in seconds), hide chrome exactly as a manual
+   tap-to-hide would. 0 (OFF) disables this entirely. Scoped to the OSD
+   strip only: the full settings list and any dialog (Learn BT Keys, the
+   URL prompt) are left alone -- being open there already means active use,
+   and closing one back to the OSD strip is itself a click/key event that
+   restarts the clock.
    ========================================================================= */
-const BOTMENU_IDLE_MS = 10000;
 let lastActivityAt = performance.now();
 function botMenuShouldIdleHide(){
-  return document.body.dataset.chrome === '1' && uiState === 'osd'
+  return state.menuTimeout > 0
+    && document.body.dataset.chrome === '1' && uiState === 'osd'
     && btKeysDlg.hidden && urlDlg.hidden;
 }
 ['pointerdown', 'pointermove', 'keydown', 'wheel'].forEach(ev=>{
   window.addEventListener(ev, ()=>{ lastActivityAt = performance.now(); }, { passive:true, capture:true });
 });
 function checkBotMenuIdle(){
-  if (botMenuShouldIdleHide() && performance.now() - lastActivityAt >= BOTMENU_IDLE_MS){
+  if (botMenuShouldIdleHide() && performance.now() - lastActivityAt >= state.menuTimeout * 1000){
     document.body.dataset.chrome = '0';
   }
 }
@@ -3090,8 +3113,15 @@ document.addEventListener('keydown', e=>{
 
   e.preventDefault(); // stop the browser from scrolling the page
 
-  // When chrome is hidden, reveal it first, then continue with the action.
-  if (document.body.dataset.chrome === '0') document.body.dataset.chrome = '1';
+  // When chrome is hidden, Up/Down reveal it -- you're navigating to a
+  // different item, worth actually seeing. Left/Right don't: they only
+  // change the value of whatever's already focused (posX/posY under Shift,
+  // or the focused OSD item otherwise), so let those work invisibly and
+  // leave the strip hidden -- that's the whole point of a quick A/D nudge
+  // with the UI tucked away.
+  if (document.body.dataset.chrome === '0' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight'){
+    document.body.dataset.chrome = '1';
+  }
 
   // Shift + arrow nudges POS X/Y directly, from any state but the full list
   // (there ←/→ already means "change the focused row's value") — same
