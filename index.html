@@ -1499,6 +1499,14 @@ function recenter(){
   zeroQuatInv.copy(rawQuat).invert();
   gyroIntegQuat.identity();
   gyroLastT = 0;   // reseed the integration clock so we don't eat a stale gap as one huge dt
+  // Also zero the pan (POS X/Y) so the loaded content's own geometric
+  // center -- not wherever it had been panned to -- lands at the view
+  // center, same as gyro recentering "wherever you're looking" to forward.
+  state.posX = 0;
+  state.posY = 0;
+  applyEyeProjection();
+  refreshMenu();
+  saveState();
   toast('RECENTERED');
 }
 
