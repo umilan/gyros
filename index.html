@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.6</title>
+<title>GYROS v2.7</title>
 <style>
   :root{
     --bg:#000000;
@@ -293,6 +293,8 @@
   .dialog .textbtn:focus{opacity:1;color:var(--accent);}
   .dialog .textbtn.keyboardFocus{opacity:1;color:var(--accent);}
   .dialog .paneCloseBtn:focus{color:var(--accent);border-radius:50%;}
+  #loadTypeDlg .row{justify-content:center;text-align:center;}
+  #loadTypeDlg .textbtn{display:flex;align-items:center;justify-content:center;text-align:center;}
 
   /* -- all dialogs share the same panel bg as the settings list, via .overlay above ---- */
   .dialog{
@@ -537,7 +539,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.6';
+const APP_VERSION = '2.7';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -546,8 +548,9 @@ document.title = `GYROS v${APP_VERSION}`;
 const STORE_KEY = 'gyrosSettings';
 
 const DEFAULTS = {
-  sbs: true,
-  mirrorUI: false,   // flips the whole page (canvas + UI text) for mirror-viewed rigs
+  view: 1,           // 0 PLAIN | 1 SBS | 2 HOLO -- index into VIEWS. Drives
+                      // state.sbs and state.mirrorUI (see applyView() below),
+                      // which the rest of the app still reads directly.
   mode: 0,           // DEMO | IMAGE / VIDEO | 3D OBJECT | MEDIA FOLDER
   uiEyeDist: 0,      // SBS EYE DIST: shifts each eye's UI layer (topbar, OSD strip,
                      // full settings list) toward (-) or away from (+) the divider,
@@ -607,6 +610,13 @@ function loadState(){
     for (const k of Object.keys(DEFAULTS)){
       if (saved[k] !== undefined && typeof saved[k] === typeof DEFAULTS[k]) state[k] = saved[k];
     }
+    // Per-view (PLAIN/SBS/HOLO) snapshots of the visual/geometry settings for
+    // whichever views aren't currently active -- see PER_VIEW_KEYS/switchView()
+    // below. The active view's own values live directly on `state` above, same
+    // as before this feature existed, so there's nothing to restore for it here.
+    if (Array.isArray(saved.viewProfiles) && saved.viewProfiles.length === VIEWS.length){
+      viewProfiles = saved.viewProfiles.map(p => (p && typeof p === 'object') ? p : null);
+    }
     // content and shape are session-ish: a model/video source cannot be restored
     if (state.content !== 'demo') state.content = 'demo';
     state.mode = 0;
@@ -616,7 +626,7 @@ let saveTimer = null;
 function saveState(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(()=>{
-    try{ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }catch(e){}
+    try{ localStorage.setItem(STORE_KEY, JSON.stringify({ ...state, viewProfiles })); }catch(e){}
   }, 200);
 }
 
@@ -637,10 +647,56 @@ const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER'];
 // the two implementations and why GYRO (BETA) exists.
 const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)'];
 
+// VIEW: PLAIN (flat, single pane) | SBS (stereo pair, no mirror) | HOLO
+// (stereo pair + mirrored UI, for mirror-viewed rigs) -- one picker driving
+// the two flags (sbs, mirrorUI) the rest of the app actually branches on.
+const VIEWS = ['PLAIN', 'SBS', 'HOLO'];
+const VIEW_SBS    = [false, true,  true];
+const VIEW_MIRROR = [false, false, true];
+function applyView(){
+  state.sbs = VIEW_SBS[state.view];
+  state.mirrorUI = VIEW_MIRROR[state.view];
+}
+
+// Visual/geometry settings that PLAIN/SBS/HOLO each remember separately --
+// everything from the POSITIONING, ZOOM, TRAPEZOID and FLIP sections plus
+// PERSPECTIVE, BRIGHTNESS, EYE DISTANCE and SBS EYE DIST from GENERAL. Gyro
+// tracking behaviour and MENU TIMEOUT are left out on purpose: they're not
+// about how the image looks, so they stay one shared value across views.
+const PER_VIEW_KEYS = [
+  'fov', 'brightness', 'uiEyeDist', 'eyeDist',
+  'posX', 'posY',
+  'contentZoom', 'zoom', 'scaleX', 'scaleY',
+  'trapezoid', 'trapezoidCorners',
+  'cornerTLx', 'cornerTLy', 'cornerTRx', 'cornerTRy',
+  'cornerBLx', 'cornerBLy', 'cornerBRx', 'cornerBRy',
+  'flipX', 'flipY'
+];
+function viewDefaults(){
+  const d = {};
+  for (const k of PER_VIEW_KEYS) d[k] = DEFAULTS[k];
+  return d;
+}
+// One saved snapshot per VIEW index, for whichever views AREN'T currently
+// active -- the active view's live values just live on `state` directly, as
+// they always have. null until a view has been switched away from at least
+// once, at which point it falls back to viewDefaults().
+let viewProfiles = VIEWS.map(()=>null);
+
+function switchView(newIdx){
+  const oldIdx = state.view;
+  if (oldIdx === newIdx) return;
+  const snapshot = {};
+  for (const k of PER_VIEW_KEYS) snapshot[k] = state[k];
+  viewProfiles[oldIdx] = snapshot;
+  Object.assign(state, viewProfiles[newIdx] || viewDefaults());
+  state.view = newIdx;
+  applyView();
+}
+
 const MENU = [
   { title:'GENERAL', items:[
-    { type:'check', key:'sbs', label:'3D SBS' },
-    { type:'check', key:'mirrorUI', label:'MIRROR UI' },
+    { type:'enum',  key:'view', label:'VIEW', options:VIEWS },
     { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
     { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
     { type:'step',  key:'fov', label:'PERSPECTIVE', min:-100, max:100, step:1 },
@@ -2625,7 +2681,6 @@ function osdChangeItem(dir){
       break;
     case 'check':
       state[item.key] = !state[item.key];
-      if (item.key === 'sbs'){ buildPanes(); buildTopPanes(); buildBotPanes(); }
       applyAll();
       refreshMenu();
       saveState();
@@ -2658,6 +2713,16 @@ function stepEnumValue(node, dir){
   if (node.key === 'shape' && galleryItems.length){
     showGalleryItem(state.shape + dir);   // already refreshes the menu
     saveState();
+    return;
+  }
+  if (node.key === 'view'){
+    const n = node.options.length;
+    switchView((state.view + dir + n) % n);   // snapshots the old view's settings, restores the new one's
+    buildPanes();
+    buildTopPanes();
+    buildBotPanes();
+    applyAll();   // also saves state
+    refreshMenu();
     return;
   }
   const n = node.options.length;
@@ -2732,19 +2797,12 @@ function closeList(){
 function loadTypePaneHTML(){
   return `<div class="paneInner">
       <div class="paneTitle">LOAD</div>
-      <div class="hr"></div>
       <button class="row" data-loadtype="demo"><span class="label">DEMO SHAPE</span></button>
-      <div class="hr"></div>
       <button class="row" data-loadtype="video"><span class="label">IMAGE / VIDEO</span></button>
-      <div class="hr"></div>
       <button class="row" data-loadtype="folder"><span class="label">FOLDER (PHOTOS + VIDEOS)</span></button>
-      <div class="hr"></div>
       <button class="row" data-loadtype="model"><span class="label">3D MODEL (.OBJ / .STL / .USDZ)</span></button>
-      <div class="hr"></div>
       <button class="row" data-loadtype="videoUrl"><span class="label">IMAGE / VIDEO URL</span></button>
-      <div class="hr"></div>
       <button class="row" data-loadtype="modelUrl"><span class="label">3D MODEL URL</span></button>
-      <div class="hr"></div>
       <button class="textbtn" data-loadtype="close">CLOSE</button>
     </div>`;
 }
@@ -3579,6 +3637,8 @@ function stepValue(key, dir){
 
 function resetToDefaults(){
   Object.assign(state, DEFAULTS, { content: state.content, shape: state.shape });
+  viewProfiles = VIEWS.map(()=>null);
+  applyView();
   buildPanes();
   buildTopPanes();
   buildBotPanes();
@@ -3592,7 +3652,6 @@ function handleAct(act, el){
   switch (act){
     case 'boolstep':
       state[key] = Number(el.dataset.dir) > 0;
-      if (key === 'sbs'){ buildPanes(); buildTopPanes(); buildBotPanes(); }
       applyAll();
       refreshMenu();
       break;
@@ -3856,6 +3915,7 @@ document.addEventListener('visibilitychange', ()=>{
    Boot
    ========================================================================= */
 loadState();
+applyView();
 document.body.dataset.sbs = state.sbs ? '1' : '0';
 document.body.dataset.chrome = '0';   // idle screen starts with UI hidden; tap to reveal
 document.body.dataset.ui = 'osd';     // settings strip is exposed directly once revealed -- no gear-icon step

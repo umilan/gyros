@@ -61,8 +61,9 @@ Everything is shared across content types and saved to `localStorage` under
 `gyrosSettings`. The content type itself is not restored — a picked file cannot
 be — so it always boots to the demo.
 
-- **GENERAL** — 3D SBS (off collapses to a single full-width view and one menu
-  pane), PERSPECTIVE (camera field of view).
+- **GENERAL** — VIEW (PLAIN collapses to a single full-width view and one menu
+  pane; SBS is stereo; HOLO is stereo with a mirrored UI for mirror-viewed
+  rigs), PERSPECTIVE (camera field of view).
 - **CONTENT** — demo shape, auto-rotate, SBS source.
 - **POSITIONING** — POS X/Y, eye distance.
 - **ZOOM** — zoom, scale X/Y, keystone top/bottom (TRPZD).
