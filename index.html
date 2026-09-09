@@ -590,8 +590,11 @@ const DEFAULTS = {
   freezeX: false, freezeY: false,
   gyroFlipX: false, gyroFlipY: false,
   trackingAlgo: 0,         // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
-                            // (raw gyroscope integration) -- see TRACKING_ALGOS
-                            // and onDeviceMotion(). Defaults to CLASSIC so
+                            // (raw gyroscope integration), 2 = GYRO (STABLE)
+                            // (same gyroscope integration, tuned via
+                            // swing-twist instead of a YXZ Euler solve) --
+                            // see TRACKING_ALGOS, onDeviceMotion() and
+                            // applyStableTuning(). Defaults to CLASSIC so
                             // existing sessions see no behaviour change.
   menuTimeout: 10          // seconds the bottom OSD strip sits idle before
                             // auto-hiding, see checkBotMenuIdle(). Defaults to
@@ -643,9 +646,10 @@ const CHOOSE_SOURCE = ['CHOOSE'];
 const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER'];
 
 // TRACKING (GYRO section): which head-orientation pipeline animate() uses --
-// see onDeviceOrientation()/onDeviceMotion() near "Head tracking" below for
-// the two implementations and why GYRO (BETA) exists.
-const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)'];
+// see onDeviceOrientation()/onDeviceMotion()/applyStableTuning() near "Head
+// tracking" below for the three implementations, why GYRO (BETA) exists,
+// and why GYRO (STABLE) exists on top of it.
+const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)', 'GYRO (STABLE)'];
 
 // VIEW: PLAIN (flat, single pane) | SBS (stereo pair, no mirror) | HOLO
 // (stereo pair + mirrored UI, for mirror-viewed rigs) -- one picker driving
@@ -1501,14 +1505,14 @@ let gyroAvailabilityTimer = null;
 // mid-sensor-startup) fire an early devicemotion event with an empty/
 // incomplete rotationRate before real readings start arriving. Warning on
 // that FIRST bad sample would false-positive and permanently latch --
-// instead give it a grace window after switching into GYRO (BETA) (or
-// after motion is granted, if it was already selected) and only warn if
-// no valid reading showed up by the time it elapses.
+// instead give it a grace window after switching into GYRO (BETA) or
+// GYRO (STABLE) (or after motion is granted, if one was already selected)
+// and only warn if no valid reading showed up by the time it elapses.
 function scheduleGyroAvailabilityCheck(){
   clearTimeout(gyroAvailabilityTimer);
-  if (state.trackingAlgo !== 1) return;
+  if (state.trackingAlgo !== 1 && state.trackingAlgo !== 2) return;
   gyroAvailabilityTimer = setTimeout(()=>{
-    if (state.trackingAlgo === 1 && !haveMotionRate && !motionRateUnavailableWarned){
+    if ((state.trackingAlgo === 1 || state.trackingAlgo === 2) && !haveMotionRate && !motionRateUnavailableWarned){
       motionRateUnavailableWarned = true;
       toast('GYRO ROTATION UNAVAILABLE — USING CLASSIC');
     }
@@ -1649,8 +1653,99 @@ async function enableMotion(){
   window.addEventListener('devicemotion', onDeviceMotion);
   hint.hidden = true;
   setTimeout(recenter, 250);
-  scheduleGyroAvailabilityCheck();   // covers GYRO (BETA) already being the saved setting
+  scheduleGyroAvailabilityCheck();   // covers GYRO (BETA)/GYRO (STABLE) already being the saved setting
   return true;
+}
+
+/* -------------------------------------------------------------------------
+   GYRO (STABLE) tracking algorithm -- TRACKING setting, state.trackingAlgo===2.
+
+   CLASSIC and GYRO (BETA) both finish the same way (see animate()): take
+   whichever relQuat they produced and run THREE.Euler.setFromQuaternion(q,
+   'YXZ') to pull out separate yaw/pitch/roll numbers, so X MULTIPLY/Y
+   MULTIPLY/FREEZE X/FREEZE Y have single scalars to scale or zero before
+   rebuilding the final quaternion. That YXZ solve is a well-known source of
+   exactly the symptom this algorithm exists to fix: it's numerically fine
+   near level, but as pitch (look up/down) approaches +-90 deg, yaw and roll
+   rotate around nearly the same physical axis and the solver's split
+   between them becomes ill-conditioned -- small, real head motion can come
+   back as a comparatively large, wrong yaw/roll split, which reads on
+   screen as content sliding off in a curved, elliptical path and the
+   horizon tilting on its own past what your head actually did. It gets
+   worse than a level viewer would suggest because headset users routinely
+   pitch up/down tens of degrees just looking around a video.
+
+   GYRO (STABLE) never solves for three angles at once. It peels the
+   rotation apart one axis at a time with swing-twist decomposition
+   (see swingTwist() below): first the yaw twist around the fixed WORLD
+   vertical axis, then -- from what's left, which by construction has no
+   yaw component at all -- the pitch twist around the fixed world X axis,
+   leaving roll untouched same as before. Each step is a single well-
+   defined axis-projection, singular only in its own degenerate case (a
+   twist of exactly +-180 deg on that step), never coupled to what pitch
+   currently is, so there's no equivalent of the YXZ solver's pitch-90
+   blowup. Yaw and pitch are scaled/frozen/flipped exactly as before, just
+   computed on a stable number.
+   ------------------------------------------------------------------------- */
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const WORLD_RIGHT = new THREE.Vector3(1, 0, 0);
+const stableYawTwist = new THREE.Quaternion();
+const stableYawTwistInv = new THREE.Quaternion();
+const stableSwing = new THREE.Quaternion();
+const stablePitchTwist = new THREE.Quaternion();
+const stablePitchTwistInv = new THREE.Quaternion();
+const stableRollSwing = new THREE.Quaternion();
+const stableYawScaled = new THREE.Quaternion();
+const stablePitchScaled = new THREE.Quaternion();
+
+// Twist of quaternion `q` around unit `axis`, written into `out`. The
+// vector part of a twist-around-`axis` quaternion is, by definition,
+// parallel to `axis` -- so projecting q's vector part onto `axis` and
+// keeping q's own scalar part gives the twist directly; normalizing turns
+// that into a valid rotation. Degenerates only when q is itself very close
+// to a +-180 deg rotation about an axis perpendicular to `axis` (the
+// projection and scalar part both go to ~0) -- falls back to identity
+// rather than dividing by ~0, which just means that single frame reads as
+// "no yaw/pitch change," self-correcting the next frame.
+function swingTwist(q, axis, out){
+  const d = q.x * axis.x + q.y * axis.y + q.z * axis.z;
+  out.set(axis.x * d, axis.y * d, axis.z * d, q.w);
+  const lenSq = out.x * out.x + out.y * out.y + out.z * out.z + out.w * out.w;
+  if (lenSq < 1e-9) out.set(0, 0, 0, 1);
+  else out.normalize();
+}
+
+// Signed angle (radians) that a twist quaternion (from swingTwist(), so its
+// vector part is already parallel to `axis`) rotates by around `axis`.
+function twistAngle(twist, axis){
+  const sinHalf = twist.x * axis.x + twist.y * axis.y + twist.z * axis.z;
+  return 2 * Math.atan2(sinHalf, twist.w);
+}
+
+// Builds rig.quaternion from relQuat the same way CLASSIC/GYRO (BETA) do
+// (scaled/frozen/flipped yaw and pitch, untouched roll) but via nested
+// swing-twist instead of a single YXZ Euler solve -- see the comment block
+// above. Called from animate() once relQuat is set for this frame.
+function applyStableTuning(){
+  swingTwist(relQuat, WORLD_UP, stableYawTwist);
+  const yaw = state.freezeX ? 0 : twistAngle(stableYawTwist, WORLD_UP) * state.gyroMulX * (state.gyroFlipX ? -1 : 1);
+  stableYawScaled.setFromAxisAngle(WORLD_UP, yaw);
+
+  // What's left once yaw is removed has no yaw component at all, so pitch
+  // can be pulled off it around the fixed world X axis with no coupling
+  // back to yaw -- unlike the single-solve Euler approach this replaces.
+  stableYawTwistInv.copy(stableYawTwist).invert();
+  stableSwing.copy(relQuat).premultiply(stableYawTwistInv);
+  swingTwist(stableSwing, WORLD_RIGHT, stablePitchTwist);
+  const pitch = state.freezeY ? 0 : twistAngle(stablePitchTwist, WORLD_RIGHT) * state.gyroMulY * (state.gyroFlipY ? -1 : 1);
+  stablePitchScaled.setFromAxisAngle(WORLD_RIGHT, pitch);
+
+  // Roll passes through exactly as CLASSIC/GYRO (BETA) leave it -- there's
+  // no FREEZE/MULTIPLY control for it either way.
+  stablePitchTwistInv.copy(stablePitchTwist).invert();
+  stableRollSwing.copy(stableSwing).premultiply(stablePitchTwistInv);
+
+  rig.quaternion.copy(stableYawScaled).multiply(stablePitchScaled).multiply(stableRollSwing);
 }
 
 /* =========================================================================
@@ -1768,17 +1863,22 @@ function animate(){
     }
   }
 
-  // GYRO (BETA) falls back to CLASSIC data when rotationRate never showed up
-  // on this device/browser (see onDeviceMotion()) -- haveOrientation is kept
-  // as the single readiness gate either way so the view is never just frozen.
-  const useGyroAlgo = state.trackingAlgo === 1 && haveMotionRate;
-  if (performance.now() >= recenterHoldUntil && (haveOrientation || useGyroAlgo)){
-    if (useGyroAlgo) relQuat.copy(gyroIntegQuat);
+  // GYRO (BETA) and GYRO (STABLE) both fall back to CLASSIC data when
+  // rotationRate never showed up on this device/browser (see
+  // onDeviceMotion()) -- haveOrientation is kept as the single readiness
+  // gate either way so the view is never just frozen.
+  const useGyroSource = (state.trackingAlgo === 1 || state.trackingAlgo === 2) && haveMotionRate;
+  if (performance.now() >= recenterHoldUntil && (haveOrientation || useGyroSource)){
+    if (useGyroSource) relQuat.copy(gyroIntegQuat);
     else relQuat.copy(rawQuat).premultiply(zeroQuatInv);
-    tuneEuler.setFromQuaternion(relQuat, 'YXZ');
-    tuneEuler.y = state.freezeX ? 0 : tuneEuler.y * state.gyroMulX * (state.gyroFlipX ? -1 : 1);
-    tuneEuler.x = state.freezeY ? 0 : tuneEuler.x * state.gyroMulY * (state.gyroFlipY ? -1 : 1);
-    rig.quaternion.setFromEuler(tuneEuler);
+    if (state.trackingAlgo === 2){
+      applyStableTuning();
+    } else {
+      tuneEuler.setFromQuaternion(relQuat, 'YXZ');
+      tuneEuler.y = state.freezeX ? 0 : tuneEuler.y * state.gyroMulX * (state.gyroFlipX ? -1 : 1);
+      tuneEuler.x = state.freezeY ? 0 : tuneEuler.x * state.gyroMulY * (state.gyroFlipY ? -1 : 1);
+      rig.quaternion.setFromEuler(tuneEuler);
+    }
   }
 
   updateNavArrow();   // reads rig.quaternion, so it runs after the gyro step
@@ -2493,16 +2593,21 @@ function showGalleryItem(idx){
 }
 
 function showGalleryImage(item){
+  // Switch the scene over to the video/image display group immediately,
+  // before the new texture has actually loaded -- otherwise, on a slow or
+  // failed load, whatever content group was showing before (e.g. a 3D
+  // model) is left on screen indefinitely even though the GALLERY row
+  // above has already moved on to this item's name.
+  state.mode = 3;
+  state.content = 'video';
+  applyAll();
+  refreshMenu();
   applyImageTexture(item.url, (w, h) => {
     if (!item.sbsChecked){
       item.isSbs = item.isSbs || looksLikeSbsAspect(w, h);
       item.sbsChecked = true;
     }
     if (state.sourceSbs !== item.isSbs){ state.sourceSbs = item.isSbs; refreshMenu(); }
-    state.mode = 3;
-    state.content = 'video';
-    applyAll();
-    refreshMenu();
   }, () => {
     toast('COULD NOT LOAD ' + item.name.toUpperCase().slice(0, 24));
   });
@@ -2512,6 +2617,11 @@ async function showGalleryVideo(item){
   usingImage = false;
   stopReverse();
   restoreVideoMaterials();
+  // Same immediate switch as showGalleryImage() above, for the same reason.
+  state.mode = 3;
+  state.content = 'video';
+  applyAll();
+  refreshMenu();
   if (!item.sbsChecked){
     const sbsHint = await resolveSbsHint(item.name, item.file);
     item.isSbs = sbsHint.value;
@@ -2531,10 +2641,6 @@ async function showGalleryVideo(item){
     video.removeEventListener('loadedmetadata', onMeta);
   };
   if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
-  state.mode = 3;
-  state.content = 'video';
-  applyAll();
-  refreshMenu();
 }
 
 folderFiles.addEventListener('change', ()=>{
@@ -2731,6 +2837,11 @@ function stepEnumValue(node, dir){
     if (galleryItems.length) clearGallery();
     ENUM_SPEC.shape.options = state.mode === 0 ? SHAPES : CHOOSE_SOURCE;
     state.shape = 0;
+    if (state.mode === 0){
+      buildDemo(state.shape);
+      state.content = 'demo';
+      applyAll();
+    }
     refreshMenu();
     saveState();
     return;
