@@ -596,6 +596,16 @@ const DEFAULTS = {
                             // see TRACKING_ALGOS, onDeviceMotion() and
                             // applyStableTuning(). Defaults to CLASSIC so
                             // existing sessions see no behaviour change.
+  // GYRO AXES (diagnostic): which raw devicemotion rotationRate channel
+  // (alpha/beta/gamma, deg/s about the device's own local Z/X/Y per the W3C
+  // spec) drives which body-frame integration axis, feeding GYRO (BETA) and
+  // GYRO (STABLE) alike -- see onDeviceMotion(). Defaults reproduce the
+  // original fixed mapping (beta->PITCH, gamma->YAW, alpha->ROLL) so
+  // existing sessions see no behaviour change; only useful for tracking
+  // down a device/browser reporting axes in an unexpected order or sign.
+  gyroAxisAlpha: 2,        // default ROLL
+  gyroAxisBeta: 0,         // default PITCH
+  gyroAxisGamma: 1,        // default YAW
   menuTimeout: 10          // seconds the bottom OSD strip sits idle before
                             // auto-hiding, see checkBotMenuIdle(). Defaults to
                             // 10, matching the original fixed 10-second
@@ -650,6 +660,11 @@ const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER'];
 // tracking" below for the three implementations, why GYRO (BETA) exists,
 // and why GYRO (STABLE) exists on top of it.
 const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)', 'GYRO (STABLE)'];
+
+// GYRO AXES (diagnostic, GYRO AXES section below): where each raw
+// rotationRate channel routes to in the body-frame integration axis --
+// see the DEFAULTS.gyroAxisAlpha/Beta/Gamma comment and onDeviceMotion().
+const GYRO_AXIS_TARGETS = ['PITCH', 'YAW', 'ROLL', 'OFF'];
 
 // VIEW: PLAIN (flat, single pane) | SBS (stereo pair, no mirror) | HOLO
 // (stereo pair + mirrored UI, for mirror-viewed rigs) -- one picker driving
@@ -752,6 +767,16 @@ const MENU = [
     { type:'check', key:'gyroFlipX',label:'FLIP X' },
     { type:'check', key:'gyroFlipY',label:'FLIP Y' },
     { type:'action', act:'recenter', label:'RECENTER', textbtn:true }
+  ]},
+  { title:'GYRO AXES', items:[
+    // Diagnostic: which raw rotationRate channel (deg/s about the device's
+    // own local Z/X/Y) drives which body-frame integration axis, before
+    // any tracking algorithm sees it -- see DEFAULTS.gyroAxisAlpha/Beta/
+    // Gamma and onDeviceMotion(). Only matters with GYRO (BETA)/(STABLE);
+    // CLASSIC doesn't use rotationRate at all.
+    { type:'enum', key:'gyroAxisAlpha', label:'ALPHA RATE', options:GYRO_AXIS_TARGETS },
+    { type:'enum', key:'gyroAxisBeta',  label:'BETA RATE',  options:GYRO_AXIS_TARGETS },
+    { type:'enum', key:'gyroAxisGamma', label:'GAMMA RATE', options:GYRO_AXIS_TARGETS }
   ]},
   { title:'ACTIONS', items:[
     { type:'action', act:'reset',     label:'RESET TO DEFAULTS', textbtn:true },
@@ -1501,6 +1526,18 @@ let haveMotionRate = false;
 let motionRateUnavailableWarned = false;
 let gyroAvailabilityTimer = null;
 
+// GYRO AXES setting: adds `degPerSec` (converted to rad/s) into whichever
+// slot of the [X, Y, Z] body-frame rate vector `axisVal` the GYRO_AXIS_
+// TARGETS[targetIdx] name maps to (PITCH=X, YAW=Y, ROLL=Z), or drops it for
+// 'OFF'. Addition rather than assignment so mapping two raw channels onto
+// the same axis (a diagnostic experiment, not the default) combines rather
+// than silently losing one.
+const GYRO_AXIS_SLOT = { PITCH: 0, YAW: 1, ROLL: 2 };
+function routeGyroAxis(axisVal, targetIdx, degPerSec){
+  const slot = GYRO_AXIS_SLOT[GYRO_AXIS_TARGETS[targetIdx]];
+  if (slot !== undefined) axisVal[slot] += THREE.MathUtils.degToRad(degPerSec);
+}
+
 // Some browsers (seen in headless Chromium, and plausibly a real device
 // mid-sensor-startup) fire an early devicemotion event with an empty/
 // incomplete rotationRate before real readings start arriving. Warning on
@@ -1533,12 +1570,14 @@ function onDeviceMotion(e){
   haveMotionRate = true;
   // rotationRate per the W3C spec: alpha = deg/s about the device's local Z,
   // beta = about local X, gamma = about local Y -- exactly the body-frame
-  // angular-velocity vector this integration wants.
-  gyroAxis.set(
-    THREE.MathUtils.degToRad(r.beta),
-    THREE.MathUtils.degToRad(r.gamma),
-    THREE.MathUtils.degToRad(r.alpha)
-  );
+  // angular-velocity vector this integration wants. Which channel lands on
+  // which integration axis is the GYRO AXES setting (see routeGyroAxis()) --
+  // defaults reproduce the original fixed beta->X, gamma->Y, alpha->Z.
+  const axisVal = [0, 0, 0];   // [X, Y, Z] body-frame rate, radians/s
+  routeGyroAxis(axisVal, state.gyroAxisAlpha, r.alpha);
+  routeGyroAxis(axisVal, state.gyroAxisBeta, r.beta);
+  routeGyroAxis(axisVal, state.gyroAxisGamma, r.gamma);
+  gyroAxis.set(axisVal[0], axisVal[1], axisVal[2]);
   const angle = gyroAxis.length() * dt;
   if (angle > 1e-8){
     gyroDeltaQuat.setFromAxisAngle(gyroAxis.normalize(), angle);
