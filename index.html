@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.7</title>
+<title>GYROS v2.9</title>
 <style>
   :root{
     --bg:#000000;
@@ -539,7 +539,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.7';
+const APP_VERSION = '2.9';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -589,13 +589,20 @@ const DEFAULTS = {
   gyroMulX: 1, gyroMulY: 1,
   freezeX: false, freezeY: false,
   gyroFlipX: false, gyroFlipY: false,
-  trackingAlgo: 0,         // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
+  trackingAlgo: 3,         // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
                             // (raw gyroscope integration), 2 = GYRO (STABLE)
                             // (same gyroscope integration, tuned via
                             // swing-twist instead of a YXZ Euler solve) --
                             // see TRACKING_ALGOS, onDeviceMotion() and
-                            // applyStableTuning(). Defaults to CLASSIC so
-                            // existing sessions see no behaviour change.
+                            // applyStableTuning(), 3 = V2.8 (6DOF)
+                            // (predicted + adaptively smoothed orientation,
+                            // yaw-only recenter, neck-model parallax -- see
+                            // v28Step()). Defaults to V2.8 (6DOF); a
+                            // session with a saved choice keeps it.
+  neckDepth: 1,            // 6DOF DEPTH: strength of V2.8 (6DOF)'s neck-model
+                            // head translation, multiplier on V28_NECK (0 =
+                            // rotation only, 1 = a real neck). No effect on
+                            // the other TRACKING algorithms.
   // GYRO AXES (diagnostic): which raw devicemotion rotationRate channel
   // (alpha/beta/gamma, deg/s about the device's own local Z/X/Y per the W3C
   // spec) drives which body-frame integration axis, feeding GYRO (BETA) and
@@ -657,9 +664,9 @@ const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER'];
 
 // TRACKING (GYRO section): which head-orientation pipeline animate() uses --
 // see onDeviceOrientation()/onDeviceMotion()/applyStableTuning() near "Head
-// tracking" below for the three implementations, why GYRO (BETA) exists,
-// and why GYRO (STABLE) exists on top of it.
-const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)', 'GYRO (STABLE)'];
+// tracking" below for the implementations, why GYRO (BETA) exists, why
+// GYRO (STABLE) exists on top of it, and what V2.8 (6DOF) does differently.
+const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)', 'GYRO (STABLE)', 'V2.8 (6DOF)'];
 
 // GYRO AXES (diagnostic, GYRO AXES section below): where each raw
 // rotationRate channel routes to in the body-frame integration axis --
@@ -760,6 +767,7 @@ const MENU = [
   ]},
   { title:'GYRO', items:[
     { type:'enum',  key:'trackingAlgo', label:'TRACKING', options:TRACKING_ALGOS },
+    { type:'step',  key:'neckDepth', label:'6DOF DEPTH', min:0, max:5, step:0.1, dec:1 },
     { type:'step',  key:'gyroMulX', label:'X MULTIPLY', min:0, max:5, step:0.1, dec:1 },
     { type:'step',  key:'gyroMulY', label:'Y MULTIPLY', min:0, max:5, step:0.1, dec:1 },
     { type:'check', key:'freezeX',  label:'FREEZE X' },
@@ -1592,6 +1600,20 @@ function screenAngleRad(){
   return THREE.MathUtils.degToRad(angle);
 }
 
+// W3C alpha/beta/gamma (Z-up device frame) -> three.js (Y-up) camera
+// quaternion looking out of the back of the device, corrected for the
+// current screen rotation. Shared by CLASSIC and V2.8 (6DOF).
+function orientationToQuat(out, e){
+  euler.set(
+    THREE.MathUtils.degToRad(e.beta),
+    THREE.MathUtils.degToRad(e.alpha),
+    -THREE.MathUtils.degToRad(e.gamma),
+    'YXZ'
+  );
+  return out.setFromEuler(euler).multiply(q1)
+            .multiply(q0.setFromAxisAngle(zee, -screenAngleRad()));
+}
+
 let kbDebugLastOriLog = 0;
 function onDeviceOrientation(e){
   if (e.alpha === null) return;
@@ -1603,15 +1625,7 @@ function onDeviceOrientation(e){
     }
   }
   haveOrientation = true;
-  euler.set(
-    THREE.MathUtils.degToRad(e.beta),
-    THREE.MathUtils.degToRad(e.alpha),
-    -THREE.MathUtils.degToRad(e.gamma),
-    'YXZ'
-  );
-  rawQuat.setFromEuler(euler);
-  rawQuat.multiply(q1);
-  rawQuat.multiply(q0.setFromAxisAngle(zee, -screenAngleRad()));
+  orientationToQuat(rawQuat, e);
   if (recenterPending){
     zeroQuatInv.copy(rawQuat).invert();
     recenterPending = false;
@@ -1625,7 +1639,9 @@ function recenter(){
   zeroQuatInv.identity();
   gyroIntegQuat.identity();
   gyroLastT = 0;   // reseed the integration clock so we don't eat a stale gap as one huge dt
+  v28RecenterPending = true;
   rig.quaternion.identity();
+  rig.position.set(0, 0, 0);
   camL.rotation.set(0, 0, 0);
   camR.rotation.set(0, 0, 0);
   camL.clearViewOffset();
@@ -1689,6 +1705,8 @@ async function enableMotion(){
     ? 'deviceorientationabsolute' : 'deviceorientation';
   if (kbDebugOn) kbDebugLog('MOTION GRANTED, listening for ' + orientEvt);
   window.addEventListener(orientEvt, onDeviceOrientation);
+  // V2.8 (6DOF) always reads the relative event, never the absolute one.
+  window.addEventListener('deviceorientation', onDeviceOrientationV28);
   window.addEventListener('devicemotion', onDeviceMotion);
   hint.hidden = true;
   setTimeout(recenter, 250);
@@ -1785,6 +1803,113 @@ function applyStableTuning(){
   stableRollSwing.copy(stableSwing).premultiply(stablePitchTwistInv);
 
   rig.quaternion.copy(stableYawScaled).multiply(stablePitchScaled).multiply(stableRollSwing);
+}
+
+/* -------------------------------------------------------------------------
+   V2.8 (6DOF) tracking algorithm -- TRACKING setting, state.trackingAlgo===3.
+
+   The goal is content that stays put in space while the head moves. Four
+   things set it apart from the three algorithms above:
+
+   1. Source. It reads the relative `deviceorientation` event only -- never
+      `deviceorientationabsolute`, whose compass heading jumps next to a
+      headset's magnets. Pitch and roll stay referenced to gravity, so they
+      can't drift and the horizon stays level; only yaw drifts slowly, which
+      RECENTER covers.
+   2. Prediction. The event handler just stores the newest sample, its
+      timestamp and a running turn rate. Each frame, v28Step() extrapolates
+      along that turn to where the head will be when the frame is seen, so
+      content doesn't swim behind a turning head. Prediction fades out as
+      the head comes to rest, where it would only amplify noise.
+   3. Adaptive smoothing. A slerp toward the predicted pose whose strength
+      follows how far behind it is: heavy at rest (no jitter), none in a
+      turn (no lag).
+   4. Yaw-only recenter. RECENTER stores the heading you're facing and
+      nothing else, so recentering while pitched or rolled can't tilt the
+      world the way zeroing the whole quaternion (CLASSIC) does.
+
+   "6DOF" is faked: there's no position sensor on this path. A neck model
+   swings the eyes around a pivot below and behind them, so turning or
+   nodding also translates the cameras a few centimetres and near content
+   shows the parallax a real head would see. 6DOF DEPTH scales it.
+   ------------------------------------------------------------------------- */
+const V28_ALGO = 3;
+const V28_NECK = new THREE.Vector3(0, 0.075, -0.08);   // eyes relative to the neck pivot, metres
+const V28_FRAME_LEAD = 0.016;    // s: roughly one frame from render to photons
+const V28_MAX_LEAD = 0.05;       // s: cap on how far ahead to extrapolate
+const V28_STALE = 0.1;           // s: a sample older than this says nothing about current speed
+const V28_RATE_MIX = 0.2;        // per-sample weight of the newest reading in the smoothed turn rate
+const V28_STILL = THREE.MathUtils.degToRad(5);    // rad/s: at or below this, no prediction
+const V28_MOVING = THREE.MathUtils.degToRad(30);  // rad/s: at or above this, full prediction
+const V28_NOISE = THREE.MathUtils.degToRad(0.4);  // rad: an error this small is treated as sensor noise
+const V28_CATCHUP = THREE.MathUtils.degToRad(1);  // rad: an error this large is followed with no smoothing
+const V28_MIN_A = 0.03;          // smoothing strength at rest
+const v28Prev = new THREE.Quaternion();
+const v28Cur = new THREE.Quaternion();
+const v28Delta = new THREE.Quaternion();
+const v28Pred = new THREE.Quaternion();
+const v28Filtered = new THREE.Quaternion();
+const v28YawInv = new THREE.Quaternion();
+const v28Rate = new THREE.Vector3();   // smoothed angular velocity, device frame, rad/s
+const v28Vec = new THREE.Vector3();
+let v28CurT = 0, v28Samples = 0;
+let v28YawZero = 0;
+let v28RecenterPending = false;
+
+function onDeviceOrientationV28(e){
+  if (e.alpha === null || e.beta === null || e.gamma === null) return;
+  const t = (Number.isFinite(e.timeStamp) && e.timeStamp > 0) ? e.timeStamp : performance.now();
+  const dtS = (t - v28CurT) / 1000;
+  v28Prev.copy(v28Cur);
+  orientationToQuat(v28Cur, e);
+  v28CurT = t;
+  v28Samples++;
+  if (v28Samples < 2 || dtS > V28_STALE){ v28Rate.set(0, 0, 0); return; }
+  if (dtS < 1e-3) return;   // two events in the same tick: no usable rate
+  // Turn rate from the rotation between the last two samples -- no axis
+  // conventions involved, so it can't get a sign wrong. Averaged over a few
+  // samples because a single pair is mostly sensor noise when the head is still.
+  v28Delta.copy(v28Prev).invert().multiply(v28Cur);
+  if (v28Delta.w < 0) v28Delta.set(-v28Delta.x, -v28Delta.y, -v28Delta.z, -v28Delta.w);
+  const ang = 2 * Math.acos(Math.min(1, v28Delta.w));
+  const s = Math.sin(ang / 2);
+  if (s > 1e-9) v28Vec.set(v28Delta.x, v28Delta.y, v28Delta.z).multiplyScalar(ang / s / dtS);
+  else v28Vec.set(0, 0, 0);
+  v28Rate.lerp(v28Vec, V28_RATE_MIX);
+}
+
+// Where the head will be when this frame is seen: v28Cur pushed further
+// along the current turn. Fades out as the head comes to rest.
+function v28Predict(now){
+  v28Pred.copy(v28Cur);
+  const ageS = (now - v28CurT) / 1000;
+  const speed = v28Rate.length();
+  if (ageS > V28_STALE || speed <= V28_STILL) return;
+  const leadS = Math.min(Math.max(ageS, 0) + V28_FRAME_LEAD, V28_MAX_LEAD)
+              * THREE.MathUtils.smoothstep(speed, V28_STILL, V28_MOVING);
+  v28Pred.multiply(v28Delta.setFromAxisAngle(v28Vec.copy(v28Rate).divideScalar(speed), speed * leadS));
+}
+
+// One frame of V2.8 (6DOF): sets rig.quaternion and rig.position.
+function v28Step(dt, now){
+  v28Predict(now);
+  if (v28RecenterPending){
+    v28RecenterPending = false;
+    v28Filtered.copy(v28Cur);
+    v28Vec.set(0, 0, -1).applyQuaternion(v28Cur);
+    // Looking straight up or down has no meaningful heading; keep the old one.
+    if (Math.hypot(v28Vec.x, v28Vec.z) >= 0.2) v28YawZero = Math.atan2(-v28Vec.x, -v28Vec.z);
+  } else {
+    // Strength follows how far behind the filtered pose is: within sensor
+    // noise it barely moves, a real turn pulls it along with no lag.
+    const a = V28_MIN_A + (1 - V28_MIN_A)
+            * THREE.MathUtils.smoothstep(v28Filtered.angleTo(v28Pred), V28_NOISE, V28_CATCHUP);
+    v28Filtered.slerp(v28Pred, 1 - Math.pow(1 - a, dt * 60));   // frame-rate independent
+  }
+  relQuat.copy(v28Filtered).premultiply(v28YawInv.setFromAxisAngle(WORLD_UP, -v28YawZero));
+  applyStableTuning();   // X/Y MULTIPLY, FREEZE, FLIP -- same swing-twist path as GYRO (STABLE)
+  rig.position.copy(V28_NECK).applyQuaternion(rig.quaternion).sub(V28_NECK)
+     .multiplyScalar(state.neckDepth);
 }
 
 /* =========================================================================
@@ -1884,6 +2009,98 @@ function checkBotMenuIdle(){
 }
 
 /* =========================================================================
+   Gamepad -- a Bluetooth/USB controller drives the app through the same
+   key handlers a keyboard does. pollGamepads() runs once per frame (see
+   animate()), compares each control against the previous frame and
+   dispatches a synthetic keydown/keyup for the key it stands in for, so
+   every dialog, the OSD strip, the full list and hold-acceleration behave
+   exactly as they do from a keyboard with no second code path to maintain.
+
+   Standard-mapping button indices (what Xbox / PlayStation / MFi pads
+   report in Safari and Chrome):
+     D-pad, left stick   arrows       A      Enter (activate)
+     B                   Escape       X      Space (play / pause)
+     Y                   Tab          LB/RB  [ and ]
+     LT or RT (held)     Shift        START  O (load dialog)
+     BACK, stick clicks  RECENTER
+   ========================================================================= */
+const GAMEPAD_KEYS = [
+  { btn:12, axis:1, sign:-1, key:'ArrowUp',    code:'ArrowUp',    repeat:true },
+  { btn:13, axis:1, sign:1,  key:'ArrowDown',  code:'ArrowDown',  repeat:true },
+  { btn:14, axis:0, sign:-1, key:'ArrowLeft',  code:'ArrowLeft',  repeat:true },
+  { btn:15, axis:0, sign:1,  key:'ArrowRight', code:'ArrowRight', repeat:true },
+  { btn:0, key:'Enter',  code:'Enter' },
+  { btn:1, key:'Escape', code:'Escape' },
+  { btn:2, key:' ',      code:'Space' },
+  { btn:3, key:'Tab',    code:'Tab' },
+  { btn:4, key:'[',      code:'BracketLeft' },
+  { btn:5, key:']',      code:'BracketRight' },
+  { btn:9, key:'o',      code:'KeyO' }
+];
+const GAMEPAD_RECENTER_BTNS = [8, 10, 11];
+const GAMEPAD_SHIFT_BTNS = [6, 7];
+const GAMEPAD_STICK_ON = 0.6;        // stick deflection that counts as a press
+const GAMEPAD_REPEAT_DELAY = 400;    // ms held before an arrow starts repeating
+const GAMEPAD_REPEAT_EVERY = 120;    // ms between repeats after that
+const gamepadHeld = GAMEPAD_KEYS.map(() => 0);   // 0 = up, else time of the next repeat
+let gamepadRecenterHeld = false;
+let gamepadSeen = false;
+
+function gamepadKeyEvent(type, k, shiftKey, repeat){
+  const target = (document.activeElement && document.activeElement !== document.body)
+    ? document.activeElement : document.body;
+  const ev = new KeyboardEvent(type, { key:k.key, code:k.code, shiftKey, repeat:!!repeat, bubbles:true, cancelable:true });
+  const unhandled = target.dispatchEvent(ev);
+  // A real Enter clicks a focused button natively; a synthetic one doesn't.
+  if (type === 'keydown' && k.key === 'Enter' && unhandled && target.tagName === 'BUTTON') target.click();
+}
+
+function gamepadReleaseAll(){
+  GAMEPAD_KEYS.forEach((k, i)=>{
+    if (gamepadHeld[i]){ gamepadHeld[i] = 0; gamepadKeyEvent('keyup', k, false); }
+  });
+  gamepadRecenterHeld = false;
+}
+
+function pollGamepads(){
+  if (!navigator.getGamepads) return;
+  let pads;
+  try{ pads = navigator.getGamepads(); }catch(e){ return; }   // blocked by permissions policy
+  const pressed = idx => { for (const p of pads){ if (p && p.connected && p.buttons[idx] && p.buttons[idx].pressed) return true; } return false; };
+  const pushed = (axis, sign) => { for (const p of pads){ if (p && p.connected && p.axes[axis] * sign > GAMEPAD_STICK_ON) return true; } return false; };
+  let any = false;
+  for (const p of pads){ if (p && p.connected){ any = true; break; } }
+  if (!any){
+    if (gamepadSeen){ gamepadSeen = false; gamepadReleaseAll(); }
+    return;
+  }
+  if (!gamepadSeen){ gamepadSeen = true; toast('GAMEPAD CONNECTED'); }
+
+  const now = performance.now();
+  const shift = GAMEPAD_SHIFT_BTNS.some(pressed);
+  GAMEPAD_KEYS.forEach((k, i)=>{
+    const down = pressed(k.btn) || (k.axis !== undefined && pushed(k.axis, k.sign));
+    if (down && !gamepadHeld[i]){
+      gamepadHeld[i] = now + GAMEPAD_REPEAT_DELAY;
+      gamepadKeyEvent('keydown', k, shift);
+    } else if (down && k.repeat && now >= gamepadHeld[i]){
+      gamepadHeld[i] = now + GAMEPAD_REPEAT_EVERY;
+      gamepadKeyEvent('keydown', k, shift, true);
+    } else if (!down && gamepadHeld[i]){
+      gamepadHeld[i] = 0;
+      gamepadKeyEvent('keyup', k, shift);
+    }
+  });
+  const rec = GAMEPAD_RECENTER_BTNS.some(pressed);
+  if (rec && !gamepadRecenterHeld) recenter();
+  gamepadRecenterHeld = rec;
+}
+// Same safety net as stopKbHold(): a button released while the page is
+// unfocused or hidden would otherwise stay "held".
+window.addEventListener('blur', gamepadReleaseAll);
+document.addEventListener('visibilitychange', ()=>{ if (document.hidden) gamepadReleaseAll(); });
+
+/* =========================================================================
    Render loop
    ========================================================================= */
 const clock = new THREE.Clock();
@@ -1907,7 +2124,14 @@ function animate(){
   // onDeviceMotion()) -- haveOrientation is kept as the single readiness
   // gate either way so the view is never just frozen.
   const useGyroSource = (state.trackingAlgo === 1 || state.trackingAlgo === 2) && haveMotionRate;
-  if (performance.now() >= recenterHoldUntil && (haveOrientation || useGyroSource)){
+  // V2.8 (6DOF) likewise falls back to CLASSIC until its own relative
+  // deviceorientation samples arrive.
+  const useV28 = state.trackingAlgo === V28_ALGO && v28Samples > 0;
+  if (!useV28) rig.position.set(0, 0, 0);
+  const frameNow = performance.now();
+  if (frameNow >= recenterHoldUntil && useV28){
+    v28Step(dt, frameNow);
+  } else if (frameNow >= recenterHoldUntil && (haveOrientation || useGyroSource)){
     if (useGyroSource) relQuat.copy(gyroIntegQuat);
     else relQuat.copy(rawQuat).premultiply(zeroQuatInv);
     if (state.trackingAlgo === 2){
@@ -1921,6 +2145,7 @@ function animate(){
   }
 
   updateNavArrow();   // reads rig.quaternion, so it runs after the gyro step
+  pollGamepads();
   checkBotMenuIdle();
 
   const { w, h, ew, eh } = eyeSize();

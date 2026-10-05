@@ -55,6 +55,12 @@ row stays centred and the menu scrolls beneath it.
 viewing, `↑` opens the strip, `↓` opens the list, `←/→` change eye distance.
 `Esc` closes whatever is open. Mouse wheel and trackpad pinch zoom.
 
+**Gamepad** (Bluetooth or USB, standard layout): D-pad or left stick = arrows,
+`A` = activate, `B` = Esc, `X` = play / pause, `Y` = swap strip and list,
+`LB`/`RB` = `[` / `]`, hold a trigger for Shift, `START` = load dialog,
+`BACK` or a stick click = RECENTER. Press any button once so the browser
+reports the pad.
+
 ## Settings
 
 Everything is shared across content types and saved to `localStorage` under
@@ -69,7 +75,10 @@ be — so it always boots to the demo.
 - **ZOOM** — zoom, scale X/Y, keystone top/bottom (TRPZD).
 - **FLIP** — flip X/Y.
 - **GYRO** — per-axis multiply, freeze and invert, plus RECENTER, which makes
-  wherever you are looking the new forward.
+  wherever you are looking the new forward. TRACKING picks the algorithm;
+  V2.8 (6DOF) adds motion prediction, adaptive smoothing, a yaw-only
+  RECENTER that keeps the horizon level, and a neck model that fakes head
+  translation (6DOF DEPTH sets how strong).
 
 POS, zoom and scale move and stretch each eye's camera frustum rather than the
 finished picture, so nothing is clipped at the viewport edge and magnified
