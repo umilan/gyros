@@ -51,6 +51,13 @@ between them, and moving past either end closes it. Holding `‹` or `›`
 accelerates. The **full list** is the same settings laid out per eye; the focused
 row stays centred and the menu scrolls beneath it.
 
+**Key mapping**: tap the text in the middle of the strip to bind keys from a
+keyboard or Bluetooth remote to the setting it shows. The first key you press
+becomes its `+`, the second its `−`; tap the middle again to finish with only
+a `+` key. `Esc` while it is listening clears that setting's keys. Mapped keys
+work from anywhere, take priority over the built-in shortcuts, and survive
+RESET TO DEFAULTS.
+
 **Keyboard** (useful on a desktop, harmless on a phone): arrows or WASD. While
 viewing, `↑` opens the strip, `↓` opens the list, `←/→` change eye distance.
 `Esc` closes whatever is open. Mouse wheel and trackpad pinch zoom.
@@ -69,7 +76,12 @@ be — so it always boots to the demo.
 
 - **GENERAL** — VIEW (PLAIN collapses to a single full-width view and one menu
   pane; SBS is stereo; HOLO is stereo with a mirrored UI for mirror-viewed
-  rigs), PERSPECTIVE (camera field of view).
+  rigs; HOLO2 is HOLO for a phone mounted tilted above the eyes and seen in
+  a reflector), AUTO TILT / PHONE TILT / PHONE ROLL (how the phone sits
+  relative to your head, kept per view: with AUTO TILT on they are measured
+  each time you RECENTER, so hold your head level when you do; step either
+  angle by hand to switch that off and fine-tune. On in HOLO2, off
+  elsewhere), PERSPECTIVE (camera field of view).
 - **CONTENT** — demo shape, auto-rotate, SBS source.
 - **POSITIONING** — POS X/Y, eye distance.
 - **ZOOM** — zoom, scale X/Y, keystone top/bottom (TRPZD).

@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.9</title>
+<title>GYROS v2.10</title>
 <style>
   :root{
     --bg:#000000;
@@ -539,7 +539,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.9';
+const APP_VERSION = '2.10';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -548,7 +548,7 @@ document.title = `GYROS v${APP_VERSION}`;
 const STORE_KEY = 'gyrosSettings';
 
 const DEFAULTS = {
-  view: 1,           // 0 PLAIN | 1 SBS | 2 HOLO -- index into VIEWS. Drives
+  view: 1,           // 0 PLAIN | 1 SBS | 2 HOLO | 3 HOLO2 -- index into VIEWS. Drives
                       // state.sbs and state.mirrorUI (see applyView() below),
                       // which the rest of the app still reads directly.
   mode: 0,           // DEMO | IMAGE / VIDEO | 3D OBJECT | MEDIA FOLDER
@@ -599,20 +599,25 @@ const DEFAULTS = {
                             // yaw-only recenter, neck-model parallax -- see
                             // v28Step()). Defaults to V2.8 (6DOF); a
                             // session with a saved choice keeps it.
+  // How the phone sits relative to the head, for V2.8 (6DOF) tracking and
+  // HOLO2 -- see v28MeasureMount()/v28BuildMount(). Remembered per VIEW
+  // (PER_VIEW_KEYS); these are the values for every view but HOLO2, whose
+  // own starting values are in mountDefaults().
+  mountAuto: false,        // AUTO TILT: measure the two angles below from
+                            // gravity at every RECENTER (head held level).
+                            // Stepping either angle by hand turns it off.
+  mountTilt: 0,            // PHONE TILT, degrees. PLAIN/SBS/HOLO: 0 = upright
+                            // in front of the eyes, positive = top edge
+                            // tipped away from you. HOLO2: measured from
+                            // horizontal -- 0 = flat above the eyes, screen
+                            // facing straight down; 90 = upright, screen
+                            // facing forward.
+  mountRoll: 0,            // PHONE ROLL, degrees: the phone turned in its own
+                            // plane, i.e. its long edge not level.
   neckDepth: 1,            // 6DOF DEPTH: strength of V2.8 (6DOF)'s neck-model
                             // head translation, multiplier on V28_NECK (0 =
                             // rotation only, 1 = a real neck). No effect on
                             // the other TRACKING algorithms.
-  // GYRO AXES (diagnostic): which raw devicemotion rotationRate channel
-  // (alpha/beta/gamma, deg/s about the device's own local Z/X/Y per the W3C
-  // spec) drives which body-frame integration axis, feeding GYRO (BETA) and
-  // GYRO (STABLE) alike -- see onDeviceMotion(). Defaults reproduce the
-  // original fixed mapping (beta->PITCH, gamma->YAW, alpha->ROLL) so
-  // existing sessions see no behaviour change; only useful for tracking
-  // down a device/browser reporting axes in an unexpected order or sign.
-  gyroAxisAlpha: 2,        // default ROLL
-  gyroAxisBeta: 0,         // default PITCH
-  gyroAxisGamma: 1,        // default YAW
   menuTimeout: 10          // seconds the bottom OSD strip sits idle before
                             // auto-hiding, see checkBotMenuIdle(). Defaults to
                             // 10, matching the original fixed 10-second
@@ -634,9 +639,16 @@ function loadState(){
     // whichever views aren't currently active -- see PER_VIEW_KEYS/switchView()
     // below. The active view's own values live directly on `state` above, same
     // as before this feature existed, so there's nothing to restore for it here.
-    if (Array.isArray(saved.viewProfiles) && saved.viewProfiles.length === VIEWS.length){
-      viewProfiles = saved.viewProfiles.map(p => (p && typeof p === 'object') ? p : null);
+    // A shorter array is from a version with fewer views (HOLO2 was added
+    // at the end); the views it doesn't cover just start with no snapshot.
+    if (Array.isArray(saved.viewProfiles) && saved.viewProfiles.length <= VIEWS.length){
+      viewProfiles = VIEWS.map((_, i) => {
+        const p = saved.viewProfiles[i];
+        return (p && typeof p === 'object') ? p : null;
+      });
     }
+    // Settings saved before the mount angles existed: start from this view's own.
+    if (saved.mountAuto === undefined) Object.assign(state, mountDefaults(state.view));
     // content and shape are session-ish: a model/video source cannot be restored
     if (state.content !== 'demo') state.content = 'demo';
     state.mode = 0;
@@ -668,20 +680,26 @@ const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER'];
 // GYRO (STABLE) exists on top of it, and what V2.8 (6DOF) does differently.
 const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)', 'GYRO (STABLE)', 'V2.8 (6DOF)'];
 
-// GYRO AXES (diagnostic, GYRO AXES section below): where each raw
-// rotationRate channel routes to in the body-frame integration axis --
-// see the DEFAULTS.gyroAxisAlpha/Beta/Gamma comment and onDeviceMotion().
-const GYRO_AXIS_TARGETS = ['PITCH', 'YAW', 'ROLL', 'OFF'];
 
 // VIEW: PLAIN (flat, single pane) | SBS (stereo pair, no mirror) | HOLO
-// (stereo pair + mirrored UI, for mirror-viewed rigs) -- one picker driving
-// the two flags (sbs, mirrorUI) the rest of the app actually branches on.
-const VIEWS = ['PLAIN', 'SBS', 'HOLO'];
-const VIEW_SBS    = [false, true,  true];
-const VIEW_MIRROR = [false, false, true];
+// (stereo pair + mirrored UI, for mirror-viewed rigs) | HOLO2 (the same
+// picture as HOLO, plus head tracking solved for a phone that sits tilted
+// above the eyes and is seen in a reflector -- see v28BuildMount()) -- one
+// picker driving the two flags (sbs, mirrorUI) the rest of the app actually
+// branches on.
+const VIEWS = ['PLAIN', 'SBS', 'HOLO', 'HOLO2'];
+const VIEW_SBS    = [false, true,  true,  true];
+const VIEW_MIRROR = [false, false, true,  true];
+const VIEW_HOLO = 2, VIEW_HOLO2 = 3;
 function applyView(){
   state.sbs = VIEW_SBS[state.view];
   state.mirrorUI = VIEW_MIRROR[state.view];
+  syncMountRows();
+}
+// AUTO TILT / PHONE TILT / PHONE ROLL only do anything on the V2.8 (6DOF)
+// pipeline, which HOLO2 always uses -- hide them otherwise (whenTrue).
+function syncMountRows(){
+  state.mountRows = state.view === VIEW_HOLO2 || state.trackingAlgo === 3;
 }
 
 // Visual/geometry settings that PLAIN/SBS/HOLO each remember separately --
@@ -696,12 +714,20 @@ const PER_VIEW_KEYS = [
   'trapezoid', 'trapezoidCorners',
   'cornerTLx', 'cornerTLy', 'cornerTRx', 'cornerTRy',
   'cornerBLx', 'cornerBLy', 'cornerBRx', 'cornerBRy',
-  'flipX', 'flipY'
+  'flipX', 'flipY',
+  'mountAuto', 'mountTilt', 'mountRoll'
 ];
-function viewDefaults(){
+// HOLO2 can't work without knowing the mount, so it starts on AUTO TILT with
+// a 45-degree guess; the other views start with the phone taken as upright.
+function mountDefaults(idx){
+  return idx === VIEW_HOLO2
+    ? { mountAuto:true, mountTilt:45, mountRoll:0 }
+    : { mountAuto:DEFAULTS.mountAuto, mountTilt:DEFAULTS.mountTilt, mountRoll:DEFAULTS.mountRoll };
+}
+function viewDefaults(idx){
   const d = {};
   for (const k of PER_VIEW_KEYS) d[k] = DEFAULTS[k];
-  return d;
+  return Object.assign(d, mountDefaults(idx));
 }
 // One saved snapshot per VIEW index, for whichever views AREN'T currently
 // active -- the active view's live values just live on `state` directly, as
@@ -715,7 +741,13 @@ function switchView(newIdx){
   const snapshot = {};
   for (const k of PER_VIEW_KEYS) snapshot[k] = state[k];
   viewProfiles[oldIdx] = snapshot;
-  Object.assign(state, viewProfiles[newIdx] || viewDefaults());
+  // First time in HOLO2: start from HOLO's picture settings (flips, keystone,
+  // eye distance), since it's the same optics with different tracking.
+  const firstHolo2 = (newIdx === VIEW_HOLO2 && !viewProfiles[newIdx]) ? viewProfiles[VIEW_HOLO] : null;
+  Object.assign(state, viewProfiles[newIdx] || firstHolo2 || viewDefaults(newIdx));
+  // The mount is never inherited from another view, and a snapshot saved
+  // before these settings existed doesn't carry one.
+  if (!viewProfiles[newIdx] || viewProfiles[newIdx].mountAuto === undefined) Object.assign(state, mountDefaults(newIdx));
   state.view = newIdx;
   applyView();
 }
@@ -723,6 +755,11 @@ function switchView(newIdx){
 const MENU = [
   { title:'GENERAL', items:[
     { type:'enum',  key:'view', label:'VIEW', options:VIEWS },
+    // How the phone is mounted relative to the head -- see DEFAULTS.
+    // mountAuto/mountTilt/mountRoll and v28BuildMount().
+    { type:'check', key:'mountAuto', label:'AUTO TILT',  whenTrue:'mountRows' },
+    { type:'step',  key:'mountTilt', label:'PHONE TILT', min:-90, max:180, step:1, whenTrue:'mountRows' },
+    { type:'step',  key:'mountRoll', label:'PHONE ROLL', min:-180, max:180, step:1, whenTrue:'mountRows' },
     { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
     { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
     { type:'step',  key:'fov', label:'PERSPECTIVE', min:-100, max:100, step:1 },
@@ -775,16 +812,6 @@ const MENU = [
     { type:'check', key:'gyroFlipX',label:'FLIP X' },
     { type:'check', key:'gyroFlipY',label:'FLIP Y' },
     { type:'action', act:'recenter', label:'RECENTER', textbtn:true }
-  ]},
-  { title:'GYRO AXES', items:[
-    // Diagnostic: which raw rotationRate channel (deg/s about the device's
-    // own local Z/X/Y) drives which body-frame integration axis, before
-    // any tracking algorithm sees it -- see DEFAULTS.gyroAxisAlpha/Beta/
-    // Gamma and onDeviceMotion(). Only matters with GYRO (BETA)/(STABLE);
-    // CLASSIC doesn't use rotationRate at all.
-    { type:'enum', key:'gyroAxisAlpha', label:'ALPHA RATE', options:GYRO_AXIS_TARGETS },
-    { type:'enum', key:'gyroAxisBeta',  label:'BETA RATE',  options:GYRO_AXIS_TARGETS },
-    { type:'enum', key:'gyroAxisGamma', label:'GAMMA RATE', options:GYRO_AXIS_TARGETS }
   ]},
   { title:'ACTIONS', items:[
     { type:'action', act:'reset',     label:'RESET TO DEFAULTS', textbtn:true },
@@ -958,6 +985,10 @@ function fmt(key, v){
 }
 
 function refreshMenu(){
+  syncMountRows();
+  // Same reason as in buildOsdItems(): keep the full list's focus on the
+  // row it was on when rows above it get shown or hidden below.
+  const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
   menuPanes.querySelectorAll('[data-val]').forEach(el=>{
     const k = el.dataset.val;
     el.textContent = fmt(k, state[k]);
@@ -970,6 +1001,10 @@ function refreshMenu(){
   menuPanes.querySelectorAll('[data-when-true]').forEach(el=>{
     el.hidden = !state[el.dataset.whenTrue];
   });
+  if (focusedRow){
+    const idx = navItems().indexOf(focusedRow);
+    if (idx >= 0 && idx !== menuFocusIdx) setMenuFocus(idx, false);
+  }
   // Keep the settings-strip's flattened item list in sync with the same
   // content-based filtering the full list just applied above via [hidden] --
   // otherwise a 'when'-gated row (e.g. ANGLE, SBS SOURCE) stays unreachable
@@ -1534,18 +1569,6 @@ let haveMotionRate = false;
 let motionRateUnavailableWarned = false;
 let gyroAvailabilityTimer = null;
 
-// GYRO AXES setting: adds `degPerSec` (converted to rad/s) into whichever
-// slot of the [X, Y, Z] body-frame rate vector `axisVal` the GYRO_AXIS_
-// TARGETS[targetIdx] name maps to (PITCH=X, YAW=Y, ROLL=Z), or drops it for
-// 'OFF'. Addition rather than assignment so mapping two raw channels onto
-// the same axis (a diagnostic experiment, not the default) combines rather
-// than silently losing one.
-const GYRO_AXIS_SLOT = { PITCH: 0, YAW: 1, ROLL: 2 };
-function routeGyroAxis(axisVal, targetIdx, degPerSec){
-  const slot = GYRO_AXIS_SLOT[GYRO_AXIS_TARGETS[targetIdx]];
-  if (slot !== undefined) axisVal[slot] += THREE.MathUtils.degToRad(degPerSec);
-}
-
 // Some browsers (seen in headless Chromium, and plausibly a real device
 // mid-sensor-startup) fire an early devicemotion event with an empty/
 // incomplete rotationRate before real readings start arriving. Warning on
@@ -1578,14 +1601,12 @@ function onDeviceMotion(e){
   haveMotionRate = true;
   // rotationRate per the W3C spec: alpha = deg/s about the device's local Z,
   // beta = about local X, gamma = about local Y -- exactly the body-frame
-  // angular-velocity vector this integration wants. Which channel lands on
-  // which integration axis is the GYRO AXES setting (see routeGyroAxis()) --
-  // defaults reproduce the original fixed beta->X, gamma->Y, alpha->Z.
-  const axisVal = [0, 0, 0];   // [X, Y, Z] body-frame rate, radians/s
-  routeGyroAxis(axisVal, state.gyroAxisAlpha, r.alpha);
-  routeGyroAxis(axisVal, state.gyroAxisBeta, r.beta);
-  routeGyroAxis(axisVal, state.gyroAxisGamma, r.gamma);
-  gyroAxis.set(axisVal[0], axisVal[1], axisVal[2]);
+  // angular-velocity vector this integration wants.
+  gyroAxis.set(
+    THREE.MathUtils.degToRad(r.beta),
+    THREE.MathUtils.degToRad(r.gamma),
+    THREE.MathUtils.degToRad(r.alpha)
+  );
   const angle = gyroAxis.length() * dt;
   if (angle > 1e-8){
     gyroDeltaQuat.setFromAxisAngle(gyroAxis.normalize(), angle);
@@ -1890,13 +1911,84 @@ function v28Predict(now){
   v28Pred.multiply(v28Delta.setFromAxisAngle(v28Vec.copy(v28Rate).divideScalar(speed), speed * leadS));
 }
 
+/* HOLO2 (VIEW setting): the phone isn't in front of the eyes looking where
+   the head looks. It sits above them, tilted, screen facing forward and
+   down into a reflector. Every pipeline above treats the phone's own axes
+   as the head's, so a level turn of the head -- a rotation about the
+   vertical -- is read as a rotation about the phone's tilted axis, part
+   yaw and part roll, and the picture climbs or sinks as you turn.
+
+   The fix is to track the head, not the phone: head = phone x mount, where
+   `mount` is the fixed rotation from the head's axes to the phone's. It's
+   described by two angles, shown under VIEW:
+     PHONE TILT  the phone's angle from horizontal (0 = flat, screen down;
+                 90 = upright, screen facing forward)
+     PHONE ROLL  the phone turned in its own plane (long edge not level)
+   With AUTO TILT on, both are measured from gravity at every RECENTER, on
+   the assumption that the head is level at that moment. With it off, the
+   hand-set values are used as they are. Which way round the phone is
+   clipped in is read from gravity either way, so it needs no setting.
+
+   The other views get the same two angles for a phone that is in front of
+   the eyes but not square to them -- a headset that sits slanted, or a
+   phone held in the hand leaning back. There PHONE TILT counts from
+   upright (0 = upright, positive = top edge tipped away), and AUTO TILT
+   starts off, so RECENTER stays yaw-only until it's asked to level too. */
+const V28_X = new THREE.Vector3(1, 0, 0);
+const V28_Z = new THREE.Vector3(0, 0, 1);
+const v28Mount = new THREE.Quaternion();
+const v28MountRoll = new THREE.Quaternion();
+const v28Head = new THREE.Quaternion();
+const v28Up = new THREE.Vector3();
+let v28MountFlip = false;        // HOLO2: phone clipped in the other way round
+let v28AutoTilt = null, v28AutoRoll = null;   // unrounded measurements, degrees
+let v28MountAutoWas = true;
+
+// Reads the mount from gravity as the phone sees it right now.
+function v28MeasureMount(){
+  v28AutoTilt = v28AutoRoll = null;
+  v28Up.set(0, 1, 0).applyQuaternion(v28Head.copy(v28Cur).invert());   // world up, in the phone's frame
+  let tilt, roll = null;
+  if (state.view === VIEW_HOLO2){
+    tilt = Math.acos(THREE.MathUtils.clamp(-v28Up.z, -1, 1));
+    // Near flat (or flat on its back) the phone's long edge says nothing
+    // about which way is forward: leave way-round and roll as they are.
+    if (Math.sin(tilt) >= 0.2){
+      v28MountFlip = v28Up.y > 0;
+      const sign = v28MountFlip ? -1 : 1;
+      roll = Math.atan2(-v28Up.x * sign, -v28Up.y * sign);
+    }
+  } else {
+    tilt = Math.asin(THREE.MathUtils.clamp(-v28Up.z, -1, 1));
+    if (Math.cos(tilt) >= 0.2) roll = Math.atan2(v28Up.x, v28Up.y);
+  }
+  if (!state.mountAuto) return;
+  v28AutoTilt = THREE.MathUtils.radToDeg(tilt);
+  v28AutoRoll = roll === null ? state.mountRoll : THREE.MathUtils.radToDeg(roll);
+  state.mountTilt = Math.round(v28AutoTilt);
+  state.mountRoll = Math.round(v28AutoRoll);
+  refreshMenu();
+  saveState();
+}
+
+function v28BuildMount(){
+  const measured = state.mountAuto && v28AutoTilt !== null;
+  const tilt = THREE.MathUtils.degToRad(measured ? v28AutoTilt : state.mountTilt);
+  const roll = THREE.MathUtils.degToRad(measured ? v28AutoRoll : state.mountRoll);
+  const holo2 = state.view === VIEW_HOLO2;
+  v28Mount.setFromAxisAngle(V28_X, holo2 ? -(Math.PI / 2 + tilt) : -tilt)
+          .premultiply(v28MountRoll.setFromAxisAngle(V28_Z, -roll - (holo2 && v28MountFlip ? Math.PI : 0)));
+}
+
 // One frame of V2.8 (6DOF): sets rig.quaternion and rig.position.
 function v28Step(dt, now){
   v28Predict(now);
   if (v28RecenterPending){
     v28RecenterPending = false;
     v28Filtered.copy(v28Cur);
-    v28Vec.set(0, 0, -1).applyQuaternion(v28Cur);
+    v28MeasureMount();
+    v28BuildMount();
+    v28Vec.set(0, 0, -1).applyQuaternion(v28Head.copy(v28Cur).multiply(v28Mount));
     // Looking straight up or down has no meaningful heading; keep the old one.
     if (Math.hypot(v28Vec.x, v28Vec.z) >= 0.2) v28YawZero = Math.atan2(-v28Vec.x, -v28Vec.z);
   } else {
@@ -1905,8 +1997,12 @@ function v28Step(dt, now){
     const a = V28_MIN_A + (1 - V28_MIN_A)
             * THREE.MathUtils.smoothstep(v28Filtered.angleTo(v28Pred), V28_NOISE, V28_CATCHUP);
     v28Filtered.slerp(v28Pred, 1 - Math.pow(1 - a, dt * 60));   // frame-rate independent
+    if (state.mountAuto && !v28MountAutoWas) v28MeasureMount();   // AUTO TILT just switched on
+    v28BuildMount();   // every frame, so a hand-set angle takes effect as it's stepped
   }
-  relQuat.copy(v28Filtered).premultiply(v28YawInv.setFromAxisAngle(WORLD_UP, -v28YawZero));
+  v28MountAutoWas = state.mountAuto;
+  relQuat.copy(v28Filtered).multiply(v28Mount)
+         .premultiply(v28YawInv.setFromAxisAngle(WORLD_UP, -v28YawZero));
   applyStableTuning();   // X/Y MULTIPLY, FREEZE, FLIP -- same swing-twist path as GYRO (STABLE)
   rig.position.copy(V28_NECK).applyQuaternion(rig.quaternion).sub(V28_NECK)
      .multiplyScalar(state.neckDepth);
@@ -1997,7 +2093,7 @@ let lastActivityAt = performance.now();
 function botMenuShouldIdleHide(){
   return state.menuTimeout > 0
     && document.body.dataset.chrome === '1' && uiState === 'osd'
-    && btKeysDlg.hidden && urlDlg.hidden;
+    && btKeysDlg.hidden && urlDlg.hidden && !keyMapListening;
 }
 ['pointerdown', 'pointermove', 'keydown', 'wheel'].forEach(ev=>{
   window.addEventListener(ev, ()=>{ lastActivityAt = performance.now(); }, { passive:true, capture:true });
@@ -2126,7 +2222,9 @@ function animate(){
   const useGyroSource = (state.trackingAlgo === 1 || state.trackingAlgo === 2) && haveMotionRate;
   // V2.8 (6DOF) likewise falls back to CLASSIC until its own relative
   // deviceorientation samples arrive.
-  const useV28 = state.trackingAlgo === V28_ALGO && v28Samples > 0;
+  // HOLO2 always tracks through it, whatever TRACKING says: it's the only
+  // pipeline that knows how the phone is mounted (see v28BuildMount()).
+  const useV28 = (state.trackingAlgo === V28_ALGO || state.view === VIEW_HOLO2) && v28Samples > 0;
   if (!useV28) rig.position.set(0, 0, 0);
   const frameNow = performance.now();
   if (frameNow >= recenterHoldUntil && useV28){
@@ -3001,7 +3099,16 @@ function setUiState(next){
 let osdItems = [];     // flat array of all menu items with sectionLabel
 let osdFocusIdx = 0;
 
+// One stable name per menu item: its state key, or for an action its act
+// plus label (several actions can share an act).
+function osdItemId(item){
+  return item && (item.key || item.act + ':' + item.label);
+}
 function buildOsdItems(){
+  // Rows can appear or disappear above the focused one (the mount rows
+  // under VIEW come and go with VIEW and TRACKING), so focus follows the
+  // item itself, not its position.
+  const focusedId = osdItemId(osdItems[osdFocusIdx]);
   osdItems = [];
   MENU.forEach(section=>{
     section.items.forEach(item=>{
@@ -3011,6 +3118,8 @@ function buildOsdItems(){
       osdItems.push({ ...item, sectionLabel: section.title });
     });
   });
+  const kept = focusedId ? osdItems.findIndex(item => osdItemId(item) === focusedId) : -1;
+  if (kept >= 0) osdFocusIdx = kept;
   osdFocusIdx = Math.max(0, Math.min(osdFocusIdx, osdItems.length - 1));
 }
 
@@ -3030,13 +3139,25 @@ function renderOsd(){
     val = item.label;
     label = 'HIT LEFT OR RIGHT TO CONFIRM';
   }
-  botPanesEl.querySelectorAll('.osdSection').forEach(el => el.textContent = item.sectionLabel);
+  let section = item.sectionLabel;
+  if (keyMapListening){
+    // Key-mapping mode (see "Key mapping" below): the strip says what it's
+    // waiting for instead of showing the value.
+    const got = keyMapListening.keys;
+    const now = keyMap[keyMapListening.id];
+    section = 'MAP KEYS · ' + item.label;
+    val = got.length ? 'PRESS − KEY' : 'PRESS + KEY';
+    label = got.length ? `+ ${keyMapName(got[0])} · TAP TO FINISH`
+          : now ? `NOW ${keyMapSummary(now)} · ESC CLEARS`
+          : 'TAP AGAIN TO EXIT';
+  }
+  botPanesEl.querySelectorAll('.osdSection').forEach(el => el.textContent = section);
   botPanesEl.querySelectorAll('.osdName').forEach(el => el.textContent = val);
   botPanesEl.querySelectorAll('.osdLabel').forEach(el => el.textContent = label);
   // Action rows: pick out both the name and the "how to confirm" caption in
   // the accent colour, since together they're effectively one instruction
   // rather than a value/label pair -- the section caption above stays muted.
-  botPanesEl.querySelectorAll('.osdNav').forEach(el => el.classList.toggle('isAction', item.type === 'action'));
+  botPanesEl.querySelectorAll('.osdNav').forEach(el => el.classList.toggle('isAction', item.type === 'action' || !!keyMapListening));
 }
 
 function osdChangeItem(dir){
@@ -3088,6 +3209,7 @@ function stepEnumValue(node, dir){
   if (node.key === 'view'){
     const n = node.options.length;
     switchView((state.view + dir + n) % n);   // snapshots the old view's settings, restores the new one's
+    v28RecenterPending = true;   // each view has its own mount -- see v28MeasureMount()
     buildPanes();
     buildTopPanes();
     buildBotPanes();
@@ -3364,23 +3486,131 @@ topbar.addEventListener('click', e=>{
   if (e.target.closest('.btnBtKeys')){ openBtKeysDlg(); }
 });
 
-/* Tap the OSD centre text: single = next item (↓), double = prev item (↑).
-   Closing the strip is done via Esc or by tapping the image area (stage),
-   see handleTap() — the centre text itself just steps through items. */
-let osdNavTapTimer = null, osdNavLastTap = 0;
-botbar.addEventListener('click', e=>{
-  // ‹/› now live inside .osdNav (flanking VALUE) -- let their own handler
-  // below own those clicks instead of also stepping items here.
-  if (e.target.closest('.osdPrev, .osdNext')) return;
-  if (!e.target.closest('.osdNav')) return;
-  const now = performance.now();
-  if (osdNavTapTimer && now - osdNavLastTap < TAP_MS){
-    clearTimeout(osdNavTapTimer); osdNavTapTimer = null; osdNavLastTap = 0;
-    osdUp();   // double-tap → previous (W / ↑)
+/* =========================================================================
+   Key mapping -- tap the strip's centre text to bind keys of a keyboard or
+   Bluetooth remote straight to the setting it's showing. While it's
+   listening, the first key pressed becomes that setting's "+" key and the
+   second its "-" key; the second press ends the mode by itself, and tapping
+   the centre again ends it early with just a "+" key. Esc clears the
+   setting's mapping. Exiting without pressing anything changes nothing.
+
+   From then on those keys change the setting from anywhere -- strip hidden,
+   another row focused, the full list open -- and win over the built-in
+   meaning of the same key. With a single key: a step or enum goes up (an
+   enum wraps round), a checkbox toggles. With two, a checkbox gets YES on
+   "+" and NO on "-". An action fires on either.
+
+   Keys are stored as KeyboardEvent.code (falling back to .key), the same
+   layout-independent identity Learn BT Keys records, under their own
+   localStorage entry so RESET TO DEFAULTS doesn't unbind a remote.
+   ========================================================================= */
+const KEYMAP_STORE = 'gyrosKeyMap';
+let keyMap = {};               // osdItemId -> { inc:'KeyA' | null, dec:'KeyB' | null }
+let keyMapListening = null;    // { id, keys:[] } while mapping mode is on
+try{
+  const savedKeyMap = JSON.parse(localStorage.getItem(KEYMAP_STORE) || '{}');
+  if (savedKeyMap && typeof savedKeyMap === 'object') keyMap = savedKeyMap;
+}catch(e){ /* ignore a corrupt mapping */ }
+function saveKeyMap(){
+  try{ localStorage.setItem(KEYMAP_STORE, JSON.stringify(keyMap)); }catch(e){}
+}
+function keyMapCode(e){ return e.code || e.key; }
+function keyMapName(code){
+  return String(code).replace(/^(Key|Digit)/, '').replace(/^Arrow/, '').toUpperCase();
+}
+function keyMapSummary(m){
+  return [m.inc ? '+ ' + keyMapName(m.inc) : '', m.dec ? '− ' + keyMapName(m.dec) : ''].filter(Boolean).join(' ');
+}
+function keyMapStart(){
+  const item = osdItems[osdFocusIdx];
+  if (!item || uiState !== 'osd') return;
+  keyMapListening = { id: osdItemId(item), keys: [] };
+  renderOsd();
+}
+// Ends mapping mode, keeping whatever was captured (nothing = no change).
+function keyMapStop(){
+  if (!keyMapListening) return;
+  const { id, keys } = keyMapListening;
+  keyMapListening = null;
+  if (keys.length){
+    // A key drives one setting only: take it away from any other.
+    for (const other of Object.keys(keyMap)){
+      const m = keyMap[other];
+      if (keys.includes(m.dec)) m.dec = null;
+      if (keys.includes(m.inc)) m.inc = null;   // its "-" key, if any, stays a "-" key
+      if (!m.inc && !m.dec) delete keyMap[other];
+    }
+    keyMap[id] = { inc: keys[0], dec: keys[1] || null };
+    saveKeyMap();
+    toast('MAPPED ' + keyMapSummary(keyMap[id]));
+  }
+  renderOsd();
+}
+// A keydown while listening. Always swallowed.
+function keyMapCapture(e){
+  e.preventDefault();
+  if (e.repeat || BT_KEYS_IGNORE_ALONE.includes(e.key)) return;
+  if (e.key === 'Escape'){
+    const id = keyMapListening.id;
+    keyMapListening = null;
+    if (keyMap[id]){ delete keyMap[id]; saveKeyMap(); toast('MAPPING CLEARED'); }
+    renderOsd();
     return;
   }
-  osdNavLastTap = now;
-  osdNavTapTimer = setTimeout(()=>{ osdNavTapTimer = null; osdDown(); }, TAP_MS);
+  const code = keyMapCode(e);
+  if (keyMapListening.keys.includes(code)) return;   // "-" has to be a different key
+  keyMapListening.keys.push(code);
+  if (keyMapListening.keys.length === 2) keyMapStop();
+  else renderOsd();
+}
+// A keydown outside mapping mode: true if it was a mapped key and was used.
+function keyMapApply(e){
+  const code = keyMapCode(e);
+  let found = null, dir = 0;
+  for (const id of Object.keys(keyMap)){
+    if (keyMap[id].inc === code){ found = id; dir = 1; break; }
+    if (keyMap[id].dec === code){ found = id; dir = -1; break; }
+  }
+  if (!found) return false;
+  let item = null;
+  MENU.forEach(section => section.items.forEach(i => { if (!item && osdItemId(i) === found) item = i; }));
+  if (!item) return false;
+  e.preventDefault();
+  // Not applicable right now (e.g. a video-only row with no video loaded):
+  // the key is still spoken for, it just does nothing.
+  if (item.when && !item.when.split(',').includes(state.content)) return true;
+  if (item.whenTrue && !state[item.whenTrue]) return true;
+  if (e.repeat && item.type !== 'step') return true;   // only steps auto-repeat on a held key
+  switch (item.type){
+    case 'step':
+      stepValue(item.key, dir);
+      break;
+    case 'enum':
+      stepEnumValue(item, dir);
+      break;
+    case 'check':
+      state[item.key] = (keyMap[found].inc && keyMap[found].dec) ? dir > 0 : !state[item.key];
+      applyAll();
+      refreshMenu();
+      saveState();
+      break;
+    case 'action':
+      handleAct(item.act, { dataset:{} });
+      return true;   // actions announce themselves
+  }
+  renderOsd();
+  toast(item.label + ' ' + fmt(item.key, state[item.key]));
+  return true;
+}
+
+/* Tap the OSD centre text: toggles key-mapping mode for the setting shown
+   (see "Key mapping" above). Any other strip button ends the mode first and
+   then does its usual job. */
+botbar.addEventListener('click', e=>{
+  // ‹/› live inside .osdNav (flanking VALUE) but are their own buttons.
+  const centre = e.target.closest('.osdNav') && !e.target.closest('.osdPrev, .osdNext');
+  if (!centre){ keyMapStop(); return; }
+  if (keyMapListening) keyMapStop(); else keyMapStart();
 });
 
 botbar.addEventListener('click', e=>{
@@ -3759,6 +3989,18 @@ document.addEventListener('keydown', e=>{
     return;
   }
 
+  /* ---- Key mapping (see "Key mapping" above): while it's listening every
+     key is captured; otherwise a mapped key goes to its setting before any
+     built-in meaning of that key is considered. Dialogs and text fields
+     keep their keys. ---- */
+  if (keyMapListening){
+    if (uiState === 'osd' && document.body.dataset.chrome === '1'){ keyMapCapture(e); return; }
+    keyMapStop();   // the strip went away underneath it
+  }
+  if (loadTypeDlg.hidden && urlDlg.hidden &&
+      !(document.activeElement && document.activeElement.tagName === 'INPUT') &&
+      keyMapApply(e)) return;
+
   // Keyboard aliases shown in the Bluetooth command list. Keep capture mode
   // above this block so learning X/Z/[ ] records the real incoming key.
   if (e.key === 'x' || e.key === 'X') Object.defineProperty(e, 'key', { value:'Escape' });
@@ -4002,6 +4244,7 @@ function stepValue(key, dir){
   const spec = SPEC[key];
   const next = THREE.MathUtils.clamp(state[key] + dir * spec.step, spec.min, spec.max);
   state[key] = spec.dec ? Math.round(next * 10) / 10 : Math.round(next);
+  if (key === 'mountTilt' || key === 'mountRoll') state.mountAuto = false;   // a hand-set angle sticks
   updateQuad();
   applyEyeDistance();
   applyEyeProjection();
@@ -4014,6 +4257,7 @@ function resetToDefaults(){
   Object.assign(state, DEFAULTS, { content: state.content, shape: state.shape });
   viewProfiles = VIEWS.map(()=>null);
   applyView();
+  v28RecenterPending = true;   // the view may have changed: re-solve the mount
   buildPanes();
   buildTopPanes();
   buildBotPanes();
