@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.10</title>
+<title>GYROS v2.11</title>
 <style>
   :root{
     --bg:#000000;
@@ -130,7 +130,10 @@
     transition:opacity .55s ease;
   }
   body[data-ui="osd"] .title{pointer-events:auto;cursor:pointer;}
-  body[data-ui="osd"] .title:hover{opacity:.75;}
+  /* Every :hover rule in this sheet is limited to devices that can hover:
+     on a touch screen :hover sticks to the last thing tapped until
+     something else is, which reads as a button stuck down. */
+  @media (hover:hover){body[data-ui="osd"] .title:hover{opacity:.75;}}
   body[data-ui="osd"] .title:active{opacity:.55;}
 
   /* Icon button: 24x24 icon centred in a 40x40 tappable/hoverable wrapper --
@@ -146,8 +149,8 @@
     transition:background-color .55s ease,transform .55s ease;
   }
   .iconbtn::before{content:"";position:absolute;inset:calc((40px - var(--icon-hit-size)) / 2);border-radius:50%;opacity:0;transition:opacity .99s ease;}
-  .iconbtn:hover{background:var(--accent-10p);}
-  .iconbtn:hover::before{background:rgba(255,255,255,0.10);}
+  @media (hover:hover){.iconbtn:hover{background:var(--accent-10p);}}
+  @media (hover:hover){.iconbtn:hover::before{background:rgba(255,255,255,0.10);}}
   .iconbtn:active{background:rgba(255,255,255,0.16);transform:scale(0.92);}
   .iconbtn:active::before{background:rgba(255,255,255,0.16);}
   .iconbtn svg{display:block;width:24px;height:24px;}
@@ -244,7 +247,7 @@
     font-size:20px;line-height:1;padding:4px 2px;cursor:pointer;
     font-family:var(--font);transition:color .55s ease;
   }
-  .paneCloseBtn:hover{color:var(--text);}
+  @media (hover:hover){.paneCloseBtn:hover{color:var(--text);}}
 
   .section{color:var(--muted);font-size:11px;letter-spacing:0.28em;
     padding:var(--pad-lg) var(--pad-lg) var(--gap);}
@@ -259,7 +262,7 @@
     text-align:left;
   }
   button.row{cursor:pointer;transition:background .55s ease;}
-  button.row:hover{background:rgba(255,255,255,0.07);}
+  @media (hover:hover){button.row:hover{background:rgba(255,255,255,0.07);}}
   button.row:active{background:rgba(255,255,255,0.14);}
   .row .label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .row.kbfocus,.textbtn.kbfocus{background:rgba(246,196,28,0.25);outline:0px solid rgba(246,196,28,0.75);outline-offset:0px;}
@@ -277,7 +280,7 @@
     display:flex;align-items:center;justify-content:center;
     cursor:pointer;transition:transform .1s ease,filter .12s ease;
   }
-  .rnd:hover{filter:brightness(1.12);}
+  @media (hover:hover){.rnd:hover{filter:brightness(1.12);}}
   .rnd:active{transform:scale(0.9);}
 
   .textbtn{
@@ -286,7 +289,7 @@
     font-family:var(--font);font-size:14px;font-weight:700;letter-spacing:0.18em;
     text-align:center;transition:opacity .55s ease;
   }
-  .textbtn:hover{opacity:.75;}
+  @media (hover:hover){.textbtn:hover{opacity:.75;}}
   .textbtn:active{opacity:.55;}
   .dialog button:focus{background:rgba(246,196,28,0.18);}
   .dialog .keyboardFocus{background:rgba(246,196,28,0.18);}
@@ -539,7 +542,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.10';
+const APP_VERSION = '2.11';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -704,7 +707,7 @@ function syncMountRows(){
 
 // Visual/geometry settings that PLAIN/SBS/HOLO each remember separately --
 // everything from the POSITIONING, ZOOM, TRAPEZOID and FLIP sections plus
-// PERSPECTIVE, BRIGHTNESS, EYE DISTANCE and SBS EYE DIST from GENERAL. Gyro
+// PERSPECTIVE, BRIGHTNESS, EYE DISTANCE and SBS EYE DIST from OPTICS. Gyro
 // tracking behaviour and MENU TIMEOUT are left out on purpose: they're not
 // about how the image looks, so they stay one shared value across views.
 const PER_VIEW_KEYS = [
@@ -727,6 +730,9 @@ function mountDefaults(idx){
 function viewDefaults(idx){
   const d = {};
   for (const k of PER_VIEW_KEYS) d[k] = DEFAULTS[k];
+  // The reflector rigs HOLO and HOLO2 are for want the UI panes pulled in
+  // toward the divider.
+  if (idx === VIEW_HOLO || idx === VIEW_HOLO2) d.uiEyeDist = -15;
   return Object.assign(d, mountDefaults(idx));
 }
 // One saved snapshot per VIEW index, for whichever views AREN'T currently
@@ -759,7 +765,9 @@ const MENU = [
     // mountAuto/mountTilt/mountRoll and v28BuildMount().
     { type:'check', key:'mountAuto', label:'AUTO TILT',  whenTrue:'mountRows' },
     { type:'step',  key:'mountTilt', label:'PHONE TILT', min:-90, max:180, step:1, whenTrue:'mountRows' },
-    { type:'step',  key:'mountRoll', label:'PHONE ROLL', min:-180, max:180, step:1, whenTrue:'mountRows' },
+    { type:'step',  key:'mountRoll', label:'PHONE ROLL', min:-180, max:180, step:1, whenTrue:'mountRows' }
+  ]},
+  { title:'OPTICS', items:[
     { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
     { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
     { type:'step',  key:'fov', label:'PERSPECTIVE', min:-100, max:100, step:1 },
@@ -809,8 +817,8 @@ const MENU = [
     { type:'step',  key:'gyroMulY', label:'Y MULTIPLY', min:0, max:5, step:0.1, dec:1 },
     { type:'check', key:'freezeX',  label:'FREEZE X' },
     { type:'check', key:'freezeY',  label:'FREEZE Y' },
-    { type:'check', key:'gyroFlipX',label:'FLIP X' },
-    { type:'check', key:'gyroFlipY',label:'FLIP Y' },
+    { type:'check', key:'gyroFlipX',label:'GYRO INVERT X' },
+    { type:'check', key:'gyroFlipY',label:'GYRO INVERT Y' },
     { type:'action', act:'recenter', label:'RECENTER', textbtn:true }
   ]},
   { title:'ACTIONS', items:[
@@ -3625,6 +3633,7 @@ let osdHoldTimer = null, osdHoldAccel = null;
 // Same token guard as kbHoldToken/holdToken above -- see stopKbHold()'s
 // comment for the race this closes.
 let osdHoldToken = 0;
+let osdHoldFired = false;   // this press has repeated at least once -- see the capture listeners below
 function stopOsdHold(){
   clearTimeout(osdHoldTimer); clearTimeout(osdHoldAccel);
   osdHoldTimer = osdHoldAccel = null;
@@ -3635,6 +3644,7 @@ botbar.addEventListener('pointerdown', e=>{
   if (!btn) return;
   const dir = btn.classList.contains('osdPrev') ? -1 : 1;
   stopOsdHold();
+  osdHoldFired = false;
   const myHoldToken = osdHoldToken;
   const item = osdItems[osdFocusIdx];
   if (!item || (item.type !== 'step' && item.type !== 'enum')) return;
@@ -3643,7 +3653,13 @@ botbar.addEventListener('pointerdown', e=>{
   const go = () => {
     if (myHoldToken !== osdHoldToken) return;   // stopped/restarted since we scheduled this tick
     lastActivityAt = performance.now();   // holding a stepper counts as activity even with no new pointerdown
+    osdHoldFired = true;
     osdChangeItem(dir);
+    // Stepping VIEW to or from PLAIN rebuilds the strip, which removes the
+    // very button being held. Its pointerup then never reaches botbar (a
+    // touch stays bound to the element it started on), so stop here
+    // instead of repeating until something else happens to cancel it.
+    if (!btn.isConnected){ stopOsdHold(); return; }
     ticks++;
     osdHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
   };
@@ -3651,6 +3667,22 @@ botbar.addEventListener('pointerdown', e=>{
 });
 ['pointerup','pointercancel','pointerleave'].forEach(ev=>{
   botbar.addEventListener(ev, stopOsdHold);
+});
+// A press long enough to start repeating has already stepped, so the click
+// that follows its release is swallowed whole, before any of botbar's or
+// menu's own click handlers see it. Otherwise it steps once more on top (a
+// slow tap moves two options and can never land on the ones in between),
+// or, when the step just mirrored or rebuilt the UI under the finger (VIEW
+// to HOLO or PLAIN), lands on whatever is there now.
+botbar.addEventListener('click', e=>{
+  if (osdHoldFired){ osdHoldFired = false; e.stopPropagation(); }
+}, true);
+menu.addEventListener('click', e=>{
+  if (holdFired){ holdFired = false; e.stopPropagation(); }
+}, true);
+// A release anywhere ends a hold, wherever the finger has drifted to.
+['pointerup','pointercancel'].forEach(ev=>{
+  window.addEventListener(ev, ()=>{ stopOsdHold(); stopHold(); }, true);
 });
 // Safety net for the same missed-release scenario as the other hold timers.
 window.addEventListener('blur', stopOsdHold);
@@ -4336,6 +4368,7 @@ let holdTimer = null, holdAccel = null;
 // ever clearTimeout() again -- that's a stuck, still-incrementing stepper
 // with no button held down. See stopKbHold()'s longer comment for the race.
 let holdToken = 0;
+let holdFired = false;   // this press has repeated at least once -- see the capture listeners by stopOsdHold()
 function stopHold(){
   clearTimeout(holdTimer);
   clearTimeout(holdAccel);
@@ -4347,12 +4380,15 @@ menu.addEventListener('pointerdown', e=>{
   const el = e.target.closest('[data-act="step"],[data-act="enumstep"]');
   if (!el) return;
   stopHold();   // cancel any stale hold before starting a new one
+  holdFired = false;
   const myHoldToken = holdToken;
   const minMs = el.dataset.act === 'enumstep' ? 80 : 5;
   let ticks = 0;
   function go(){
     if (myHoldToken !== holdToken) return;   // stopped/restarted since we scheduled this tick
+    holdFired = true;
     handleAct(el.dataset.act, el);
+    if (!el.isConnected){ stopHold(); return; }   // the list was rebuilt under the finger (VIEW to/from PLAIN)
     ticks++;
     holdAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
   }

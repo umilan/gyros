@@ -81,7 +81,9 @@ be — so it always boots to the demo.
   relative to your head, kept per view: with AUTO TILT on they are measured
   each time you RECENTER, so hold your head level when you do; step either
   angle by hand to switch that off and fine-tune. On in HOLO2, off
-  elsewhere), PERSPECTIVE (camera field of view).
+  elsewhere).
+- **OPTICS** — SBS EYE DIST, EYE DISTANCE, PERSPECTIVE (camera field of
+  view), BRIGHTNESS, MENU TIMEOUT.
 - **CONTENT** — demo shape, auto-rotate, SBS source.
 - **POSITIONING** — POS X/Y, eye distance.
 - **ZOOM** — zoom, scale X/Y, keystone top/bottom (TRPZD).
