@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.11</title>
+<title>GYROS v2.12</title>
 <style>
   :root{
     --bg:#000000;
@@ -542,7 +542,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.11';
+const APP_VERSION = '2.12';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -731,8 +731,8 @@ function viewDefaults(idx){
   const d = {};
   for (const k of PER_VIEW_KEYS) d[k] = DEFAULTS[k];
   // The reflector rigs HOLO and HOLO2 are for want the UI panes pulled in
-  // toward the divider.
-  if (idx === VIEW_HOLO || idx === VIEW_HOLO2) d.uiEyeDist = -15;
+  // toward the divider and the stereo cameras set wider apart.
+  if (idx === VIEW_HOLO || idx === VIEW_HOLO2){ d.uiEyeDist = -15; d.eyeDist = 400; }
   return Object.assign(d, mountDefaults(idx));
 }
 // One saved snapshot per VIEW index, for whichever views AREN'T currently
