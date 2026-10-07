@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.12</title>
+<title>GYROS v2.13</title>
 <style>
   :root{
     --bg:#000000;
@@ -542,7 +542,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.12';
+const APP_VERSION = '2.13';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -551,7 +551,7 @@ document.title = `GYROS v${APP_VERSION}`;
 const STORE_KEY = 'gyrosSettings';
 
 const DEFAULTS = {
-  view: 1,           // 0 PLAIN | 1 SBS | 2 HOLO | 3 HOLO2 -- index into VIEWS. Drives
+  view: 1,           // 0 PLAIN | 1 SBS | 2 HOLO | 3 HOLO2 | 4 HOLO3 -- index into VIEWS. Drives
                       // state.sbs and state.mirrorUI (see applyView() below),
                       // which the rest of the app still reads directly.
   mode: 0,           // DEMO | IMAGE / VIDEO | 3D OBJECT | MEDIA FOLDER
@@ -621,6 +621,19 @@ const DEFAULTS = {
                             // head translation, multiplier on V28_NECK (0 =
                             // rotation only, 1 = a real neck). No effect on
                             // the other TRACKING algorithms.
+  // HOLO3 only (see "HOLO3" above v28Step()): a see-through visor shows the
+  // room behind the picture, so the picture has to turn exactly as far and
+  // as soon as the head does. Shared values, read in no other view.
+  lensFov: 60,             // FIELD OF VIEW, degrees: the cameras' vertical field
+                            // of view -- CAMERA_FOV everywhere else. Right when it
+                            // equals the angle the picture really spans in the
+                            // visor; MEASURE FOV finds that.
+  predictMs: 40,           // PREDICTION, ms: how far ahead of the newest sensor
+                            // sample the head pose is extrapolated -- the time
+                            // from sample to light leaving the screen.
+  smoothing: 25,           // SMOOTHING, percent of the noise allowances V2.8
+                            // (6DOF) is built with: 100 = the same as HOLO2,
+                            // 0 = follow the sensor exactly.
   menuTimeout: 10          // seconds the bottom OSD strip sits idle before
                             // auto-hiding, see checkBotMenuIdle(). Defaults to
                             // 10, matching the original fixed 10-second
@@ -687,22 +700,28 @@ const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)', 'GYRO (STABLE)', 'V2.8 (6DOF)'
 // VIEW: PLAIN (flat, single pane) | SBS (stereo pair, no mirror) | HOLO
 // (stereo pair + mirrored UI, for mirror-viewed rigs) | HOLO2 (the same
 // picture as HOLO, plus head tracking solved for a phone that sits tilted
-// above the eyes and is seen in a reflector -- see v28BuildMount()) -- one
-// picker driving the two flags (sbs, mirrorUI) the rest of the app actually
+// above the eyes and is seen in a reflector -- see v28BuildMount()) | HOLO3
+// (HOLO2 for a see-through reflector, where the picture has to stay pinned
+// to the room behind it -- see "HOLO3" above v28Step()) -- one picker
+// driving the two flags (sbs, mirrorUI) the rest of the app actually
 // branches on.
-const VIEWS = ['PLAIN', 'SBS', 'HOLO', 'HOLO2'];
-const VIEW_SBS    = [false, true,  true,  true];
-const VIEW_MIRROR = [false, false, true,  true];
-const VIEW_HOLO = 2, VIEW_HOLO2 = 3;
+const VIEWS = ['PLAIN', 'SBS', 'HOLO', 'HOLO2', 'HOLO3'];
+const VIEW_SBS    = [false, true,  true,  true,  true];
+const VIEW_MIRROR = [false, false, true,  true,  true];
+const VIEW_ABOVE  = [false, false, false, true,  true];   // phone above the eyes, tracked through its mount
+const VIEW_HOLO = 2, VIEW_HOLO2 = 3, VIEW_HOLO3 = 4;
 function applyView(){
   state.sbs = VIEW_SBS[state.view];
   state.mirrorUI = VIEW_MIRROR[state.view];
   syncMountRows();
+  if (!state.holo3) fovMeasureEnd();
 }
 // AUTO TILT / PHONE TILT / PHONE ROLL only do anything on the V2.8 (6DOF)
-// pipeline, which HOLO2 always uses -- hide them otherwise (whenTrue).
+// pipeline, which HOLO2 and HOLO3 always use -- hide them otherwise
+// (whenTrue). Same for HOLO3's own rows outside HOLO3.
 function syncMountRows(){
-  state.mountRows = state.view === VIEW_HOLO2 || state.trackingAlgo === 3;
+  state.mountRows = VIEW_ABOVE[state.view] || state.trackingAlgo === 3;
+  state.holo3 = state.view === VIEW_HOLO3;
 }
 
 // Visual/geometry settings that PLAIN/SBS/HOLO each remember separately --
@@ -720,19 +739,20 @@ const PER_VIEW_KEYS = [
   'flipX', 'flipY',
   'mountAuto', 'mountTilt', 'mountRoll'
 ];
-// HOLO2 can't work without knowing the mount, so it starts on AUTO TILT with
-// a 45-degree guess; the other views start with the phone taken as upright.
+// HOLO2 and HOLO3 can't work without knowing the mount, so they start on
+// AUTO TILT with a 45-degree guess; the other views start with the phone
+// taken as upright.
 function mountDefaults(idx){
-  return idx === VIEW_HOLO2
+  return VIEW_ABOVE[idx]
     ? { mountAuto:true, mountTilt:45, mountRoll:0 }
     : { mountAuto:DEFAULTS.mountAuto, mountTilt:DEFAULTS.mountTilt, mountRoll:DEFAULTS.mountRoll };
 }
 function viewDefaults(idx){
   const d = {};
   for (const k of PER_VIEW_KEYS) d[k] = DEFAULTS[k];
-  // The reflector rigs HOLO and HOLO2 are for want the UI panes pulled in
-  // toward the divider and the stereo cameras set wider apart.
-  if (idx === VIEW_HOLO || idx === VIEW_HOLO2){ d.uiEyeDist = -15; d.eyeDist = 400; }
+  // The reflector rigs HOLO, HOLO2 and HOLO3 are for want the UI panes
+  // pulled in toward the divider and the stereo cameras set wider apart.
+  if (idx === VIEW_HOLO || VIEW_ABOVE[idx]){ d.uiEyeDist = -15; d.eyeDist = 400; }
   return Object.assign(d, mountDefaults(idx));
 }
 // One saved snapshot per VIEW index, for whichever views AREN'T currently
@@ -747,10 +767,13 @@ function switchView(newIdx){
   const snapshot = {};
   for (const k of PER_VIEW_KEYS) snapshot[k] = state[k];
   viewProfiles[oldIdx] = snapshot;
-  // First time in HOLO2: start from HOLO's picture settings (flips, keystone,
-  // eye distance), since it's the same optics with different tracking.
-  const firstHolo2 = (newIdx === VIEW_HOLO2 && !viewProfiles[newIdx]) ? viewProfiles[VIEW_HOLO] : null;
-  Object.assign(state, viewProfiles[newIdx] || firstHolo2 || viewDefaults(newIdx));
+  // First time in HOLO2 or HOLO3: start from the picture settings (flips,
+  // keystone, eye distance) of the nearest view already set up -- HOLO2's
+  // for HOLO3, else HOLO's -- since it's the same optics with different
+  // tracking.
+  const firstAbove = (VIEW_ABOVE[newIdx] && !viewProfiles[newIdx])
+    ? ((newIdx === VIEW_HOLO3 && viewProfiles[VIEW_HOLO2]) || viewProfiles[VIEW_HOLO]) : null;
+  Object.assign(state, viewProfiles[newIdx] || firstAbove || viewDefaults(newIdx));
   // The mount is never inherited from another view, and a snapshot saved
   // before these settings existed doesn't carry one.
   if (!viewProfiles[newIdx] || viewProfiles[newIdx].mountAuto === undefined) Object.assign(state, mountDefaults(newIdx));
@@ -765,7 +788,13 @@ const MENU = [
     // mountAuto/mountTilt/mountRoll and v28BuildMount().
     { type:'check', key:'mountAuto', label:'AUTO TILT',  whenTrue:'mountRows' },
     { type:'step',  key:'mountTilt', label:'PHONE TILT', min:-90, max:180, step:1, whenTrue:'mountRows' },
-    { type:'step',  key:'mountRoll', label:'PHONE ROLL', min:-180, max:180, step:1, whenTrue:'mountRows' }
+    { type:'step',  key:'mountRoll', label:'PHONE ROLL', min:-180, max:180, step:1, whenTrue:'mountRows' },
+    // HOLO3's see-through tuning -- see DEFAULTS.predictMs/smoothing/lensFov
+    // and fovMeasureStep().
+    { type:'step',  key:'predictMs', label:'PREDICTION', min:0, max:150, step:5, whenTrue:'holo3' },
+    { type:'step',  key:'smoothing', label:'SMOOTHING',  min:0, max:200, step:5, whenTrue:'holo3' },
+    { type:'step',  key:'lensFov',   label:'FIELD OF VIEW', min:20, max:110, step:1, whenTrue:'holo3' },
+    { type:'action', act:'measureFov', label:'MEASURE FOV', textbtn:true, whenTrue:'holo3' }
   ]},
   { title:'OPTICS', items:[
     { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
@@ -988,6 +1017,7 @@ function fmt(key, v){
   if (typeof v === 'boolean') return v ? 'YES' : 'NO';
   if (ENUM_SPEC[key]) return ENUM_SPEC[key].options[v];
   if (key === 'menuTimeout') return v <= 0 ? 'OFF' : `${Math.round(v)}S`;
+  if (key === 'predictMs') return `${Math.round(v)}MS`;
   const dec = SPEC[key] && SPEC[key].dec ? SPEC[key].dec : 0;
   return dec ? v.toFixed(dec) : String(Math.round(v));
 }
@@ -1270,7 +1300,8 @@ function initBlit(){
       brightness: { value: 1 },
       quadXform: { value: new THREE.Matrix3() },
       flipX: { value: 0 },
-      flipY: { value: 0 }
+      flipY: { value: 0 },
+      marks: { value: 0 }
     },
     vertexShader: `
       varying vec2 vPos;
@@ -1286,6 +1317,7 @@ function initBlit(){
       uniform mat3 quadXform;     // screen NDC (x,y,1) -> homogeneous (u,v) of the corner-pinned quad
       uniform float flipX;
       uniform float flipY;
+      uniform float marks;        // MEASURE FOV: 0 = off, else the side line's distance from centre in u
       varying vec2 vPos;
       void main(){
         vec3 pqr = quadXform * vec3(vPos, 1.0);
@@ -1318,6 +1350,16 @@ function initBlit(){
         uv = c / vec2(aspect, 1.0) + 0.5;
         vec4 col = texture2D(map, uv);
         col.rgb *= brightness;
+        // MEASURE FOV's two marks, drawn in the picture's own coordinates so
+        // they sit at a known place in the cameras' view whatever the corner
+        // pin, zoom or flip: a cross on the centre and a line to one side.
+        if (marks > 0.0){
+          vec2 d = abs(uv - 0.5);
+          float lw = 0.004;
+          bool cross = d.x < lw || (d.y < lw * aspect && d.x < 0.08);
+          bool side = abs(uv.x - 0.5 - marks) < lw && d.y < 0.3;
+          if (cross || side) col = vec4(0.965, 0.769, 0.110, 1.0);
+        }
         gl_FragColor = col;
       }`,
     depthTest: false,
@@ -1439,7 +1481,7 @@ function applyEyeDistance(){
    Ramped with smoothstep so the effect grows gradually across the whole
    slider (no dead zone, no sudden jump near the ends). Returns -1..1, fed
    signed to the quad shader's `distort` uniform. */
-const CAMERA_FOV = 60; // fixed real THREE.PerspectiveCamera.fov, independent of PERSPECTIVE
+const CAMERA_FOV = 60; // real THREE.PerspectiveCamera.fov, independent of PERSPECTIVE; HOLO3 uses FIELD OF VIEW instead
 
 function fisheyeAmount(fov){
   const t = Math.min(1, Math.abs(fov) / 100);   // 0 at neutral, 1 at either extreme
@@ -1449,7 +1491,7 @@ function fisheyeAmount(fov){
 
 function applyEyeProjection(){
   if (!camL) return;
-  camL.fov = camR.fov = CAMERA_FOV;
+  camL.fov = camR.fov = state.view === VIEW_HOLO3 ? state.lensFov : CAMERA_FOV;
   const { ew, eh } = eyeSize();
   const aspect = ew / eh;
   if (quadMat){
@@ -1873,6 +1915,33 @@ const V28_MOVING = THREE.MathUtils.degToRad(30);  // rad/s: at or above this, fu
 const V28_NOISE = THREE.MathUtils.degToRad(0.4);  // rad: an error this small is treated as sensor noise
 const V28_CATCHUP = THREE.MathUtils.degToRad(1);  // rad: an error this large is followed with no smoothing
 const V28_MIN_A = 0.03;          // smoothing strength at rest
+const V28_RATE_MIX_FAST = 0.6;   // HOLO3 at SMOOTHING 0: turn rate from little more than the last two samples
+
+/* HOLO3 (VIEW setting): HOLO2 for a see-through reflector. Behind a closed
+   headset nothing shows whether the picture turns exactly as far, or exactly
+   as soon, as the head does. Through a clear visor the room is right there
+   to compare against, and both errors show up as the picture sliding over
+   it. HOLO3 keeps HOLO2's mount tracking and opens up the three things that
+   decide it:
+
+     FIELD OF VIEW  the cameras' field of view (state.lensFov; see
+                    applyEyeProjection()). When it equals the angle the
+                    picture really spans in the visor, a head turn of N
+                    degrees moves the picture N degrees. MEASURE FOV
+                    (fovMeasureStep()) finds it with the gyroscope.
+     PREDICTION     how far ahead the pose is extrapolated (state.predictMs),
+                    in place of V28_FRAME_LEAD. Too low and the picture
+                    trails a turning head; too high and it overshoots when
+                    the turn stops.
+     SMOOTHING      scales every allowance V2.8 makes for sensor noise
+                    (v28Noise()): the error it smooths away at rest, the
+                    turn speed below which it won't predict, and how many
+                    samples the turn rate is averaged over. 100 is HOLO2's
+                    behaviour. Lower follows the head more closely, which a
+                    quiet sensor can afford and a see-through picture needs:
+                    at 100 a slow turn lets the picture hang about half a
+                    degree behind before it catches up. */
+function v28Noise(){ return state.view === VIEW_HOLO3 ? state.smoothing / 100 : 1; }
 const v28Prev = new THREE.Quaternion();
 const v28Cur = new THREE.Quaternion();
 const v28Delta = new THREE.Quaternion();
@@ -1904,7 +1973,9 @@ function onDeviceOrientationV28(e){
   const s = Math.sin(ang / 2);
   if (s > 1e-9) v28Vec.set(v28Delta.x, v28Delta.y, v28Delta.z).multiplyScalar(ang / s / dtS);
   else v28Vec.set(0, 0, 0);
-  v28Rate.lerp(v28Vec, V28_RATE_MIX);
+  v28Rate.lerp(v28Vec, state.view === VIEW_HOLO3
+    ? THREE.MathUtils.clamp(THREE.MathUtils.lerp(V28_RATE_MIX_FAST, V28_RATE_MIX, v28Noise()), 0.05, 1)
+    : V28_RATE_MIX);
 }
 
 // Where the head will be when this frame is seen: v28Cur pushed further
@@ -1913,13 +1984,15 @@ function v28Predict(now){
   v28Pred.copy(v28Cur);
   const ageS = (now - v28CurT) / 1000;
   const speed = v28Rate.length();
-  if (ageS > V28_STALE || speed <= V28_STILL) return;
-  const leadS = Math.min(Math.max(ageS, 0) + V28_FRAME_LEAD, V28_MAX_LEAD)
-              * THREE.MathUtils.smoothstep(speed, V28_STILL, V28_MOVING);
+  const noise = v28Noise();
+  if (ageS > V28_STALE || speed <= V28_STILL * noise) return;
+  const frameLead = state.view === VIEW_HOLO3 ? state.predictMs / 1000 : V28_FRAME_LEAD;
+  const leadS = Math.min(Math.max(ageS, 0) + frameLead, frameLead + V28_MAX_LEAD - V28_FRAME_LEAD)
+              * THREE.MathUtils.smoothstep(speed, V28_STILL * noise, V28_MOVING * noise);
   v28Pred.multiply(v28Delta.setFromAxisAngle(v28Vec.copy(v28Rate).divideScalar(speed), speed * leadS));
 }
 
-/* HOLO2 (VIEW setting): the phone isn't in front of the eyes looking where
+/* HOLO2 and HOLO3 (VIEW setting): the phone isn't in front of the eyes looking where
    the head looks. It sits above them, tilted, screen facing forward and
    down into a reflector. Every pipeline above treats the phone's own axes
    as the head's, so a level turn of the head -- a rotation about the
@@ -1957,7 +2030,7 @@ function v28MeasureMount(){
   v28AutoTilt = v28AutoRoll = null;
   v28Up.set(0, 1, 0).applyQuaternion(v28Head.copy(v28Cur).invert());   // world up, in the phone's frame
   let tilt, roll = null;
-  if (state.view === VIEW_HOLO2){
+  if (VIEW_ABOVE[state.view]){
     tilt = Math.acos(THREE.MathUtils.clamp(-v28Up.z, -1, 1));
     // Near flat (or flat on its back) the phone's long edge says nothing
     // about which way is forward: leave way-round and roll as they are.
@@ -1983,9 +2056,9 @@ function v28BuildMount(){
   const measured = state.mountAuto && v28AutoTilt !== null;
   const tilt = THREE.MathUtils.degToRad(measured ? v28AutoTilt : state.mountTilt);
   const roll = THREE.MathUtils.degToRad(measured ? v28AutoRoll : state.mountRoll);
-  const holo2 = state.view === VIEW_HOLO2;
-  v28Mount.setFromAxisAngle(V28_X, holo2 ? -(Math.PI / 2 + tilt) : -tilt)
-          .premultiply(v28MountRoll.setFromAxisAngle(V28_Z, -roll - (holo2 && v28MountFlip ? Math.PI : 0)));
+  const above = VIEW_ABOVE[state.view];
+  v28Mount.setFromAxisAngle(V28_X, above ? -(Math.PI / 2 + tilt) : -tilt)
+          .premultiply(v28MountRoll.setFromAxisAngle(V28_Z, -roll - (above && v28MountFlip ? Math.PI : 0)));
 }
 
 // One frame of V2.8 (6DOF): sets rig.quaternion and rig.position.
@@ -2002,8 +2075,9 @@ function v28Step(dt, now){
   } else {
     // Strength follows how far behind the filtered pose is: within sensor
     // noise it barely moves, a real turn pulls it along with no lag.
+    const noise = v28Noise();
     const a = V28_MIN_A + (1 - V28_MIN_A)
-            * THREE.MathUtils.smoothstep(v28Filtered.angleTo(v28Pred), V28_NOISE, V28_CATCHUP);
+            * THREE.MathUtils.smoothstep(v28Filtered.angleTo(v28Pred), V28_NOISE * noise, V28_CATCHUP * noise);
     v28Filtered.slerp(v28Pred, 1 - Math.pow(1 - a, dt * 60));   // frame-rate independent
     if (state.mountAuto && !v28MountAutoWas) v28MeasureMount();   // AUTO TILT just switched on
     v28BuildMount();   // every frame, so a hand-set angle takes effect as it's stepped
@@ -2014,6 +2088,55 @@ function v28Step(dt, now){
   applyStableTuning();   // X/Y MULTIPLY, FREEZE, FLIP -- same swing-twist path as GYRO (STABLE)
   rig.position.copy(V28_NECK).applyQuaternion(rig.quaternion).sub(V28_NECK)
      .multiplyScalar(state.neckDepth);
+}
+
+/* HOLO3's MEASURE FOV: finds FIELD OF VIEW by turning the head through a
+   known part of the picture. Three presses of the same action:
+     1. shows a cross on the picture's centre and a line FOV_MARK of the way
+        out to its edge
+     2. with the cross on something far away, remembers where the head points
+     3. with the head turned until the side line is on that same thing, reads
+        how far it turned. That angle is what the visor really shows between
+        the two marks, so the cameras are given the field of view that puts
+        the marks that angle apart in the rendering too.
+   The turn is read from the rig, i.e. after X/Y MULTIPLY, so the result
+   pins the picture with whatever multipliers are set. Pressing 3 without
+   having turned cancels. Assumes the visor magnifies equally in both
+   directions, and a target far enough (a few metres) that the eyes' own
+   sideways travel in the turn doesn't count. */
+const FOV_MARK = 0.5;
+const FOV_MIN_TURN = THREE.MathUtils.degToRad(2);
+const fovFrom = new THREE.Vector3();
+const fovNow = new THREE.Vector3();
+let fovMeasure = 0;   // 0 off | 1 marks up, waiting for the cross | 2 waiting for the side line
+
+function fovMeasureEnd(){
+  fovMeasure = 0;
+  if (quadMat) quadMat.uniforms.marks.value = 0;
+}
+function fovMeasureStep(){
+  if (state.view !== VIEW_HOLO3) return;
+  fovNow.set(0, 0, -1).applyQuaternion(rig.quaternion);
+  if (fovMeasure === 0){
+    fovMeasure = 1;
+    quadMat.uniforms.marks.value = FOV_MARK / 2;
+    toast('1/2 · CROSS ON A FAR OBJECT · CONFIRM', 8000);
+  } else if (fovMeasure === 1){
+    fovMeasure = 2;
+    fovFrom.copy(fovNow);
+    toast('2/2 · TURN UNTIL SIDE LINE IS ON IT · CONFIRM', 8000);
+  } else {
+    const turned = Math.min(fovFrom.angleTo(fovNow), THREE.MathUtils.degToRad(80));
+    fovMeasureEnd();
+    if (turned < FOV_MIN_TURN){ toast('MEASURE CANCELLED'); return; }
+    const { ew, eh } = eyeSize();
+    const fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(turned) / (FOV_MARK * ew / eh)));
+    state.lensFov = Math.round(THREE.MathUtils.clamp(fov, SPEC.lensFov.min, SPEC.lensFov.max));
+    applyEyeProjection();
+    refreshMenu();
+    saveState();
+    toast('FIELD OF VIEW ' + state.lensFov);
+  }
 }
 
 /* =========================================================================
@@ -2230,9 +2353,9 @@ function animate(){
   const useGyroSource = (state.trackingAlgo === 1 || state.trackingAlgo === 2) && haveMotionRate;
   // V2.8 (6DOF) likewise falls back to CLASSIC until its own relative
   // deviceorientation samples arrive.
-  // HOLO2 always tracks through it, whatever TRACKING says: it's the only
-  // pipeline that knows how the phone is mounted (see v28BuildMount()).
-  const useV28 = (state.trackingAlgo === V28_ALGO || state.view === VIEW_HOLO2) && v28Samples > 0;
+  // HOLO2 and HOLO3 always track through it, whatever TRACKING says: it's
+  // the only pipeline that knows how the phone is mounted (see v28BuildMount()).
+  const useV28 = (state.trackingAlgo === V28_ALGO || VIEW_ABOVE[state.view]) && v28Samples > 0;
   if (!useV28) rig.position.set(0, 0, 0);
   const frameNow = performance.now();
   if (frameNow >= recenterHoldUntil && useV28){
@@ -3034,10 +3157,10 @@ const topbar = document.getElementById('topbar');
 const botbar = document.getElementById('botbar');
 
 let toastTimer = null;
-function toast(msg){
+function toast(msg, ms = 1400){
   toastEls.forEach(el=>{ el.textContent = msg; el.classList.add('show'); });
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>toastEls.forEach(el=>el.classList.remove('show')), 1400);
+  toastTimer = setTimeout(()=>toastEls.forEach(el=>el.classList.remove('show')), ms);
 }
 
 /* ---- diagnostic overlay, opt-in via ?debug=1 in the URL ----
@@ -4313,6 +4436,7 @@ function handleAct(act, el){
       stepEnumValue(ENUM_SPEC[key], Number(el.dataset.dir));
       break;
     case 'recenter':  recenter(); break;
+    case 'measureFov': fovMeasureStep(); break;
     case 'closeList': closeList(); break;
     case 'closeMenu':
       if (uiState === 'list') closeList();
