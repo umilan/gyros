@@ -28,8 +28,10 @@ Tap the folder icon, then choose **FROM FILE** or **FROM URL**.
   line-by-line in JavaScript, so decimate anything heavier first or the tab
   hangs. Materials are ignored; everything gets one grey standard material.
 - **Video / stereo image** — a local file or a URL. A remote source must send
-  CORS headers or it will not load. Filenames containing "SBS" switch the source
-  to side-by-side automatically; otherwise flip `SBS SOURCE` by hand.
+  CORS headers or it will not load. Side-by-side sources are detected
+  automatically: from stereo metadata or "SBS" in the filename, otherwise by
+  comparing the left and right halves of the picture. Flip `SBS SOURCE` by
+  hand if a guess is wrong.
 
 ## Controls
 

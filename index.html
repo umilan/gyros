@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.13</title>
+<title>GYROS v2.15</title>
 <style>
   :root{
     --bg:#000000;
@@ -542,7 +542,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.13';
+const APP_VERSION = '2.15';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1844,10 +1844,17 @@ function swingTwist(q, axis, out){
 }
 
 // Signed angle (radians) that a twist quaternion (from swingTwist(), so its
-// vector part is already parallel to `axis`) rotates by around `axis`.
+// vector part is already parallel to `axis`) rotates by around `axis`,
+// always the short way round: -PI..PI.
+// q and -q are the same rotation, and which of the two arrives here is
+// arbitrary -- the sensor's own quaternion changes sign as alpha wraps
+// through 0/360, and so does an integrated one after a full turn. Read as
+// it stands, -q is the same turn plus a whole extra revolution: invisible at
+// X/Y MULTIPLY 1, but multiplied by anything else those 360 degrees become
+// a real offset (180 at 0.5 or 1.5) and the content jumps out of view.
 function twistAngle(twist, axis){
   const sinHalf = twist.x * axis.x + twist.y * axis.y + twist.z * axis.z;
-  return 2 * Math.atan2(sinHalf, twist.w);
+  return twist.w < 0 ? 2 * Math.atan2(-sinHalf, -twist.w) : 2 * Math.atan2(sinHalf, twist.w);
 }
 
 // Builds rig.quaternion from relQuat the same way CLASSIC/GYRO (BETA) do
@@ -2586,18 +2593,21 @@ function isHiddenFile(file){
 }
 
 /* ---- SBS (side-by-side stereo) detection --------------------------------
-   Three layered signals, most to least authoritative:
+   Four layered signals, most to least authoritative:
      1) MP4/MOV 'st3d' box (Google Spherical Video V2 stereo-mode metadata)
         -- present mostly on VR/360-camera exports, but authoritative when
         found: it says definitively mono / top-bottom / left-right.
      2) The filename containing "sbs" -- the original, explicit author hint.
-     3) The media's own aspect ratio -- SBS content is essentially always
-        exactly double-width for its content, so a roughly-2x-normal aspect
-        ratio is a strong fallback signal for untitled files with no
-        metadata and no filename hint.
+     3) The picture itself -- the two halves of an SBS frame are the same
+        scene seen from two eyes, so they match almost pixel for pixel. See
+        the content probe below. This is what catches untitled files of any
+        shape, including 16:9 "half SBS" the aspect check can't see.
+     4) The media's own aspect ratio -- SBS content is usually double-width
+        for its content, so a roughly-2x-normal aspect ratio is the fallback
+        for frames the probe has no opinion on (black, flat, unreadable).
    Metadata wins outright when present (even overriding a filename hint that
-   turns out to be wrong); filename and aspect ratio are equal-weight
-   fallbacks otherwise. Everything here fails soft to "no opinion" on any
+   turns out to be wrong), then the filename; the probe only runs when
+   neither answered. Everything here fails soft to "no opinion" on any
    parsing trouble -- a video that can't be read this way just falls back to
    the filename/aspect checks, same as before this existed. */
 const MP4_STEREO_EXTS = new Set(['mp4', 'm4v', 'mov', '3gp']);
@@ -2694,13 +2704,134 @@ async function detectMp4Stereo3D(file){
   }
 }
 
-/* Combines all three signals for one loaded item into a single decision.
+/* ---- SBS content probe ----
+   Shrinks the frame to a tiny two-eye luma grid and correlates the left half
+   against the right. Two things keep an ordinary mono picture from scoring:
+   the comparison runs on horizontal gradients with each row's mean removed
+   (so a horizon, a sky-to-ground fade or side lighting -- structure both
+   halves of any photo share -- cancels out), and it has to hold within a
+   few cells of sideways slack, which is all stereo parallax amounts to at
+   this resolution. */
+const SBS_EYE_W = 64, SBS_EYE_H = 32;   // analysis grid, per eye
+const SBS_BOX = 4;                      // canvas oversampling, box-filtered back down
+const SBS_MAX_SHIFT = 4;                // parallax slack, in grid cells (~6% of an eye)
+const SBS_SCORE_YES = 0.5;              // halves correlate at least this well -> SBS
+const SBS_SCORE_NO = 0.2;               // ...this badly -> definitely mono
+const SBS_MIN_TEXTURE = 1.5;            // RMS gradient (0-255 luma) below which a frame says nothing
+let sbsProbeCtx = null;
+
+// px: RGBA pixels of a (2 * SBS_EYE_W * SBS_BOX) x (SBS_EYE_H * SBS_BOX) frame.
+function sbsHalvesScore(px){
+  const W = SBS_EYE_W, H = SBS_EYE_H, B = SBS_BOX, cw = 2 * W * B;
+  const luma = new Float32Array(2 * W * H);
+  for (let y = 0; y < H; y++){
+    for (let x = 0; x < 2 * W; x++){
+      let sum = 0;
+      for (let by = 0; by < B; by++){
+        let i = ((y * B + by) * cw + x * B) * 4;
+        for (let bx = 0; bx < B; bx++, i += 4) sum += 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+      }
+      luma[y * 2 * W + x] = sum / (B * B);
+    }
+  }
+  const gw = W - 2;
+  const gL = new Float32Array(gw * H), gR = new Float32Array(gw * H);
+  let energyL = 0, energyR = 0;
+  for (let y = 0; y < H; y++){
+    const row = y * 2 * W, out = y * gw;
+    let meanL = 0, meanR = 0;
+    for (let x = 0; x < gw; x++){
+      meanL += gL[out + x] = luma[row + x + 2] - luma[row + x];
+      meanR += gR[out + x] = luma[row + W + x + 2] - luma[row + W + x];
+    }
+    meanL /= gw; meanR /= gw;
+    for (let x = 0; x < gw; x++){
+      const a = gL[out + x] -= meanL, b = gR[out + x] -= meanR;
+      energyL += a * a; energyR += b * b;
+    }
+  }
+  let score = -1;
+  for (let s = -SBS_MAX_SHIFT; s <= SBS_MAX_SHIFT; s++){
+    let ab = 0, aa = 0, bb = 0;
+    for (let y = 0; y < H; y++){
+      const out = y * gw;
+      for (let x = Math.max(0, -s), end = Math.min(gw, gw - s); x < end; x++){
+        const a = gL[out + x], b = gR[out + x + s];
+        ab += a * b; aa += a * a; bb += b * b;
+      }
+    }
+    if (aa > 0 && bb > 0) score = Math.max(score, ab / Math.sqrt(aa * bb));
+  }
+  return { score, texture: Math.sqrt(Math.min(energyL, energyR) / (gw * H)) };
+}
+
+/* 'sbs' | 'mono' | null for one decoded frame (an <img>, or the <video> at
+   its current time). null means no opinion: a black or flat frame, a score
+   in the grey zone between the two thresholds, or pixels that can't be read
+   back (cross-origin media taints the canvas). */
+function analyzeSbsContent(source, w, h){
+  if (!w || !h) return null;
+  try {
+    const cw = 2 * SBS_EYE_W * SBS_BOX, ch = SBS_EYE_H * SBS_BOX;
+    if (!sbsProbeCtx){
+      const canvas = document.createElement('canvas');
+      canvas.width = cw; canvas.height = ch;
+      sbsProbeCtx = canvas.getContext('2d', { willReadFrequently: true });
+      sbsProbeCtx.imageSmoothingQuality = 'high';
+    }
+    sbsProbeCtx.drawImage(source, 0, 0, cw, ch);
+    const { score, texture } = sbsHalvesScore(sbsProbeCtx.getImageData(0, 0, cw, ch).data);
+    if (texture < SBS_MIN_TEXTURE) return null;
+    return score >= SBS_SCORE_YES ? 'sbs' : score <= SBS_SCORE_NO ? 'mono' : null;
+  } catch (err){
+    return null;
+  }
+}
+
+function imageLooksSbs(img, w, h){
+  const verdict = analyzeSbsContent(img, w, h);
+  return verdict ? verdict === 'sbs' : looksLikeSbsAspect(w, h);
+}
+
+/* A video has to be probed as it plays: the first frame is often black or a
+   fade-in, so this keeps sampling until a frame gives an answer. One matching
+   frame is enough for SBS; mono needs two, since a single noisy dark frame of
+   an SBS video can look uncorrelated. The token retires a probe the moment
+   other media is loaded or SBS SOURCE is set by hand -- a late verdict must
+   never undo the user's own choice. */
+const SBS_PROBE_TRIES = 12, SBS_PROBE_INTERVAL = 500;
+let sbsProbeToken = 0;
+
+function cancelSbsProbe(){ sbsProbeToken++; }
+
+function probeVideoSbs(onVerdict){
+  const token = ++sbsProbeToken;
+  let tries = 0, monoVotes = 0;
+  const attempt = ()=>{
+    if (token !== sbsProbeToken) return;
+    if (video.readyState < 2){ video.addEventListener('loadeddata', attempt, { once: true }); return; }
+    const verdict = analyzeSbsContent(video, video.videoWidth, video.videoHeight);
+    if (verdict === 'sbs'){ onVerdict(true); return; }
+    if (verdict === 'mono' && ++monoVotes >= 2){ onVerdict(false); return; }
+    if (++tries < SBS_PROBE_TRIES) setTimeout(attempt, SBS_PROBE_INTERVAL);
+  };
+  attempt();
+}
+
+function setSourceSbs(isSbs){
+  if (state.sourceSbs === isSbs) return;
+  state.sourceSbs = isSbs;
+  applyVideoLayout();
+  refreshMenu();
+}
+
+/* Combines the metadata and filename signals for one loaded item into a single decision.
    `file` is the source File when available (local loads) so st3d metadata
    can be checked; omit it for URL-based streaming loads, where only the
-   filename and (once dimensions are known) aspect ratio apply. `authoritative`
-   tells the caller whether the aspect-ratio fallback should still run once
-   the media's real dimensions are known -- it should not when metadata or
-   the filename already answered the question. */
+   filename, content probe and aspect ratio apply. `authoritative` tells the
+   caller whether the content probe and aspect-ratio fallback should still
+   run once the media is decoded -- they should not when metadata or the
+   filename already answered the question. */
 async function resolveSbsHint(label, file){
   const filenameHint = !!(label && /sbs/i.test(label));
   if (file){
@@ -2738,6 +2869,7 @@ videoFile.addEventListener('change', ()=>{
    and the gallery further down reuse the same videoGroup infrastructure, so
    a photo, a video, and a folder of either all land on screen the same way. ---- */
 function applyImageTexture(url, onDone, onError){
+  cancelSbsProbe();
   const loader = new THREE.TextureLoader();
   loader.load(url, tex=>{
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -2760,7 +2892,7 @@ function applyImageTexture(url, onDone, onError){
     stopReverse();
     usingImage = true;
     applyVideoLayout(tex.image.width, tex.image.height);
-    onDone(tex.image.width, tex.image.height);
+    onDone(tex.image.width, tex.image.height, tex.image);
   }, undefined, onError);
 }
 
@@ -2948,8 +3080,8 @@ function loadSBSImage(file){
   const url = mediaObjectURL(file);
   const label = file.name;
   const filenameHint = /sbs/i.test(label);
-  applyImageTexture(url, (w, h) => {
-    const isSbs = filenameHint || looksLikeSbsAspect(w, h);
+  applyImageTexture(url, (w, h, img) => {
+    const isSbs = filenameHint || imageLooksSbs(img, w, h);
     if (state.sourceSbs !== isSbs){ state.sourceSbs = isSbs; refreshMenu(); }
     state.mode = 1;
     state.content = 'video';   // reuse the video display group
@@ -2965,6 +3097,7 @@ function loadSBSImage(file){
 
 async function playVideo(src, label, file){
   usingImage = false;
+  cancelSbsProbe();
   stopReverse();
   restoreVideoMaterials();
   const sbsHint = await resolveSbsHint(label, file);
@@ -2983,6 +3116,7 @@ async function playVideo(src, label, file){
     video.removeEventListener('loadedmetadata', onMeta);
   };
   if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
+  if (!sbsHint.authoritative) probeVideoSbs(setSourceSbs);
   state.content = 'video';
   state.mode = 1;
   applyAll();
@@ -3095,12 +3229,12 @@ function showGalleryImage(item){
   state.content = 'video';
   applyAll();
   refreshMenu();
-  applyImageTexture(item.url, (w, h) => {
+  applyImageTexture(item.url, (w, h, img) => {
     if (!item.sbsChecked){
-      item.isSbs = item.isSbs || looksLikeSbsAspect(w, h);
+      item.isSbs = item.isSbs || imageLooksSbs(img, w, h);
       item.sbsChecked = true;
     }
-    if (state.sourceSbs !== item.isSbs){ state.sourceSbs = item.isSbs; refreshMenu(); }
+    setSourceSbs(item.isSbs);
   }, () => {
     toast('COULD NOT LOAD ' + item.name.toUpperCase().slice(0, 24));
   });
@@ -3108,6 +3242,7 @@ function showGalleryImage(item){
 
 async function showGalleryVideo(item){
   usingImage = false;
+  cancelSbsProbe();
   stopReverse();
   restoreVideoMaterials();
   // Same immediate switch as showGalleryImage() above, for the same reason.
@@ -3134,6 +3269,11 @@ async function showGalleryVideo(item){
     video.removeEventListener('loadedmetadata', onMeta);
   };
   if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
+  if (!item.sbsAuthoritative) probeVideoSbs(isSbs => {
+    item.isSbs = isSbs;
+    item.sbsAuthoritative = true;
+    setSourceSbs(isSbs);
+  });
 }
 
 folderFiles.addEventListener('change', ()=>{
@@ -3302,6 +3442,7 @@ function osdChangeItem(dir){
       stepEnumValue(item, dir);
       break;
     case 'check':
+      if (item.key === 'sourceSbs') cancelSbsProbe();
       state[item.key] = !state[item.key];
       applyAll();
       refreshMenu();
@@ -3720,6 +3861,7 @@ function keyMapApply(e){
       stepEnumValue(item, dir);
       break;
     case 'check':
+      if (item.key === 'sourceSbs') cancelSbsProbe();
       state[item.key] = (keyMap[found].inc && keyMap[found].dec) ? dir > 0 : !state[item.key];
       applyAll();
       refreshMenu();
@@ -4425,6 +4567,7 @@ function handleAct(act, el){
   const key = el.dataset.key;
   switch (act){
     case 'boolstep':
+      if (key === 'sourceSbs') cancelSbsProbe();
       state[key] = Number(el.dataset.dir) > 0;
       applyAll();
       refreshMenu();
