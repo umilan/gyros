@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.15</title>
+<title>GYROS v2.18</title>
 <style>
   :root{
     --bg:#000000;
@@ -542,7 +542,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.15';
+const APP_VERSION = '2.18';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -565,6 +565,9 @@ const DEFAULTS = {
   shape: 0,               // index into SHAPES
   sourceSbs: false,       // video source is side-by-side stereo
   autoRotate: true,       // spin demo / loaded model
+  playSpeed: 1,           // PLAY SPEED (video only), -5..5: 1 = normal, 0 = held
+                            // on the current frame, negative = backward. See
+                            // runTransport().
   contentAngle: 0,        // ANGLE (photo/video only): straightens content shot at a
                             // tilt, -180..180 from zero. Positive = clockwise,
                             // negative = counter-clockwise, as the viewer sees it.
@@ -583,13 +586,8 @@ const DEFAULTS = {
                             // with POS X/Y to explore once zoomed in past 100%.
   zoom: 0, scaleX: 0, scaleY: 0,
   trapezoid: 0,
-  trapezoidCorners: false,  // TRAPEZOID CORNERS: shows/hides the 8 per-corner
-                            // step rows below (off by default -- most users
-                            // only ever need the single TRAPEZOID row).
-  cornerTLx: 0, cornerTLy: 0, cornerTRx: 0, cornerTRy: 0,
-  cornerBLx: 0, cornerBLy: 0, cornerBRx: 0, cornerBRy: 0,
   flipX: false, flipY: false,
-  gyroMulX: 1, gyroMulY: 1,
+  gyroMulX: 0.2, gyroMulY: 0.2,
   freezeX: false, freezeY: false,
   gyroFlipX: false, gyroFlipY: false,
   trackingAlgo: 3,         // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
@@ -634,11 +632,9 @@ const DEFAULTS = {
   smoothing: 25,           // SMOOTHING, percent of the noise allowances V2.8
                             // (6DOF) is built with: 100 = the same as HOLO2,
                             // 0 = follow the sensor exactly.
-  menuTimeout: 10          // seconds the bottom OSD strip sits idle before
-                            // auto-hiding, see checkBotMenuIdle(). Defaults to
-                            // 10, matching the original fixed 10-second
-                            // timeout so existing sessions see no behaviour
-                            // change. 0 = OFF disables auto-hide.
+  menuTimeout: 3           // seconds the bottom OSD strip sits idle before
+                            // auto-hiding, see checkBotMenuIdle(). 0 = OFF
+                            // disables auto-hide.
 };
 
 const state = Object.assign({}, DEFAULTS);
@@ -733,9 +729,7 @@ const PER_VIEW_KEYS = [
   'fov', 'brightness', 'uiEyeDist', 'eyeDist',
   'posX', 'posY',
   'contentZoom', 'zoom', 'scaleX', 'scaleY',
-  'trapezoid', 'trapezoidCorners',
-  'cornerTLx', 'cornerTLy', 'cornerTRx', 'cornerTRy',
-  'cornerBLx', 'cornerBLy', 'cornerBRx', 'cornerBRy',
+  'trapezoid',
   'flipX', 'flipY',
   'mountAuto', 'mountTilt', 'mountRoll'
 ];
@@ -811,6 +805,7 @@ const MENU = [
     { type:'enum',  key:'mode',    label:'MODE', options:MODES },
     { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
     { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
+    { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.1, dec:1, when:'video' },
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
   ]},
   { title:'POSITIONING', items:[
@@ -824,16 +819,7 @@ const MENU = [
     { type:'step', key:'scaleY',   label:'SCALE Y',   min:-90, max:300, step:1 }
   ]},
   { title:'TRAPEZOID', items:[
-    { type:'step', key:'trapezoid', label:'TRAPEZOID', min:-100, max:100, step:1 },
-    { type:'check', key:'trapezoidCorners', label:'TRAPEZOID CORNERS' },
-    { type:'step', key:'cornerTLx', label:'CORNER TL X', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerTLy', label:'CORNER TL Y', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerTRx', label:'CORNER TR X', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerTRy', label:'CORNER TR Y', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerBLx', label:'CORNER BL X', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerBLy', label:'CORNER BL Y', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerBRx', label:'CORNER BR X', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' },
-    { type:'step', key:'cornerBRy', label:'CORNER BR Y', min:-100, max:100, step:1, whenTrue:'trapezoidCorners' }
+    { type:'step', key:'trapezoid', label:'TRAPEZOID', min:-100, max:100, step:1 }
   ]},
   { title:'FLIP', items:[
     { type:'check', key:'flipX', label:'FLIP X' },
@@ -1035,7 +1021,7 @@ function refreshMenu(){
     el.hidden = !el.dataset.when.split(',').includes(state.content);
   });
   // Rows gated on a boolean setting rather than content type (e.g. the
-  // TRAPEZOID CORNERS toggle hiding the 8 per-corner rows until enabled).
+  // mount rows, shown only where the mount is tracked -- see syncMountRows()).
   menuPanes.querySelectorAll('[data-when-true]').forEach(el=>{
     el.hidden = !state[el.dataset.whenTrue];
   });
@@ -1280,12 +1266,11 @@ function initBlit(){
   quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
   // The mesh is a plain, static quad covering the full eye viewport -- its
-  // on-screen shape no longer encodes the trapezoid. The 4-corner pin lives
-  // entirely in the `quadXform` uniform (an inverse homography, rebuilt in
-  // updateQuad()/computeQuadInverse() whenever a corner, zoom or scale
+  // on-screen shape no longer encodes the trapezoid. That lives entirely in
+  // the `quadXform` uniform (an inverse homography, rebuilt in
+  // updateQuad()/computeQuadInverse() whenever the trapezoid, zoom or scale
   // changes), which maps each screen pixel back to a texture (u,v) inside
-  // whatever quadrilateral the 4 corners currently describe -- so any corner
-  // can move independently, not just the top/bottom edge width as before.
+  // whatever quadrilateral the 4 corners currently describe.
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
     -1, 1, 0,   1, 1, 0,   -1, -1, 0,   1, -1, 0 // TL, TR, BL, BR
@@ -1314,7 +1299,7 @@ function initBlit(){
       uniform float distort;      // -1..1 signed spherize warp; see fisheyeAmount()
       uniform float aspect;       // eye width/height, keeps the warp circular, not elliptical
       uniform float brightness;   // 1 = unchanged; BRIGHTNESS setting is 1 + state.brightness/100
-      uniform mat3 quadXform;     // screen NDC (x,y,1) -> homogeneous (u,v) of the corner-pinned quad
+      uniform mat3 quadXform;     // screen NDC (x,y,1) -> homogeneous (u,v) of the trapezoid quad
       uniform float flipX;
       uniform float flipY;
       uniform float marks;        // MEASURE FOV: 0 = off, else the side line's distance from centre in u
@@ -1351,8 +1336,8 @@ function initBlit(){
         vec4 col = texture2D(map, uv);
         col.rgb *= brightness;
         // MEASURE FOV's two marks, drawn in the picture's own coordinates so
-        // they sit at a known place in the cameras' view whatever the corner
-        // pin, zoom or flip: a cross on the centre and a line to one side.
+        // they sit at a known place in the cameras' view whatever the
+        // trapezoid, zoom or flip: a cross on the centre and a line to one side.
         if (marks > 0.0){
           vec2 d = abs(uv - 0.5);
           float lw = 0.004;
@@ -1375,11 +1360,10 @@ function initBlit(){
 /* Classic "square to quadrilateral" projective mapping (Heckbert), solved
    for the unit square (u,v) -> the quad's 4 corners, then inverted (3x3
    cofactor/adjugate) so the shader gets quad-NDC -> (u,v) directly, one
-   matrix multiply and a perspective divide per pixel. This is what lets any
-   of the 4 corners move independently (a true corner-pin), not just the old
-   symmetric top/bottom-edge-width keystone. Verified against a plain-JS
-   round-trip test (see the project's gyros-viewer skill notes) covering the
-   old symmetric-trapezoid shape, an arbitrary independently-moved-corner
+   matrix multiply and a perspective divide per pixel. It takes any 4
+   corners, though updateQuad() only ever hands it a zoomed, scaled
+   trapezoid. Verified against a plain-JS round-trip test (see the project's
+   gyros-viewer skill notes) covering a symmetric trapezoid, an arbitrary
    quad, and a zoomed version of it. */
 function computeQuadInverse(TL, TR, BL, BR, out){
   const [x00, y00] = TL, [x10, y10] = TR, [x01, y01] = BL, [x11, y11] = BR;
@@ -1415,20 +1399,13 @@ function updateQuad(){
   const sx = Math.max(0.05, zoomMul * (1 + state.scaleX / 100));
   const sy = Math.max(0.05, zoomMul * (1 + state.scaleY / 100));
 
-  // Each corner is independently offset (percent of the eye's half-size)
-  // from its nominal position -- a true 4-corner pin, replacing the old
-  // trpzdTop/trpzdBot pair that could only taper the top and bottom edges
-  // symmetrically about the centre.
-  const TL = [(-1 + state.cornerTLx / 100) * sx, ( 1 + state.cornerTLy / 100) * sy];
-  const TR = [( 1 + state.cornerTRx / 100) * sx, ( 1 + state.cornerTRy / 100) * sy];
-  const BL = [(-1 + state.cornerBLx / 100) * sx, (-1 + state.cornerBLy / 100) * sy];
-  const BR = [( 1 + state.cornerBRx / 100) * sx, (-1 + state.cornerBRy / 100) * sy];
+  const TL = [-sx,  sy];
+  const TR = [ sx,  sy];
+  const BL = [-sx, -sy];
+  const BR = [ sx, -sy];
 
-  // TRAPEZOID (single master slider, -100..100): scales the top pair's or
-  // bottom pair's X toward 0 -- at +-100 that pair's two corners land on the
-  // same point (0, that edge's Y), a true point merge, not just a squeeze.
-  // Layered on top of the per-corner X above (and therefore on zoom/scale
-  // too), so fine per-corner tweaks still apply underneath it.
+  // TRAPEZOID (-100..100): scales the top pair's or bottom pair's X toward
+  // 0, on top of zoom/scale.
   // Clamp short of a fully-converged edge. This isn't just cosmetic: past
   // roughly 70% convergence (rem below ~0.3) computeQuadInverse's homography
   // becomes numerically unstable for a quad this acute and the whole shape
@@ -1463,7 +1440,7 @@ function applyEyeDistance(){
 /* POS X/Y move the *view*, not the finished picture: they shift each eye's
    frustum so the scene is re-rendered at the new framing -- nothing gets
    pushed outside the eye viewport and clipped. ZOOM (XY)/SCALE X/SCALE Y are
-   display-level now (see updateQuad()): they scale the corner-pinned quad
+   display-level now (see updateQuad()): they scale the trapezoid quad
    itself, so the whole trapezoid grows or shrinks and gets cropped by the
    eye viewport past 100% instead of just re-rendering sharper/blurrier
    content inside a fixed frame. */
@@ -1718,7 +1695,7 @@ function recenter(){
   camL.clearViewOffset();
   camR.clearViewOffset();
   // Restore the viewer framing as well as the sensor heading. Otherwise a
-  // previous pan or corner-pin adjustment can leave the cube at an edge after
+  // previous pan or trapezoid adjustment can leave the cube at an edge after
   // a double-tap recenter.
   state.posX = 0;
   state.posY = 0;
@@ -1727,14 +1704,6 @@ function recenter(){
   state.scaleX = 0;
   state.scaleY = 0;
   state.trapezoid = 0;
-  state.cornerTLx = 0;
-  state.cornerTLy = 0;
-  state.cornerTRx = 0;
-  state.cornerTRy = 0;
-  state.cornerBLx = 0;
-  state.cornerBLy = 0;
-  state.cornerBRx = 0;
-  state.cornerBRy = 0;
   updateQuad();
   applyEyeProjection();
   refreshMenu();
@@ -2920,21 +2889,32 @@ async function startVideoPlayback(src){
   video.muted = false;
   try{
     await video.play();
-    return true;
   }catch(e){
     video.muted = true;
-    try{ await video.play(); return true; }
+    try{ await video.play(); }
     catch(e2){ return false; }
   }
+  runTransport(1);   // load() put the element back to 1x forward, whatever PLAY SPEED says
+  return true;
 }
 
 /* ---- transport controls (SPACE / Shift+SPACE, wired below) -------------
    Native <video> playbackRate can't go negative in any browser that matters
    here (Chrome ignores a negative value; Safari is unreliable), so reverse
    playback is simulated: pause the element and step currentTime backward
-   every frame, at the same wall-clock rate forward playback would use. ---- */
+   every frame, at the same wall-clock rate forward playback would use.
+
+   PLAY SPEED (state.playSpeed, -5..5) is the rate "play" runs at, sign
+   included; "reverse" runs at the same rate the other way. Whichever of the
+   two is running, a rate above zero is left to the element (playbackRate)
+   and anything else goes to the stepper -- which at exactly 0 just idles,
+   so the picture holds still without counting as paused. ---- */
 let reverseRAF = null;
+let transportDir = 1;   // how the transport was last started: 1 = play, -1 = reverse
 let demoRotateDirection = 1;
+
+function transportRate(){ return state.playSpeed * transportDir; }
+function transportRunning(){ return reverseRAF != null || !video.paused; }
 
 function stopReverse(){
   if (reverseRAF != null){ cancelAnimationFrame(reverseRAF); reverseRAF = null; }
@@ -2943,10 +2923,13 @@ function stopReverse(){
 function stepReverse(now, last){
   if (reverseRAF == null) return;   // stopped since this frame was scheduled
   const dt = (now - last) / 1000;
-  let t = video.currentTime - dt;
-  if (t <= 0) t = video.loop ? (video.duration || 0) + t : 0;   // wrap, matching video.loop
-  video.currentTime = Math.max(0, t);
-  if (t <= 0 && !video.loop){ stopReverse(); return; }
+  const rate = transportRate();   // never above 0 here -- see runTransport()
+  if (rate < 0){
+    let t = video.currentTime + dt * rate;
+    if (t <= 0) t = video.loop ? (video.duration || 0) + t : 0;   // wrap, matching video.loop
+    video.currentTime = Math.max(0, t);
+    if (t <= 0 && !video.loop){ stopReverse(); return; }
+  }
   reverseRAF = requestAnimationFrame(n => stepReverse(n, now));
 }
 
@@ -2957,45 +2940,48 @@ function startReverse(){
   reverseRAF = requestAnimationFrame(n => stepReverse(n, n));
 }
 
+// Starts the transport as play (dir 1) or reverse (dir -1) at PLAY SPEED.
+function runTransport(dir){
+  transportDir = dir;
+  const rate = transportRate();
+  stopReverse();
+  if (rate > 0){
+    video.playbackRate = rate;
+    video.play().catch(()=>{});
+  } else {
+    startReverse();
+  }
+}
+
+function stopTransport(){
+  stopReverse();
+  if (!video.paused) video.pause();
+}
+
+// PLAY SPEED was stepped: a running video picks the new rate up at once, a
+// paused one stays paused and uses it from the next play.
+function applyPlaySpeed(){
+  if (transportRunning()) runTransport(transportDir);
+}
+
 function togglePlayPause(){
-  if (reverseRAF != null){ stopReverse(); toast('PAUSED'); return; }
-  if (video.paused){ video.play().catch(()=>{}); toast('PLAY'); }
-  else { video.pause(); toast('PAUSED'); }
+  if (transportRunning()){ stopTransport(); toast('PAUSED'); }
+  else { runTransport(1); toast('PLAY'); }
 }
 
 function toggleReverse(){
-  if (reverseRAF != null){
-    stopReverse();
-    video.play().catch(()=>{});
-    toast('PLAY');
-  } else {
-    startReverse();
-    toast('REVERSE');
-  }
+  if (transportRunning() && transportDir < 0){ runTransport(1); toast('PLAY'); }
+  else { runTransport(-1); toast('REVERSE'); }
 }
 
 function toggleForward(){
-  if (reverseRAF != null){
-    stopReverse();
-    video.play().catch(()=>{});
-    toast('PLAY');
-  } else if (video.paused){
-    video.play().catch(()=>{});
-    toast('PLAY');
-  } else {
-    video.pause();
-    toast('PAUSED');
-  }
+  if (transportRunning() && transportDir > 0){ stopTransport(); toast('PAUSED'); }
+  else { runTransport(1); toast('PLAY'); }
 }
 
 function toggleBackward(){
-  if (reverseRAF != null){
-    stopReverse();
-    toast('PAUSED');
-  } else {
-    startReverse();
-    toast('REVERSE');
-  }
+  if (transportRunning() && transportDir < 0){ stopTransport(); toast('PAUSED'); }
+  else { runTransport(-1); toast('REVERSE'); }
 }
 
 function toggleDemoRotation(direction){
@@ -4542,6 +4528,7 @@ function stepValue(key, dir){
   const next = THREE.MathUtils.clamp(state[key] + dir * spec.step, spec.min, spec.max);
   state[key] = spec.dec ? Math.round(next * 10) / 10 : Math.round(next);
   if (key === 'mountTilt' || key === 'mountRoll') state.mountAuto = false;   // a hand-set angle sticks
+  if (key === 'playSpeed') applyPlaySpeed();
   updateQuad();
   applyEyeDistance();
   applyEyeProjection();
@@ -4559,6 +4546,7 @@ function resetToDefaults(){
   buildTopPanes();
   buildBotPanes();
   applyAll();
+  applyPlaySpeed();
   refreshMenu();
   toast('DEFAULTS RESTORED');
 }

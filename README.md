@@ -86,7 +86,8 @@ be — so it always boots to the demo.
   to switch that off and fine-tune. On in HOLO2 and HOLO3, off elsewhere).
 - **OPTICS** — SBS EYE DIST, EYE DISTANCE, PERSPECTIVE (camera field of
   view), BRIGHTNESS, MENU TIMEOUT.
-- **CONTENT** — demo shape, auto-rotate, SBS source.
+- **CONTENT** — demo shape, auto-rotate, SBS source, PLAY SPEED (video,
+  -5 to 5: 1 is normal, 0 holds the frame, negative plays backward).
 - **POSITIONING** — POS X/Y, eye distance.
 - **ZOOM** — zoom, scale X/Y, keystone top/bottom (TRPZD).
 - **FLIP** — flip X/Y.
