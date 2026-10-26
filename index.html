@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.22</title>
+<title>GYROS v2.23</title>
 <style>
   :root{
     --bg:#000000;
@@ -569,7 +569,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.22';
+const APP_VERSION = '2.23';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -2615,6 +2615,7 @@ modelFile.addEventListener('change', async ()=>{
     modelFile.value = '';
     return;
   }
+  forgetMedia();
   const url = URL.createObjectURL(file);
   try{
     await loadModel(url, ext, file.name);
@@ -2948,20 +2949,26 @@ const videoFile = document.getElementById('videoFile');
 videoFile.addEventListener('change', ()=>{
   const list = videoFile.files;
   if (!list || !list.length) return;
+  openMediaFiles([...list]);
+  videoFile.value = '';
+});
+
+// One photo/video, or several as a gallery. Also how a remembered set comes
+// back on startup (restoreMedia()), at the item it was left on.
+function openMediaFiles(list, startIdx = 0){
   if (list.length > 1){
     // Multiple photos/videos picked at once from the OS gallery (iOS's native
     // Photos picker supports multi-select here since there's no
     // webkitdirectory attribute forcing the Files-app folder picker instead)
     // -- reuse the same gallery infra as a picked folder.
-    loadGalleryFiles(list);
+    loadGalleryFiles(list, startIdx);
   } else {
     const file = list[0];
     setStandaloneMedia(file);
     if (classifyMediaFile(file) === 'image') loadSBSImage(file);
     else playVideo(URL.createObjectURL(file), file.name, file);
   }
-  videoFile.value = '';
-});
+}
 
 /* ---- shared media-display helpers — both the single-file loaders below
    and the gallery further down reuse the same videoGroup infrastructure, so
@@ -3240,6 +3247,97 @@ async function playVideo(src, label, file){
 }
 
 /* =========================================================================
+   Remembered media — the last loaded photo/video, or gallery of them, is
+   copied into IndexedDB so it comes back after a reload. A picked file
+   can't be reopened after a reload any other way (iOS Safari has no file
+   handles), so this keeps the files themselves, up to MEDIA_STORE_MAX in
+   total. Loading anything else -- a new set, a model, a URL, DEMO --
+   forgets the old set. iOS may still clear it on its own: after ~7 days
+   without opening the site in Safari (not when added to the Home Screen),
+   or when the phone runs low on space.
+   ========================================================================= */
+const MEDIA_STORE_MAX = 2 * 1024 * 1024 * 1024;   // 2 GB
+let mediaRestoring = false;   // restoreMedia() is replaying a set: don't forget or re-save it
+let mediaDb = null;
+let mediaOps = Promise.resolve();   // store operations run one at a time, in order
+
+function openMediaDb(){
+  if (!mediaDb) mediaDb = new Promise((resolve, reject)=>{
+    const req = indexedDB.open('gyrosMedia', 1);
+    req.onupgradeneeded = ()=>{
+      req.result.createObjectStore('files');
+      req.result.createObjectStore('meta');
+    };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+  return mediaDb;
+}
+function mediaOp(stores, mode, fn){
+  mediaOps = mediaOps.then(()=> openMediaDb()).then(db => new Promise((resolve, reject)=>{
+    const tx = db.transaction(stores, mode);
+    const result = fn(tx);
+    tx.oncomplete = ()=> resolve(result);
+    tx.onerror = tx.onabort = ()=> reject(tx.error);
+  }));
+  const op = mediaOps;
+  mediaOps = mediaOps.catch(()=>{});   // one failed operation doesn't block the next
+  return op;
+}
+
+function forgetMedia(){
+  if (mediaRestoring || !window.indexedDB) return;
+  mediaOp(['files', 'meta'], 'readwrite', tx=>{
+    tx.objectStore('files').clear();
+    tx.objectStore('meta').clear();
+  }).catch(()=>{});
+}
+
+function rememberMedia(files){
+  if (mediaRestoring || !window.indexedDB) return;
+  forgetMedia();
+  const total = files.reduce((n, f) => n + f.size, 0);
+  if (total > MEDIA_STORE_MAX){ toast('OVER 2 GB — WON\'T BE REMEMBERED', 2500); return; }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
+  mediaOp(['files', 'meta'], 'readwrite', tx=>{
+    const store = tx.objectStore('files');
+    files.forEach((f, i) => store.put({ name: f.name, type: f.type, lastModified: f.lastModified, blob: f }, i));
+    // Written last, in the same transaction: a set without it is incomplete.
+    tx.objectStore('meta').put({ count: files.length, idx: 0 }, 'set');
+  }).catch(()=>{
+    forgetMedia();
+    toast('NOT ENOUGH STORAGE TO REMEMBER THESE', 2500);
+  });
+}
+
+function rememberMediaIdx(idx){
+  if (mediaRestoring || !window.indexedDB) return;
+  mediaOp(['meta'], 'readwrite', tx=>{
+    const meta = tx.objectStore('meta');
+    const req = meta.get('set');
+    req.onsuccess = ()=>{ if (req.result) meta.put({ ...req.result, idx }, 'set'); };
+  }).catch(()=>{});
+}
+
+async function restoreMedia(){
+  if (!window.indexedDB) return;
+  let set = null, recs = [];
+  try{
+    await mediaOp(['files', 'meta'], 'readonly', tx=>{
+      const m = tx.objectStore('meta').get('set');
+      m.onsuccess = ()=>{ set = m.result; };
+      const f = tx.objectStore('files').getAll();
+      f.onsuccess = ()=>{ recs = f.result; };
+    });
+  }catch(e){ return; }
+  if (!set || !recs.length || recs.length !== set.count) return;
+  const files = recs.map(r => new File([r.blob], r.name, { type: r.type, lastModified: r.lastModified }));
+  mediaRestoring = true;
+  try{ openMediaFiles(files, set.idx || 0); }
+  finally{ mediaRestoring = false; }
+}
+
+/* =========================================================================
    Gallery — load several photos/videos at once (a picked folder, or a
    multi-select) and step through them with the on-screen ‹ › arrows.
    Every item lands on the same videoGroup infrastructure as a single loaded
@@ -3251,6 +3349,7 @@ let galleryItems = [];   // [{ name, url, kind: 'image'|'video', isSbs }]
 let galleryIdx = -1;
 
 function clearGallery(){
+  forgetMedia();
   galleryItems.forEach(it => URL.revokeObjectURL(it.url));
   galleryItems = [];
   galleryIdx = -1;
@@ -3273,6 +3372,7 @@ function setStandaloneMedia(file){
   }];
   galleryIdx = 0;
   state.shape = 0;
+  rememberMedia([file]);
   document.body.dataset.gallery = '0';
   ENUM_SPEC.shape.label = 'GALLERY';
   ENUM_SPEC.shape.options = [file.name.toUpperCase().slice(0, 28)];
@@ -3298,7 +3398,7 @@ function focusGalleryRow(){
   if (rowIdx >= 0) setMenuFocus(rowIdx);
 }
 
-function loadGalleryFiles(fileList){
+function loadGalleryFiles(fileList, startIdx = 0){
   const files = [...fileList]
     .filter(f => !isHiddenFile(f))
     .map(f => ({ file: f, kind: classifyMediaFile(f) }))
@@ -3313,6 +3413,7 @@ function loadGalleryFiles(fileList){
     isSbs: /sbs/i.test(f.name),
     file: f
   }));
+  rememberMedia(galleryItems.map(it => it.file));
   document.body.dataset.gallery = galleryItems.length > 1 ? '1' : '0';
   state.galleryMulti = galleryItems.length > 1;
   state.mode = 3;
@@ -3322,14 +3423,17 @@ function loadGalleryFiles(fileList){
     const labelEl = el.closest('.row')?.querySelector('.label');
     if (labelEl) labelEl.textContent = 'GALLERY';
   });
-  showGalleryItem(0);
-  focusGalleryRow();
+  showGalleryItem(startIdx);
+  // A remembered set coming back on startup just shows; a fresh load opens
+  // the list on the GALLERY row.
+  if (!mediaRestoring) focusGalleryRow();
 }
 
 function showGalleryItem(idx){
   if (!galleryItems.length) return;
   galleryIdx = ((idx % galleryItems.length) + galleryItems.length) % galleryItems.length;
   state.shape = galleryIdx;   // keep the repurposed GALLERY row in sync
+  rememberMediaIdx(galleryIdx);
   refreshMenu();              // update the row's shown value immediately — independent of load success
   const item = galleryItems[galleryIdx];
   if (item.kind === 'image') showGalleryImage(item);
@@ -3836,6 +3940,7 @@ function submitUrl(){
   const url = urlInput.value.trim();
   if (!url){ urlDlg.hidden = true; return; }
   urlDlg.hidden = true;
+  forgetMedia();
   const label = url.split('/').pop().split('?')[0] || 'file';
   const ext = label.includes('.') ? label.split('.').pop().toLowerCase() : '';
   if (urlMode === 'model'){ loadModel(url, ext, label); return; }
@@ -5084,6 +5189,7 @@ if (typeof DeviceOrientationEvent !== 'undefined' &&
 } else {
   enableMotion();
 }
+restoreMedia();
 </script>
 </body>
 </html>
