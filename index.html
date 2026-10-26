@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.19</title>
+<title>GYROS v2.20</title>
 <style>
   :root{
     --bg:#000000;
@@ -542,7 +542,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.19';
+const APP_VERSION = '2.20';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -587,7 +587,7 @@ const DEFAULTS = {
   zoom: 0, scaleX: 0, scaleY: 0,
   trapezoid: 0,
   flipX: false, flipY: false,
-  gyroMulX: 0.2, gyroMulY: 0.2,
+  gyroMulX: 0.6, gyroMulY: 0.6,
   freezeX: false, freezeY: false,
   gyroFlipX: false, gyroFlipY: false,
   trackingAlgo: 3,         // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
@@ -722,15 +722,17 @@ function syncMountRows(){
 
 // Visual/geometry settings that PLAIN/SBS/HOLO each remember separately --
 // everything from the POSITIONING, ZOOM, TRAPEZOID and FLIP sections plus
-// PERSPECTIVE, BRIGHTNESS, EYE DISTANCE and SBS EYE DIST from OPTICS. Gyro
-// tracking behaviour and MENU TIMEOUT are left out on purpose: they're not
-// about how the image looks, so they stay one shared value across views.
+// PERSPECTIVE, BRIGHTNESS, EYE DISTANCE and SBS EYE DIST from OPTICS, plus
+// FREEZE X, which the HOLO views default on. The rest of the gyro tracking
+// behaviour and MENU TIMEOUT are left out on purpose: they're not about how
+// the image looks, so they stay one shared value across views.
 const PER_VIEW_KEYS = [
   'fov', 'brightness', 'uiEyeDist', 'eyeDist',
   'posX', 'posY',
   'contentZoom', 'zoom', 'scaleX', 'scaleY',
   'trapezoid',
   'flipX', 'flipY',
+  'freezeX',
   'mountAuto', 'mountTilt', 'mountRoll'
 ];
 // HOLO2 and HOLO3 can't work without knowing the mount, so they start on
@@ -746,7 +748,7 @@ function viewDefaults(idx){
   for (const k of PER_VIEW_KEYS) d[k] = DEFAULTS[k];
   // The reflector rigs HOLO, HOLO2 and HOLO3 are for want the UI panes
   // pulled in toward the divider and the stereo cameras set wider apart.
-  if (idx === VIEW_HOLO || VIEW_ABOVE[idx]){ d.uiEyeDist = -15; d.eyeDist = 400; }
+  if (idx === VIEW_HOLO || VIEW_ABOVE[idx]){ d.uiEyeDist = -15; d.eyeDist = 400; d.freezeX = true; }
   return Object.assign(d, mountDefaults(idx));
 }
 // One saved snapshot per VIEW index, for whichever views AREN'T currently
@@ -768,6 +770,9 @@ function switchView(newIdx){
   const firstAbove = (VIEW_ABOVE[newIdx] && !viewProfiles[newIdx])
     ? ((newIdx === VIEW_HOLO3 && viewProfiles[VIEW_HOLO2]) || viewProfiles[VIEW_HOLO]) : null;
   Object.assign(state, viewProfiles[newIdx] || firstAbove || viewDefaults(newIdx));
+  // A snapshot saved before FREEZE X was per view doesn't carry it.
+  const restored = viewProfiles[newIdx] || firstAbove;
+  if (restored && restored.freezeX === undefined) state.freezeX = viewDefaults(newIdx).freezeX;
   // The mount is never inherited from another view, and a snapshot saved
   // before these settings existed doesn't carry one.
   if (!viewProfiles[newIdx] || viewProfiles[newIdx].mountAuto === undefined) Object.assign(state, mountDefaults(newIdx));
