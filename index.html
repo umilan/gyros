@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.29</title>
+<title>GYROS v2.30</title>
 <style>
   :root{
     --bg:#000000;
@@ -583,7 +583,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.29';
+const APP_VERSION = '2.30';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -2440,6 +2440,15 @@ function checkBotMenuIdle(){
      Y                   Tab          LB/RB  [ and ]
      LT or RT (held)     Shift        START  O (load dialog)
      BACK, stick clicks  RECENTER
+
+   Nintendo-layout pads (8BitDo Micro, Switch Pro, Joy-Con) have A on the
+   right and B at the bottom, the other way round from Xbox, while the
+   standard mapping numbers buttons by position. So for those, A/B and X/Y
+   are swapped back to what their labels say: A confirms, B goes back.
+   A pad without the standard mapping (e.g. an 8BitDo in Android D-input
+   mode on some browsers) may report its D-pad as one hat axis instead of
+   buttons 12-15; that is read too (gamepadHat()). ?debug=1 logs each pad's
+   id, mapping and the button numbers pressed, for checking a new one.
    ========================================================================= */
 const GAMEPAD_KEYS = [
   { btn:12, axis:1, sign:-1, key:'ArrowUp',    code:'ArrowUp',    repeat:true },
@@ -2456,6 +2465,9 @@ const GAMEPAD_KEYS = [
 ];
 const GAMEPAD_RECENTER_BTNS = [8, 10, 11];
 const GAMEPAD_SHIFT_BTNS = [6, 7];
+const GAMEPAD_NINTENDO = /8bitdo micro|micro gamepad|pro controller|joy-?con|vendor: 057e/i;
+const GAMEPAD_NINTENDO_SWAP = { 0:1, 1:0, 2:3, 3:2 };
+const GAMEPAD_HAT_AXIS = 9;          // where Chrome puts a DirectInput hat
 const GAMEPAD_STICK_ON = 0.6;        // stick deflection that counts as a press
 const GAMEPAD_REPEAT_DELAY = 400;    // ms held before an arrow starts repeating
 const GAMEPAD_REPEAT_EVERY = 120;    // ms between repeats after that
@@ -2479,11 +2491,46 @@ function gamepadReleaseAll(){
   gamepadRecenterHeld = false;
 }
 
+// A hat axis reports one value per direction: -1 up, then clockwise in
+// steps of 2/7 to 1 up-left; anything past +-1 is centred. Returns the
+// standard D-pad button (12 up, 13 down, 14 left, 15 right) it holds.
+function gamepadHat(p, btn){
+  if (p.mapping === 'standard') return false;
+  const v = p.axes[GAMEPAD_HAT_AXIS];
+  if (v === undefined || Math.abs(v) > 1.05) return false;
+  const dir = ((Math.round((v + 1) * 3.5) % 8) + 8) % 8;   // 0 up, 2 right, 4 down, 6 left
+  return { 12: [7, 0, 1], 15: [1, 2, 3], 13: [3, 4, 5], 14: [5, 6, 7] }[btn]?.includes(dir) || false;
+}
+function gamepadButton(p, idx){
+  if (GAMEPAD_NINTENDO.test(p.id) && idx in GAMEPAD_NINTENDO_SWAP) idx = GAMEPAD_NINTENDO_SWAP[idx];
+  return !!(p.buttons[idx] && p.buttons[idx].pressed) || gamepadHat(p, idx);
+}
+
+const gamepadDebugSeen = new Set();
+let gamepadDebugDown = '';
+function gamepadDebug(pads){
+  let down = [];
+  for (const p of pads){
+    if (!p || !p.connected) continue;
+    const id = p.index + ':' + p.id;
+    if (!gamepadDebugSeen.has(id)){
+      gamepadDebugSeen.add(id);
+      kbDebugLog(`PAD ${p.index} "${p.id}" mapping=${p.mapping || 'none'} buttons=${p.buttons.length} axes=${p.axes.length}`
+        + (GAMEPAD_NINTENDO.test(p.id) ? ' (A/B X/Y swapped)' : ''));
+    }
+    p.buttons.forEach((b, i) => { if (b.pressed) down.push(`${p.index}.b${i}`); });
+    p.axes.forEach((a, i) => { if (Math.abs(a) > GAMEPAD_STICK_ON) down.push(`${p.index}.a${i}=${a.toFixed(2)}`); });
+  }
+  down = down.join(' ');
+  if (down !== gamepadDebugDown){ gamepadDebugDown = down; kbDebugLog('PAD ' + (down || 'released')); }
+}
+
 function pollGamepads(){
   if (!navigator.getGamepads) return;
   let pads;
   try{ pads = navigator.getGamepads(); }catch(e){ return; }   // blocked by permissions policy
-  const pressed = idx => { for (const p of pads){ if (p && p.connected && p.buttons[idx] && p.buttons[idx].pressed) return true; } return false; };
+  if (kbDebugOn) gamepadDebug(pads);
+  const pressed = idx => { for (const p of pads){ if (p && p.connected && gamepadButton(p, idx)) return true; } return false; };
   const pushed = (axis, sign) => { for (const p of pads){ if (p && p.connected && p.axes[axis] * sign > GAMEPAD_STICK_ON) return true; } return false; };
   let any = false;
   for (const p of pads){ if (p && p.connected){ any = true; break; } }
