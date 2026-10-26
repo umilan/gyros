@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.24</title>
+<title>GYROS v2.25</title>
 <style>
   :root{
     --bg:#000000;
@@ -569,7 +569,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.24';
+const APP_VERSION = '2.25';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -601,6 +601,10 @@ const DEFAULTS = {
                             // keying, 100 = the whole picture black. See keyMask().
   chromaSmooth: 20,       // SMOOTHING (chroma key), 0..100: how soft the
                             // keyed edges are. See keyMask().
+  chromaRefine: 0,        // REFINE EDGE (chroma key), -1..1: shifts the edge
+                            // inside the SMOOTHING band, like shifting a
+                            // feathered selection -- positive cuts out more,
+                            // negative less. No effect at SMOOTHING 0.
   contentAngle: 0,        // ANGLE (photo/video only): straightens content shot at a
                             // tilt, -180..180 from zero. Positive = clockwise,
                             // negative = counter-clockwise, as the viewer sees it.
@@ -851,7 +855,8 @@ const MENU = [
     // REMOVE CHROMA KEY once a colour is picked (refreshMenu()).
     { type:'action', act:'chromaKey', label:'SET CHROMA KEY', textbtn:true, when:'video' },
     { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' }
+    { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
+    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' }
   ]},
   { title:'POSITIONING', items:[
     { type:'step', key:'posX',    label:'POS X',        min:-200, max:200, step:1 },
@@ -1369,6 +1374,7 @@ function initBlit(){
       keyCol: { value: new THREE.Vector3() },
       chromaT: { value: 0 },
       chromaF: { value: 0 },
+      chromaR: { value: 0 },
       texel: { value: new THREE.Vector2() }
     },
     vertexShader: `
@@ -1390,6 +1396,7 @@ function initBlit(){
       uniform vec3 keyCol;        // picked colour, sRGB 0..1 as read back from the eye target
       uniform float chromaT;      // INTENSITY 0..1
       uniform float chromaF;      // SMOOTHING 0..1
+      uniform float chromaR;      // REFINE EDGE -1..1
       uniform vec2 texel;         // one eye-target pixel in uv
       varying vec2 vPos;
       vec3 toYCbCr(vec3 c){
@@ -1451,15 +1458,24 @@ function initBlit(){
           if (chromaT < 1.0){
             m = keyMask(col.rgb);
             // SMOOTHING also softens the edge spatially: average the mask
-            // with four diagonal neighbours, further out the higher it is.
+            // with a ring of eight neighbours, further out the higher it is
+            // (up to 9 pixels), which also gives REFINE EDGE room to move.
             if (chromaF > 0.0){
-              vec2 o = texel * (1.0 + 4.0 * chromaF);
+              vec2 o = texel * (1.0 + 8.0 * chromaF);
+              vec2 d = o * 0.7071;   // diagonals on the same circle
               m = (2.0 * m
-                + keyMaskAt(uv + o)
-                + keyMaskAt(uv - o)
-                + keyMaskAt(uv + vec2(o.x, -o.y))
-                + keyMaskAt(uv + vec2(-o.x, o.y))) / 6.0;
+                + keyMaskAt(uv + vec2(o.x, 0.0)) + keyMaskAt(uv - vec2(o.x, 0.0))
+                + keyMaskAt(uv + vec2(0.0, o.y)) + keyMaskAt(uv - vec2(0.0, o.y))
+                + keyMaskAt(uv + d) + keyMaskAt(uv - d)
+                + keyMaskAt(uv + vec2(d.x, -d.y)) + keyMaskAt(uv + vec2(-d.x, d.y))) / 10.0;
             }
+            // REFINE EDGE: move the cut within the soft edge SMOOTHING made.
+            // Positive drops the weakest part of the kept edge (cuts out
+            // more), negative firms up the faintest part (cuts out less).
+            // At +-1 the cut sits halfway through the edge, so a solid
+            // subject or backdrop is never lost entirely.
+            if (chromaR > 0.0) m = clamp((m - 0.5 * chromaR) / (1.0 - 0.5 * chromaR), 0.0, 1.0);
+            else if (chromaR < 0.0) m = clamp(m / (1.0 + 0.5 * chromaR), 0.0, 1.0);
           }
           col.rgb *= m;
         }
@@ -4811,6 +4827,7 @@ function applyChromaUniforms(){
   u.chromaOn.value = state.chromaOn && state.content === 'video' && state.chromaIntensity > 0 ? 1 : 0;
   u.chromaT.value = state.chromaIntensity / 100;
   u.chromaF.value = state.chromaSmooth / 100;
+  u.chromaR.value = state.chromaRefine;
   u.texel.value.set(1 / rtL.width, 1 / rtL.height);
 }
 
