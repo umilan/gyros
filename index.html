@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.31</title>
+<title>GYROS v2.32</title>
 <style>
   :root{
     --bg:#000000;
@@ -583,7 +583,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.31';
+const APP_VERSION = '2.32';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -933,14 +933,18 @@ const REDUCED_MENU = [
     menuItem('scaleY'),
     menuItem('playSpeed')
   ]},
+  // The full menu's own CHROMA KEY section, rows and heading gating alike.
+  MENU.find(s => s.title === 'CHROMA KEY'),
   { title:'ACTIONS', items:[
     menuItem('recenter'),
     { type:'action', act:'resetReduced', label:'RESET ALL',         textbtn:true },
     { type:'action', act:'fullMenu',     label:'SHOW ALL CONTROLS', textbtn:true }
   ]}
 ];
-// The settings RESET ALL puts back -- just the reduced menu's own.
-const REDUCED_KEYS = ['posY', 'contentZoom', 'scaleY', 'playSpeed'];
+// The settings RESET ALL puts back -- just the reduced menu's own. The
+// picked key colours stay; REMOVE CHROMA KEY is how those go.
+const REDUCED_KEYS = ['posY', 'contentZoom', 'scaleY', 'playSpeed',
+  'chromaIntensity', 'chromaSmooth', 'chromaRefine', 'chromaSpill'];
 function reducedMenuOn(){ return !!(state.reducedMenu && state.mediaLoaded); }
 function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
