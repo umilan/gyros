@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.25</title>
+<title>GYROS v2.26</title>
 <style>
   :root{
     --bg:#000000;
@@ -569,7 +569,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.25';
+const APP_VERSION = '2.26';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -605,6 +605,9 @@ const DEFAULTS = {
                             // inside the SMOOTHING band, like shifting a
                             // feathered selection -- positive cuts out more,
                             // negative less. No effect at SMOOTHING 0.
+  chromaSpill: 50,        // SPILL (chroma key), 0..100: how much of the key
+                            // colour's tint is taken out of what's kept, e.g.
+                            // green light bounced onto hair and edges.
   contentAngle: 0,        // ANGLE (photo/video only): straightens content shot at a
                             // tilt, -180..180 from zero. Positive = clockwise,
                             // negative = counter-clockwise, as the viewer sees it.
@@ -675,6 +678,10 @@ const DEFAULTS = {
 };
 
 const state = Object.assign({}, DEFAULTS);
+// Chroma key session state (not saved): the picked key colours, sRGB 0..1,
+// up to CHROMA_MAX_KEYS -- see startChromaPick() -- and SHOW MATTE.
+state.chromaKeys = [];
+state.chromaMatte = false;
 
 function loadState(){
   try{
@@ -854,9 +861,12 @@ const MENU = [
     // Chroma key -- see startChromaPick(). The action's label flips to
     // REMOVE CHROMA KEY once a colour is picked (refreshMenu()).
     { type:'action', act:'chromaKey', label:'SET CHROMA KEY', textbtn:true, when:'video' },
+    { type:'action', act:'chromaAdd', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaCanAdd' },
     { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' }
+    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
+    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
+    { type:'check', key:'chromaMatte',     label:'SHOW MATTE', when:'video', whenTrue:'chromaOn' }
   ]},
   { title:'POSITIONING', items:[
     { type:'step', key:'posX',    label:'POS X',        min:-200, max:200, step:1 },
@@ -917,6 +927,7 @@ function reducedMenuOn(){ return !!(state.reducedMenu && state.galleryMulti); }
 function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
 const CHROMA_ITEM = menuItem('chromaKey');
+const CHROMA_MAX_KEYS = 3;   // key colours ADD KEY COLOUR allows; must match the shader's keyCols[3]
 
 const SPEC = {}; // key -> item spec, for step bounds
 const ENUM_SPEC = {}; // key -> item spec, for enum options
@@ -1082,7 +1093,7 @@ function fmt(key, v){
   if (ENUM_SPEC[key]) return ENUM_SPEC[key].options[v];
   if (key === 'menuTimeout') return v <= 0 ? 'OFF' : `${Math.round(v)}S`;
   if (key === 'predictMs') return `${Math.round(v)}MS`;
-  if (key === 'chromaIntensity' || key === 'chromaSmooth') return `${Math.round(v)}%`;
+  if (key === 'chromaIntensity' || key === 'chromaSmooth' || key === 'chromaSpill') return `${Math.round(v)}%`;
   const dec = SPEC[key] && SPEC[key].dec ? SPEC[key].dec : 0;
   return dec ? v.toFixed(dec) : String(Math.round(v));
 }
@@ -1095,6 +1106,7 @@ function refreshMenu(){
   // Same reason as in buildOsdItems(): keep the full list's focus on the
   // row it was on when rows above it get shown or hidden below.
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
+  state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length < CHROMA_MAX_KEYS;
   menuPanes.querySelectorAll('[data-val]').forEach(el=>{
     const k = el.dataset.val;
     el.textContent = fmt(k, state[k]);
@@ -1371,7 +1383,11 @@ function initBlit(){
       flipY: { value: 0 },
       marks: { value: 0 },
       chromaOn: { value: 0 },
-      keyCol: { value: new THREE.Vector3() },
+      keyCols: { value: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] },
+      keyCount: { value: 0 },
+      spillDir: { value: new THREE.Vector2() },
+      chromaS: { value: 0 },
+      chromaMatte: { value: 0 },
       chromaT: { value: 0 },
       chromaF: { value: 0 },
       chromaR: { value: 0 },
@@ -1392,8 +1408,12 @@ function initBlit(){
       uniform float flipX;
       uniform float flipY;
       uniform float marks;        // MEASURE FOV: 0 = off, else the side line's distance from centre in u
-      uniform float chromaOn;     // chroma key: 1 = key keyCol out to black
-      uniform vec3 keyCol;        // picked colour, sRGB 0..1 as read back from the eye target
+      uniform float chromaOn;     // chroma key: 1 = key keyCols out to black
+      uniform vec3 keyCols[3];    // picked colours, sRGB 0..1 as read back from the eye target
+      uniform float keyCount;     // how many of keyCols are in use, 1..3
+      uniform vec2 spillDir;      // the keys' average tint direction in CbCr, unit length (0 = none)
+      uniform float chromaS;      // SPILL 0..1
+      uniform float chromaMatte;  // SHOW MATTE: 1 = draw the mask itself, white kept / black cut
       uniform float chromaT;      // INTENSITY 0..1
       uniform float chromaF;      // SMOOTHING 0..1
       uniform float chromaR;      // REFINE EDGE -1..1
@@ -1403,18 +1423,41 @@ function initBlit(){
         float y = dot(c, vec3(0.299, 0.587, 0.114));
         return vec3(y, (c.b - y) * 0.564, (c.r - y) * 0.713);
       }
-      // 0 = keyed out, 1 = kept. Distance to the key colour in YCbCr, weighted
-      // toward chroma; SMOOTHING widens the band around the INTENSITY
-      // threshold where pixels fade out. A pixel darker than the key is
-      // compared with the key dimmed to its brightness, so shadows on the
-      // backdrop -- and the picture's edge pixels, blended with the black
-      // around it -- key out too.
-      float keyMask(vec3 c){
-        vec3 a = toYCbCr(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)));
-        vec3 k = toYCbCr(keyCol);
+      vec3 fromYCbCr(vec3 a){
+        float r = a.x + a.z / 0.713;
+        float b = a.x + a.y / 0.564;
+        return vec3(r, (a.x - 0.299 * r - 0.114 * b) / 0.587, b);
+      }
+      // 0 = keyed out, 1 = kept, against one key colour. Distance in YCbCr,
+      // weighted toward chroma; SMOOTHING widens the band around the
+      // INTENSITY threshold where pixels fade out. A pixel darker than the
+      // key is compared with the key dimmed to its brightness, so shadows on
+      // the backdrop -- and the picture's edge pixels, blended with the
+      // black around it -- key out too.
+      float keyMaskFor(vec3 a, vec3 key){
+        vec3 k = toYCbCr(key);
         k *= clamp(a.x / max(k.x, 0.001), 0.0, 1.0);
         float d = clamp(length(a.yz - k.yz) * 2.5 + abs(a.x - k.x) * 0.35, 0.0, 1.0);
         return smoothstep(chromaT * (1.0 - chromaF), chromaT * (1.0 + chromaF) + 0.0001, d);
+      }
+      // Against every picked colour: close to any of them keys out.
+      float keyMask(vec3 c){
+        vec3 a = toYCbCr(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)));
+        float m = 1.0;
+        for (int i = 0; i < 3; i++){
+          if (float(i) >= keyCount) break;
+          m = min(m, keyMaskFor(a, keyCols[i]));
+        }
+        return m;
+      }
+      // SPILL: take the keys' tint out of a kept pixel -- the part of its
+      // chroma that points the key's way -- leaving its brightness alone.
+      vec3 despill(vec3 c){
+        vec3 a = toYCbCr(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)));
+        float amt = dot(a.yz, spillDir);
+        if (amt <= 0.0) return c;
+        a.yz -= spillDir * amt * chromaS;
+        return pow(max(fromYCbCr(a), vec3(0.0)), vec3(2.2));
       }
       // A neighbour for the edge softening below. Black -- the empty scene
       // around the picture -- counts as keyed out, or the picture's own
@@ -1453,6 +1496,7 @@ function initBlit(){
         }
         uv = c / vec2(aspect, 1.0) + 0.5;
         vec4 col = texture2D(map, uv);
+        bool matte = chromaOn > 0.5 && chromaMatte > 0.5;
         if (chromaOn > 0.5){
           float m = 0.0;
           if (chromaT < 1.0){
@@ -1477,9 +1521,13 @@ function initBlit(){
             if (chromaR > 0.0) m = clamp((m - 0.5 * chromaR) / (1.0 - 0.5 * chromaR), 0.0, 1.0);
             else if (chromaR < 0.0) m = clamp(m / (1.0 + 0.5 * chromaR), 0.0, 1.0);
           }
-          col.rgb *= m;
+          if (matte) col.rgb = vec3(m);
+          else {
+            if (chromaS > 0.0 && m > 0.0) col.rgb = despill(col.rgb);
+            col.rgb *= m;
+          }
         }
-        col.rgb *= brightness;
+        if (!matte) col.rgb *= brightness;
         // MEASURE FOV's two marks, drawn in the picture's own coordinates so
         // they sit at a known place in the cameras' view whatever the
         // trapezoid, zoom or flip: a cross on the centre and a line to one side.
@@ -4828,6 +4876,20 @@ function applyChromaUniforms(){
   u.chromaT.value = state.chromaIntensity / 100;
   u.chromaF.value = state.chromaSmooth / 100;
   u.chromaR.value = state.chromaRefine;
+  u.chromaS.value = state.chromaSpill / 100;
+  u.chromaMatte.value = state.chromaMatte ? 1 : 0;
+  u.keyCount.value = state.chromaKeys.length;
+  state.chromaKeys.forEach((rgb, i) => u.keyCols.value[i].set(...rgb));
+  // The keys' tint for SPILL: their CbCr directions (same maths as the
+  // shader's toYCbCr), averaged. A grey key has none.
+  let cb = 0, cr = 0;
+  for (const [r, g, b] of state.chromaKeys){
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    const kb = (b - y) * 0.564, kr = (r - y) * 0.713, len = Math.hypot(kb, kr);
+    if (len > 0.02){ cb += kb / len; cr += kr / len; }
+  }
+  const len = Math.hypot(cb, cr);
+  u.spillDir.value.set(len > 0 ? cb / len : 0, len > 0 ? cr / len : 0);
   u.texel.value.set(1 / rtL.width, 1 / rtL.height);
 }
 
@@ -4850,7 +4912,8 @@ function readChromaKeyColor(){
   return sum.map(c => c / (n * n * 255));
 }
 
-function startChromaPick(){
+// add: ADD KEY COLOUR -- keep the colours picked so far and add this one.
+function startChromaPick(add = false){
   if (chromaPickTimer) return;
   const fromList = uiState === 'list';
   if (fromList) closeList();
@@ -4869,9 +4932,9 @@ function startChromaPick(){
     document.body.dataset.chromaPick = '0';
     const rgb = readChromaKeyColor();
     if (rgb){
-      quadMat.uniforms.keyCol.value.set(...rgb);
+      state.chromaKeys = add ? [...state.chromaKeys, rgb] : [rgb];
       state.chromaOn = true;
-      toast('CHROMA KEY SET');
+      toast(add ? `KEY COLOUR ${state.chromaKeys.length} OF ${CHROMA_MAX_KEYS} ADDED` : 'CHROMA KEY SET');
     } else {
       toast('NO PICTURE UNDER THE CROSSHAIR');
     }
@@ -4895,6 +4958,8 @@ function startChromaPick(){
 
 function removeChromaKey(){
   state.chromaOn = false;
+  state.chromaKeys = [];
+  state.chromaMatte = false;
   refreshMenu();
   toast('CHROMA KEY REMOVED');
 }
@@ -4945,6 +5010,7 @@ function handleAct(act, el){
       break;
     case 'resetReduced': resetReducedSettings(); break;
     case 'chromaKey':    if (state.chromaOn) removeChromaKey(); else startChromaPick(); break;
+    case 'chromaAdd':    startChromaPick(true); break;
     case 'reducedMenu':  setReducedMenu(true);  break;
     case 'fullMenu':     setReducedMenu(false); break;
   }
