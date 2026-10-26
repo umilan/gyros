@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.33</title>
+<title>GYROS v2.34</title>
 <style>
   :root{
     --bg:#000000;
@@ -583,7 +583,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.33';
+const APP_VERSION = '2.34';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -619,6 +619,9 @@ const DEFAULTS = {
                             // inside the SMOOTHING band, like shifting a
                             // feathered selection -- positive cuts out more,
                             // negative less. No effect at SMOOTHING 0.
+  cutout: 0,              // CUT-OUT: 0 OFF | 1 KEEP PEOPLE | 2 REMOVE PEOPLE -- see updateCutout()
+  cutoutModel: 0,         // MODEL: 0 FAST | 1 ACCURATE (CUTOUT_MODEL_URLS)
+  cutoutEdge: 0,          // EDGE, -1..1: positive cuts out more, negative less
   chromaSpill: 50,        // SPILL (chroma key), 0..100: how much of the key
                             // colour's tint is taken out of what's kept, e.g.
                             // green light bounced onto hair and edges.
@@ -838,6 +841,10 @@ function switchView(newIdx){
   applyView();
 }
 
+// PEOPLE section options -- see updateCutout().
+const CUTOUT_MODES = ['OFF', 'KEEP PEOPLE', 'REMOVE PEOPLE'];
+const CUTOUT_MODEL_NAMES = ['FAST', 'ACCURATE'];
+
 const MENU = [
   { title:'GENERAL', items:[
     { type:'enum',  key:'view', label:'VIEW', options:VIEWS },
@@ -914,6 +921,12 @@ const MENU = [
     { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
     { type:'check', key:'chromaMatte',     label:'SHOW MATTE', when:'video', whenTrue:'chromaOn' }
   ]},
+  // People cut-out with an on-device model -- see updateCutout().
+  { title:'PEOPLE', when:'video', items:[
+    { type:'enum', key:'cutout',      label:'CUT-OUT', options:CUTOUT_MODES, when:'video' },
+    { type:'enum', key:'cutoutModel', label:'MODEL',   options:CUTOUT_MODEL_NAMES, when:'video', whenTrue:'cutoutOn' },
+    { type:'step', key:'cutoutEdge',  label:'EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'cutoutOn' }
+  ]},
   { title:'ACTIONS', items:[
     { type:'action', act:'reset',     label:'RESET TO DEFAULTS', textbtn:true },
     { type:'action', act:'closeMenu', label:'CLOSE',             textbtn:true }
@@ -935,6 +948,7 @@ const REDUCED_MENU = [
   ]},
   // The full menu's own CHROMA KEY section, rows and heading gating alike.
   MENU.find(s => s.title === 'CHROMA KEY'),
+  MENU.find(s => s.title === 'PEOPLE'),
   { title:'ACTIONS', items:[
     menuItem('recenter'),
     { type:'action', act:'resetReduced', label:'RESET ALL',         textbtn:true },
@@ -944,7 +958,7 @@ const REDUCED_MENU = [
 // The settings RESET ALL puts back -- just the reduced menu's own. The
 // picked key colours stay; REMOVE CHROMA KEY is how those go.
 const REDUCED_KEYS = ['posY', 'contentZoom', 'scaleY', 'playSpeed',
-  'chromaIntensity', 'chromaSmooth', 'chromaRefine', 'chromaSpill'];
+  'chromaIntensity', 'chromaSmooth', 'chromaRefine', 'chromaSpill', 'cutoutEdge'];
 function reducedMenuOn(){ return !!(state.reducedMenu && state.mediaLoaded); }
 function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
@@ -1132,6 +1146,7 @@ function refreshMenu(){
   // row it was on when rows above it get shown or hidden below.
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
   state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length < CHROMA_MAX_KEYS;
+  state.cutoutOn = state.cutout > 0;
   menuPanes.querySelectorAll('[data-val]').forEach(el=>{
     const k = el.dataset.val;
     el.textContent = fmt(k, state[k]);
@@ -2617,6 +2632,7 @@ function animate(){
   updateNavArrow();   // reads rig.quaternion, so it runs after the gyro step
   pollGamepads();
   midiFlush();
+  updateCutout();
   checkBotMenuIdle();
 
   const { w, h, ew, eh } = eyeSize();
@@ -5057,6 +5073,189 @@ function resetToDefaults(){
   applyPlaySpeed();
   refreshMenu();
   toast('DEFAULTS RESTORED');
+}
+
+/* ---- People cut-out: an on-device person segmentation model (MediaPipe
+   Image Segmenter, loaded from the CDN the first time CUT-OUT is turned
+   on) finds the people in the photo/video; KEEP PEOPLE blacks out
+   everything else, REMOVE PEOPLE blacks out the people. Each new frame is
+   drawn into a small canvas, segmented there, and the result becomes an
+   alpha map on the eye meshes -- over the black scene, transparent reads as
+   black, same as chroma key, and the two can be combined. On video the
+   meshes show the very frame that was segmented (cutout.frame) rather than
+   the live one, so the mask always lines up even when the model is slower
+   than the video; the picture then trails real time by that much. ---- */
+const CUTOUT_MODEL_URLS = [
+  // ~250 KB, one "person" mask; best for people near the camera.
+  'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
+  // ~16 MB, hair / skin / clothes classes; better edges and full bodies.
+  'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite'
+];
+const MEDIAPIPE_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35';
+const CUTOUT_SIZE = 256;          // long side of the frame the model sees
+const CUTOUT_FRAME_MS = 33;       // segment a playing video at most ~30x a second
+const CUTOUT_FRAME_MAX = 1920;    // long side of the copied video frame that's shown
+
+const cutout = {
+  segmenter: null, model: -1, loading: -1,   // loaded / loading model index
+  canvas: document.createElement('canvas'),
+  person: null,                   // Float32Array, 0..1 person confidence per pixel
+  data: null, texL: null, texR: null,
+  frame: document.createElement('canvas'), frameTexL: null, frameTexR: null,
+  source: null, sourceTime: -1, lastRun: 0, paramsKey: ''
+};
+
+async function cutoutLoad(modelIdx){
+  cutout.loading = modelIdx;
+  toast('LOADING PEOPLE MODEL…', 4000);
+  try{
+    const vision = await import(`${MEDIAPIPE_BASE}/vision_bundle.mjs`);
+    const fileset = await vision.FilesetResolver.forVisionTasks(`${MEDIAPIPE_BASE}/wasm`);
+    const make = delegate => vision.ImageSegmenter.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: CUTOUT_MODEL_URLS[modelIdx], delegate },
+      runningMode: 'VIDEO', outputCategoryMask: false, outputConfidenceMasks: true
+    });
+    let seg;
+    try{ seg = await make('GPU'); }catch(e){ seg = await make('CPU'); }
+    if (cutout.loading !== modelIdx){ seg.close(); return; }   // switched model meanwhile
+    if (cutout.segmenter) cutout.segmenter.close();
+    cutout.segmenter = seg;
+    cutout.model = modelIdx;
+    cutout.sourceTime = -1;   // segment the current frame afresh
+    toast('PEOPLE MODEL READY');
+  }catch(e){
+    console.error('[GYROS] people model failed:', e);
+    toast('COULD NOT LOAD PEOPLE MODEL', 2500);
+    state.cutout = 0;
+    refreshMenu();
+  }finally{
+    if (cutout.loading === modelIdx) cutout.loading = -1;
+  }
+}
+
+// Runs every frame from animate().
+function updateCutout(){
+  const on = state.cutout > 0 && state.content === 'video';
+  if (!on){ cutoutApplyMaterials(false); return; }
+  if (cutout.model !== state.cutoutModel){
+    if (cutout.loading !== state.cutoutModel) cutoutLoad(state.cutoutModel);
+    cutoutApplyMaterials(false);
+    return;
+  }
+  const map = videoMeshL.material.map;
+  const src = usingImage ? map && map.image : video;
+  if (!src || (!usingImage && video.readyState < 2)) return;
+  const time = usingImage ? 0 : video.currentTime;
+  const now = performance.now();
+  const fresh = src !== cutout.source || time !== cutout.sourceTime;
+  if (fresh && (usingImage || now - cutout.lastRun >= CUTOUT_FRAME_MS)){
+    cutout.source = src; cutout.sourceTime = time; cutout.lastRun = now;
+    cutoutSegment(src);
+  }
+  const key = `${state.cutout}|${state.cutoutEdge}`;
+  if (cutout.person && key !== cutout.paramsKey){ cutout.paramsKey = key; cutoutBuildAlpha(); }
+  cutoutApplyMaterials(!!cutout.texL);
+}
+
+function cutoutSegment(src){   // src is reassigned to the frame copy for video
+  const sw = src.videoWidth || src.naturalWidth || src.width, sh = src.videoHeight || src.naturalHeight || src.height;
+  if (!sw || !sh) return;
+  const scale = CUTOUT_SIZE / Math.max(sw, sh);
+  const w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
+  // A video frame is copied first, and that copy is both what's segmented
+  // and what's shown (cutoutApplyMaterials()).
+  if (!usingImage){
+    const fs = Math.min(1, CUTOUT_FRAME_MAX / Math.max(sw, sh));
+    const f = cutout.frame, fw = Math.round(sw * fs), fh = Math.round(sh * fs);
+    if (f.width !== fw || f.height !== fh){ f.width = fw; f.height = fh; }
+    f.getContext('2d').drawImage(src, 0, 0, fw, fh);
+    if (!cutout.frameTexL){
+      cutout.frameTexL = new THREE.CanvasTexture(f);
+      cutout.frameTexL.colorSpace = THREE.SRGBColorSpace;
+      cutout.frameTexL.minFilter = cutout.frameTexL.magFilter = THREE.LinearFilter;
+      cutout.frameTexR = cutout.frameTexL.clone();
+    }
+    cutout.frameTexL.needsUpdate = true;
+    cutout.frameTexR.needsUpdate = true;
+    src = f;
+  }
+  const c = cutout.canvas;
+  if (c.width !== w || c.height !== h){ c.width = w; c.height = h; }
+  c.getContext('2d').drawImage(src, 0, 0, w, h);
+  let res;
+  try{ res = cutout.segmenter.segmentForVideo(c, performance.now()); }
+  catch(e){ console.error('[GYROS] segmentation failed:', e); return; }
+  const masks = res.confidenceMasks || [];
+  if (masks.length){
+    const m0 = masks[0].getAsFloat32Array();
+    // The FAST model's one mask is the person; ACCURATE's first is the background.
+    const person = cutout.person && cutout.person.length === m0.length ? cutout.person : new Float32Array(m0.length);
+    if (masks.length === 1) person.set(m0);
+    else for (let i = 0; i < m0.length; i++) person[i] = 1 - m0[i];
+    cutout.person = person;
+    cutout.maskW = masks[0].width; cutout.maskH = masks[0].height;
+    cutoutBuildAlpha();
+  }
+  if (res.close) res.close(); else masks.forEach(m => m.close());
+}
+
+// Person confidence -> alpha. EDGE moves the cut: positive cuts out more,
+// negative less, like REFINE EDGE. (No blending with the previous frame:
+// on video that smears the mask behind anyone moving.)
+function cutoutBuildAlpha(){
+  const { person, maskW: w, maskH: h } = cutout;
+  const n = w * h;
+  if (!cutout.data || cutout.data.length !== n * 4){
+    cutout.data = new Uint8Array(n * 4);
+    for (const t of [cutout.texL, cutout.texR]) if (t) t.dispose();
+    cutout.texL = new THREE.DataTexture(cutout.data, w, h, THREE.RGBAFormat);
+    cutout.texL.minFilter = cutout.texL.magFilter = THREE.LinearFilter;
+    cutout.texR = cutout.texL.clone();   // same pixels, its own crop (SBS right half)
+  }
+  const keep = state.cutout === 1;
+  const centre = 0.5 + (keep ? 0.35 : -0.35) * state.cutoutEdge;
+  const lo = centre - 0.15, hi = centre + 0.15;
+  const { data } = cutout;
+  for (let y = 0; y < h; y++){
+    // Canvas rows run top-down; texture rows bottom-up.
+    const src = y * w, dst = (h - 1 - y) * w;
+    for (let x = 0; x < w; x++){
+      const p = person[src + x];
+      let t = Math.min(1, Math.max(0, (p - lo) / (hi - lo)));
+      t = t * t * (3 - 2 * t);
+      const a = keep ? t : 1 - t;
+      const o = (dst + x) * 4, v = Math.round(a * 255);
+      data[o] = data[o + 1] = data[o + 2] = data[o + 3] = v;
+    }
+  }
+  cutout.texL.needsUpdate = true;
+  cutout.texR.needsUpdate = true;
+}
+
+// Puts the alpha map on (or takes it off) whichever materials the eye
+// meshes have right now -- an image swaps in fresh ones each time -- and on
+// video swaps the live frame for the segmented copy. Whichever texture is
+// shown is the one applyVideoLayout() crops, so the other is kept in step.
+function cutoutApplyMaterials(on){
+  [[videoMeshL, cutout.texL, cutout.frameTexL, videoTexture, videoMatL],
+   [videoMeshR, cutout.texR, cutout.frameTexR, videoTextureR, videoMatR]].forEach(([mesh, tex, frameTex, liveTex, videoMat])=>{
+    const mat = mesh.material;
+    const useFrame = on && !!frameTex && mat === videoMat;
+    if (useFrame && mat.map !== frameTex){
+      frameTex.repeat.copy(liveTex.repeat); frameTex.offset.copy(liveTex.offset);
+      mat.map = frameTex;
+    } else if (!useFrame && frameTex && mat.map === frameTex){
+      mat.map = liveTex;
+    }
+    if (frameTex && mat.map === frameTex){ liveTex.repeat.copy(frameTex.repeat); liveTex.offset.copy(frameTex.offset); }
+    const want = on ? tex : null;
+    if (mat.alphaMap !== want){
+      mat.alphaMap = want;
+      mat.transparent = !!want;
+      mat.needsUpdate = true;
+    }
+    if (want && mat.map){ want.repeat.copy(mat.map.repeat); want.offset.copy(mat.map.offset); }
+  });
 }
 
 /* ---- Chroma key: SET CHROMA KEY shows a crosshair on the centre of the
