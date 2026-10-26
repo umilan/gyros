@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.32</title>
+<title>GYROS v2.33</title>
 <style>
   :root{
     --bg:#000000;
@@ -583,7 +583,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.32';
+const APP_VERSION = '2.33';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -2616,6 +2616,7 @@ function animate(){
 
   updateNavArrow();   // reads rig.quaternion, so it runs after the gyro step
   pollGamepads();
+  midiFlush();
   checkBotMenuIdle();
 
   const { w, h, ew, eh } = eyeSize();
@@ -3776,7 +3777,7 @@ function renderOsd(){
     const got = keyMapListening.keys;
     const now = keyMap[keyMapListening.id];
     section = 'MAP KEYS · ' + item.label;
-    val = got.length ? 'PRESS − KEY' : 'PRESS + KEY';
+    val = got.length ? 'PRESS − KEY' : (navigator.requestMIDIAccess ? 'PRESS + KEY / KNOB' : 'PRESS + KEY');
     label = got.length ? `+ ${keyMapName(got[0])} · TAP TO FINISH`
           : now ? `NOW ${keyMapSummary(now)} · ESC CLEARS`
           : 'TAP AGAIN TO EXIT';
@@ -4135,10 +4136,16 @@ topbar.addEventListener('click', e=>{
    Keys are stored as KeyboardEvent.code (falling back to .key), the same
    layout-independent identity Learn BT Keys records, under their own
    localStorage entry so RESET TO DEFAULTS doesn't unbind a remote.
+
+   A MIDI controller maps the same way (see "MIDI" below): a pad, key or
+   button (a note, or a CC that only sends 0/127) is a key like any other,
+   stored as e.g. 'MIDI:NOTE:1:36'. A knob or fader (a CC sending values in
+   between) instead takes over the setting's whole range on its own --
+   { abs:'MIDI:CC:1:7' }, mapped in one move, no "-" needed.
    ========================================================================= */
 const KEYMAP_STORE = 'gyrosKeyMap';
-let keyMap = {};               // osdItemId -> { inc:'KeyA' | null, dec:'KeyB' | null }
-let keyMapListening = null;    // { id, keys:[] } while mapping mode is on
+let keyMap = {};               // osdItemId -> { inc:'KeyA' | null, dec:'KeyB' | null } or { abs:'MIDI:CC:1:7' }
+let keyMapListening = null;    // { id, keys:[], abs } while mapping mode is on
 try{
   const savedKeyMap = JSON.parse(localStorage.getItem(KEYMAP_STORE) || '{}');
   if (savedKeyMap && typeof savedKeyMap === 'object') keyMap = savedKeyMap;
@@ -4148,31 +4155,37 @@ function saveKeyMap(){
 }
 function keyMapCode(e){ return e.code || e.key; }
 function keyMapName(code){
+  const midi = /^MIDI:(NOTE|CC):(\d+):(\d+)$/.exec(code);
+  if (midi) return `${midi[1]} ${midi[3]}` + (midi[2] !== '1' ? ` CH${midi[2]}` : '');
   return String(code).replace(/^(Key|Digit)/, '').replace(/^Arrow/, '').toUpperCase();
 }
 function keyMapSummary(m){
+  if (m.abs) return 'KNOB ' + keyMapName(m.abs);
   return [m.inc ? '+ ' + keyMapName(m.inc) : '', m.dec ? '− ' + keyMapName(m.dec) : ''].filter(Boolean).join(' ');
 }
 function keyMapStart(){
   const item = osdItems[osdFocusIdx];
   if (!item || uiState !== 'osd') return;
-  keyMapListening = { id: osdItemId(item), keys: [] };
+  keyMapListening = { id: osdItemId(item), keys: [], abs: null };
+  midiEnable();   // asks for MIDI access the first time it's needed
   renderOsd();
 }
 // Ends mapping mode, keeping whatever was captured (nothing = no change).
 function keyMapStop(){
   if (!keyMapListening) return;
-  const { id, keys } = keyMapListening;
+  const { id, keys, abs } = keyMapListening;
   keyMapListening = null;
-  if (keys.length){
+  const taken = abs ? [abs] : keys;
+  if (taken.length){
     // A key drives one setting only: take it away from any other.
     for (const other of Object.keys(keyMap)){
       const m = keyMap[other];
-      if (keys.includes(m.dec)) m.dec = null;
-      if (keys.includes(m.inc)) m.inc = null;   // its "-" key, if any, stays a "-" key
-      if (!m.inc && !m.dec) delete keyMap[other];
+      if (taken.includes(m.dec)) m.dec = null;
+      if (taken.includes(m.inc)) m.inc = null;   // its "-" key, if any, stays a "-" key
+      if (taken.includes(m.abs)) m.abs = null;
+      if (!m.inc && !m.dec && !m.abs) delete keyMap[other];
     }
-    keyMap[id] = { inc: keys[0], dec: keys[1] || null };
+    keyMap[id] = abs ? { abs } : { inc: keys[0], dec: keys[1] || null };
     saveKeyMap();
     toast('MAPPED ' + keyMapSummary(keyMap[id]));
   }
@@ -4189,7 +4202,9 @@ function keyMapCapture(e){
     renderOsd();
     return;
   }
-  const code = keyMapCode(e);
+  keyMapCaptureCode(keyMapCode(e));
+}
+function keyMapCaptureCode(code){
   if (keyMapListening.keys.includes(code)) return;   // "-" has to be a different key
   keyMapListening.keys.push(code);
   if (keyMapListening.keys.length === 2) keyMapStop();
@@ -4204,14 +4219,12 @@ function keyMapApply(e){
     if (keyMap[id].dec === code){ found = id; dir = -1; break; }
   }
   if (!found) return false;
-  let item = null;
-  [...MENU, ...REDUCED_MENU].forEach(section => section.items.forEach(i => { if (!item && osdItemId(i) === found) item = i; }));
+  const item = keyMapItem(found);
   if (!item) return false;
   e.preventDefault();
   // Not applicable right now (e.g. a video-only row with no video loaded):
   // the key is still spoken for, it just does nothing.
-  if (item.when && !item.when.split(',').includes(state.content)) return true;
-  if (item.whenTrue && !state[item.whenTrue]) return true;
+  if (!keyMapItemLive(item)) return true;
   if (e.repeat && item.type !== 'step') return true;   // only steps auto-repeat on a held key
   switch (item.type){
     case 'step':
@@ -4235,6 +4248,100 @@ function keyMapApply(e){
   toast(item.label + ' ' + fmt(item.key, state[item.key]));
   return true;
 }
+
+function keyMapItem(id){
+  let item = null;
+  [...MENU, ...REDUCED_MENU].forEach(section => section.items.forEach(i => { if (!item && osdItemId(i) === id) item = i; }));
+  return item;
+}
+function keyMapItemLive(item){
+  return !(item.when && !item.when.split(',').includes(state.content)) && !(item.whenTrue && !state[item.whenTrue]);
+}
+
+/* =========================================================================
+   MIDI -- a USB/Bluetooth MIDI controller as another source for the key
+   mapping above. Web MIDI exists in Chrome/Edge (desktop and Android) but
+   not in Safari, so on an iPhone or iPad there's simply no MIDI. Access is
+   asked for the first time mapping mode opens, or at startup when a MIDI
+   mapping is already saved; new devices are picked up as they connect.
+   ========================================================================= */
+let midiAccess = null;
+const midiCcLast = {};            // 'MIDI:CC:ch:num' -> last value, to spot a button press
+const midiAbsPending = new Map(); // knob/fader moves, applied once per frame (midiFlush())
+
+function midiEnable(){
+  if (midiAccess || !navigator.requestMIDIAccess) return;
+  midiAccess = 'pending';
+  navigator.requestMIDIAccess().then(access=>{
+    midiAccess = access;
+    const hook = ()=> access.inputs.forEach(input => { input.onmidimessage = midiMessage; });
+    hook();
+    access.onstatechange = hook;
+  }).catch(()=>{ midiAccess = null; toast('MIDI NOT ALLOWED'); });
+}
+
+function midiMessage(ev){
+  const [status, d1, d2] = ev.data;
+  const kind = status & 0xF0, ch = (status & 0x0F) + 1;
+  let code, press = false, value = null;
+  if (kind === 0x90 && d2 > 0){ code = `MIDI:NOTE:${ch}:${d1}`; press = true; }
+  else if (kind === 0xB0){
+    code = `MIDI:CC:${ch}:${d1}`;
+    const last = midiCcLast[code];
+    midiCcLast[code] = d2;
+    press = d2 >= 64 && !(last >= 64);   // a button CC: rising through the middle
+    value = d2;
+  }
+  else return;   // note-offs, clock, aftertouch...
+  lastActivityAt = performance.now();
+  if (keyMapListening){
+    if (!(uiState === 'osd' && document.body.dataset.chrome === '1')){ keyMapStop(); return; }
+    // A CC that sends something other than 0/127 is a knob or fader: it
+    // takes the setting's whole range, so mapping ends right here.
+    if (value !== null && value !== 0 && value !== 127 && !keyMapListening.keys.length){
+      keyMapListening.abs = code;
+      keyMapStop();
+      return;
+    }
+    if (press) keyMapCaptureCode(code);
+    return;
+  }
+  for (const id of Object.keys(keyMap)){
+    if (keyMap[id].abs === code){ midiAbsPending.set(id, value); return; }
+  }
+  if (press) keyMapApply({ code, key: code, repeat: false, preventDefault(){} });
+}
+
+// A knob/fader position, 0..127, across the setting it's mapped to.
+function midiFlush(){
+  if (!midiAbsPending.size) return;
+  const moves = [...midiAbsPending];
+  midiAbsPending.clear();
+  for (const [id, v] of moves){
+    const item = keyMapItem(id);
+    if (!item || !keyMapItemLive(item)) continue;
+    const t = v / 127;
+    switch (item.type){
+      case 'step':
+        setStepValue(item.key, item.min + t * (item.max - item.min));
+        break;
+      case 'enum': {
+        const n = item.options.length, cur = state[item.key];
+        const idx = Math.round(t * (n - 1));
+        if (idx !== cur) stepEnumValue(item, idx - cur);
+        break;
+      }
+      case 'check':
+        if (state[item.key] !== (v >= 64)){ state[item.key] = v >= 64; applyAll(); refreshMenu(); saveState(); }
+        break;
+      case 'action':
+        continue;   // a knob doesn't fire actions
+    }
+    renderOsd();
+    toast(item.label + ' ' + fmt(item.key, state[item.key]));
+  }
+}
+if (Object.values(keyMap).some(m => [m.inc, m.dec, m.abs].some(c => String(c).startsWith('MIDI:')))) midiEnable();
 
 /* Tap the OSD centre text: toggles key-mapping mode for the setting shown
    (see "Key mapping" above). Any other strip button ends the mode first and
@@ -4919,10 +5026,14 @@ urlInput.addEventListener('keydown', e=>{ if (e.key === 'Enter') submitUrl(); })
 
 /* menu interactions (delegated so both SBS panes work with one handler) */
 function stepValue(key, dir){
+  setStepValue(key, state[key] + dir * SPEC[key].step);
+}
+// Also how a MIDI knob/fader sets a step setting directly (midiApply()).
+function setStepValue(key, v){
   const spec = SPEC[key];
   // Fractional steps land on the step's own grid (PLAY SPEED 0.5: 1.0, 1.5,
   // ...), so a value saved off it before (1.3) snaps back on.
-  const next = THREE.MathUtils.clamp(state[key] + dir * spec.step, spec.min, spec.max);
+  const next = THREE.MathUtils.clamp(v, spec.min, spec.max);
   state[key] = spec.dec ? Math.round(Math.round(next / spec.step) * spec.step * 10) / 10 : Math.round(next);
   if (key === 'mountTilt' || key === 'mountRoll') state.mountAuto = false;   // a hand-set angle sticks
   if (key === 'playSpeed') applyPlaySpeed();
