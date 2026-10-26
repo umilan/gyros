@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.21</title>
+<title>GYROS v2.22</title>
 <style>
   :root{
     --bg:#000000;
@@ -414,6 +414,25 @@
      display:flex above on specificity, so no !important needed. */
   body:has(.overlay:not([hidden])) .navArrow{display:none;}
 
+  /* SET CHROMA KEY's aiming crosshair -- one per eye, on the exact centre of
+     the picture (where startChromaPick() samples), with the countdown under
+     it. Not shifted by SBS EYE DIST: that moves the UI chrome, not the
+     picture. */
+  .chromaPick{
+    position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+    z-index:45;pointer-events:none;
+    display:none;flex-direction:column;align-items:center;
+    color:var(--accent);
+  }
+  .chromaPick svg{width:64px;height:64px;display:block;}
+  .chromaPickCount{
+    position:absolute;top:100%;margin-top:6px;
+    font-size:10px;letter-spacing:0.18em;white-space:nowrap;
+  }
+  body[data-chroma-pick="1"] .chromaPickL{display:flex;}
+  body[data-chroma-pick="1"][data-sbs="1"] .chromaPickL{left:25%;}
+  body[data-chroma-pick="1"][data-sbs="1"] .chromaPickR{display:flex;left:75%;}
+
   /* diagnostic overlay, opt-in via ?debug=1 -- see kbDebugLog() below.
      pointer-events:none so it can never intercept a tap/click even while
      shown. */
@@ -501,6 +520,14 @@
 
 <div class="toast toastL"></div>
 <div class="toast toastR"></div>
+<div class="chromaPick chromaPickL" aria-hidden="true">
+  <svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="32" cy="32" r="14"/><path d="M32 2v20M32 42v20M2 32h20M42 32h20"/></g></svg>
+  <div class="chromaPickCount"></div>
+</div>
+<div class="chromaPick chromaPickR" aria-hidden="true">
+  <svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="32" cy="32" r="14"/><path d="M32 2v20M32 42v20M2 32h20M42 32h20"/></g></svg>
+  <div class="chromaPickCount"></div>
+</div>
 
 <!-- Content navigator: the arrow points back toward the loaded content
      whenever head tracking has turned the view away from it. The glyph is
@@ -542,7 +569,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.21';
+const APP_VERSION = '2.22';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -568,6 +595,11 @@ const DEFAULTS = {
   playSpeed: 1,           // PLAY SPEED (video only), -5..5: 1 = normal, 0 = held
                             // on the current frame, negative = backward. See
                             // runTransport().
+  chromaIntensity: 40,    // INTENSITY (chroma key), 0..100: how far from the
+                            // picked colour still gets keyed to black. 0 = no
+                            // keying, 100 = the whole picture black. See keyMask().
+  chromaSmooth: 20,       // SMOOTHING (chroma key), 0..100: how soft the
+                            // keyed edges are. See keyMask().
   contentAngle: 0,        // ANGLE (photo/video only): straightens content shot at a
                             // tilt, -180..180 from zero. Positive = clockwise,
                             // negative = counter-clockwise, as the viewer sees it.
@@ -813,7 +845,12 @@ const MENU = [
     { type:'action', act:'reducedMenu', label:'SHOW REDUCED MENU', textbtn:true, whenTrue:'galleryMulti' },
     { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
     { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.1, dec:1, when:'video' },
-    { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
+    { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' },
+    // Chroma key -- see startChromaPick(). The action's label flips to
+    // REMOVE CHROMA KEY once a colour is picked (refreshMenu()).
+    { type:'action', act:'chromaKey', label:'SET CHROMA KEY', textbtn:true, when:'video' },
+    { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
+    { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' }
   ]},
   { title:'POSITIONING', items:[
     { type:'step', key:'posX',    label:'POS X',        min:-200, max:200, step:1 },
@@ -872,6 +909,8 @@ const REDUCED_MENU = [
 const REDUCED_KEYS = ['posY', 'contentZoom', 'scaleY', 'playSpeed'];
 function reducedMenuOn(){ return !!(state.reducedMenu && state.galleryMulti); }
 function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
+
+const CHROMA_ITEM = menuItem('chromaKey');
 
 const SPEC = {}; // key -> item spec, for step bounds
 const ENUM_SPEC = {}; // key -> item spec, for enum options
@@ -1037,6 +1076,7 @@ function fmt(key, v){
   if (ENUM_SPEC[key]) return ENUM_SPEC[key].options[v];
   if (key === 'menuTimeout') return v <= 0 ? 'OFF' : `${Math.round(v)}S`;
   if (key === 'predictMs') return `${Math.round(v)}MS`;
+  if (key === 'chromaIntensity' || key === 'chromaSmooth') return `${Math.round(v)}%`;
   const dec = SPEC[key] && SPEC[key].dec ? SPEC[key].dec : 0;
   return dec ? v.toFixed(dec) : String(Math.round(v));
 }
@@ -1053,14 +1093,15 @@ function refreshMenu(){
     const k = el.dataset.val;
     el.textContent = fmt(k, state[k]);
   });
-  menuPanes.querySelectorAll('[data-when]').forEach(el=>{
-    el.hidden = !el.dataset.when.split(',').includes(state.content);
+  // Rows gated on content type (data-when) and/or a boolean setting
+  // (data-when-true, e.g. the mount rows, shown only where the mount is
+  // tracked -- see syncMountRows()). A row can carry both.
+  menuPanes.querySelectorAll('[data-when],[data-when-true]').forEach(el=>{
+    const { when, whenTrue } = el.dataset;
+    el.hidden = (!!when && !when.split(',').includes(state.content)) || (!!whenTrue && !state[whenTrue]);
   });
-  // Rows gated on a boolean setting rather than content type (e.g. the
-  // mount rows, shown only where the mount is tracked -- see syncMountRows()).
-  menuPanes.querySelectorAll('[data-when-true]').forEach(el=>{
-    el.hidden = !state[el.dataset.whenTrue];
-  });
+  CHROMA_ITEM.label = state.chromaOn ? 'REMOVE CHROMA KEY' : 'SET CHROMA KEY';
+  menuPanes.querySelectorAll('[data-act="chromaKey"]').forEach(el => el.textContent = CHROMA_ITEM.label);
   if (focusedRow){
     const idx = navItems().indexOf(focusedRow);
     if (idx >= 0 && idx !== menuFocusIdx) setMenuFocus(idx, false);
@@ -1322,7 +1363,12 @@ function initBlit(){
       quadXform: { value: new THREE.Matrix3() },
       flipX: { value: 0 },
       flipY: { value: 0 },
-      marks: { value: 0 }
+      marks: { value: 0 },
+      chromaOn: { value: 0 },
+      keyCol: { value: new THREE.Vector3() },
+      chromaT: { value: 0 },
+      chromaF: { value: 0 },
+      texel: { value: new THREE.Vector2() }
     },
     vertexShader: `
       varying vec2 vPos;
@@ -1339,7 +1385,36 @@ function initBlit(){
       uniform float flipX;
       uniform float flipY;
       uniform float marks;        // MEASURE FOV: 0 = off, else the side line's distance from centre in u
+      uniform float chromaOn;     // chroma key: 1 = key keyCol out to black
+      uniform vec3 keyCol;        // picked colour, sRGB 0..1 as read back from the eye target
+      uniform float chromaT;      // INTENSITY 0..1
+      uniform float chromaF;      // SMOOTHING 0..1
+      uniform vec2 texel;         // one eye-target pixel in uv
       varying vec2 vPos;
+      vec3 toYCbCr(vec3 c){
+        float y = dot(c, vec3(0.299, 0.587, 0.114));
+        return vec3(y, (c.b - y) * 0.564, (c.r - y) * 0.713);
+      }
+      // 0 = keyed out, 1 = kept. Distance to the key colour in YCbCr, weighted
+      // toward chroma; SMOOTHING widens the band around the INTENSITY
+      // threshold where pixels fade out. A pixel darker than the key is
+      // compared with the key dimmed to its brightness, so shadows on the
+      // backdrop -- and the picture's edge pixels, blended with the black
+      // around it -- key out too.
+      float keyMask(vec3 c){
+        vec3 a = toYCbCr(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)));
+        vec3 k = toYCbCr(keyCol);
+        k *= clamp(a.x / max(k.x, 0.001), 0.0, 1.0);
+        float d = clamp(length(a.yz - k.yz) * 2.5 + abs(a.x - k.x) * 0.35, 0.0, 1.0);
+        return smoothstep(chromaT * (1.0 - chromaF), chromaT * (1.0 + chromaF) + 0.0001, d);
+      }
+      // A neighbour for the edge softening below. Black -- the empty scene
+      // around the picture -- counts as keyed out, or the picture's own
+      // outer edge would get a fringe of the key colour.
+      float keyMaskAt(vec2 p){
+        vec3 c = texture2D(map, p).rgb;
+        return max(c.r, max(c.g, c.b)) < 0.004 ? 0.0 : keyMask(c);
+      }
       void main(){
         vec3 pqr = quadXform * vec3(vPos, 1.0);
         vec2 uv = pqr.xy / pqr.z;
@@ -1370,6 +1445,23 @@ function initBlit(){
         }
         uv = c / vec2(aspect, 1.0) + 0.5;
         vec4 col = texture2D(map, uv);
+        if (chromaOn > 0.5){
+          float m = 0.0;
+          if (chromaT < 1.0){
+            m = keyMask(col.rgb);
+            // SMOOTHING also softens the edge spatially: average the mask
+            // with four diagonal neighbours, further out the higher it is.
+            if (chromaF > 0.0){
+              vec2 o = texel * (1.0 + 4.0 * chromaF);
+              m = (2.0 * m
+                + keyMaskAt(uv + o)
+                + keyMaskAt(uv - o)
+                + keyMaskAt(uv + vec2(o.x, -o.y))
+                + keyMaskAt(uv + vec2(-o.x, o.y))) / 6.0;
+            }
+          }
+          col.rgb *= m;
+        }
         col.rgb *= brightness;
         // MEASURE FOV's two marks, drawn in the picture's own coordinates so
         // they sit at a known place in the cameras' view whatever the
@@ -2410,6 +2502,7 @@ function animate(){
   renderer.clear();
   renderer.setScissorTest(true);
 
+  applyChromaUniforms();
   quadMat.uniforms.map.value = rtL.texture;
   renderer.setViewport(0, 0, ew, eh);
   renderer.setScissor(0, 0, ew, eh);
@@ -4589,6 +4682,90 @@ function resetToDefaults(){
   toast('DEFAULTS RESTORED');
 }
 
+/* ---- Chroma key: SET CHROMA KEY shows a crosshair on the centre of the
+   picture for 2s (aim it with your head), then reads that spot back from
+   the left eye's render target -- so it's the colour as actually rendered,
+   before BRIGHTNESS -- and keys everything near it to black in the blit
+   shader (keyMask()). ---- */
+const CHROMA_PICK_MS = 2000;
+let chromaPickTimer = null;
+
+function applyChromaUniforms(){
+  const u = quadMat.uniforms;
+  u.chromaOn.value = state.chromaOn && state.content === 'video' && state.chromaIntensity > 0 ? 1 : 0;
+  u.chromaT.value = state.chromaIntensity / 100;
+  u.chromaF.value = state.chromaSmooth / 100;
+  u.texel.value.set(1 / rtL.width, 1 / rtL.height);
+}
+
+// Average colour (sRGB 0..1) of a 5x5 patch of the left eye target under the
+// eye's centre, or null if the picture doesn't cover the centre.
+function readChromaKeyColor(){
+  // The centre of the eye (NDC 0,0) through the same mapping as the shader.
+  const p = new THREE.Vector3(0, 0, 1).applyMatrix3(quadMat.uniforms.quadXform.value);
+  let u = p.x / p.z, v = p.y / p.z;
+  if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) return null;
+  if (state.flipX) u = 1 - u;
+  if (!state.flipY) v = 1 - v;
+  const n = 5;
+  const x = THREE.MathUtils.clamp(Math.round(u * (rtL.width - 1)) - 2, 0, rtL.width - n);
+  const y = THREE.MathUtils.clamp(Math.round(v * (rtL.height - 1)) - 2, 0, rtL.height - n);
+  const buf = new Uint8Array(n * n * 4);
+  renderer.readRenderTargetPixels(rtL, x, y, n, n, buf);
+  const sum = [0, 0, 0];
+  for (let i = 0; i < buf.length; i += 4){ sum[0] += buf[i]; sum[1] += buf[i + 1]; sum[2] += buf[i + 2]; }
+  return sum.map(c => c / (n * n * 255));
+}
+
+function startChromaPick(){
+  if (chromaPickTimer) return;
+  const fromList = uiState === 'list';
+  if (fromList) closeList();
+  document.body.dataset.chrome = '0';
+  document.body.dataset.chromaPick = '1';
+  const counts = document.querySelectorAll('.chromaPickCount');
+  const started = performance.now();
+  const tick = ()=>{
+    const left = CHROMA_PICK_MS - (performance.now() - started);
+    if (left > 0){
+      counts.forEach(el => el.textContent = `AIM AT THE KEY COLOUR · ${Math.ceil(left / 1000)}`);
+      chromaPickTimer = setTimeout(tick, Math.min(100, left));
+      return;
+    }
+    chromaPickTimer = null;
+    document.body.dataset.chromaPick = '0';
+    const rgb = readChromaKeyColor();
+    if (rgb){
+      quadMat.uniforms.keyCol.value.set(...rgb);
+      state.chromaOn = true;
+      toast('CHROMA KEY SET');
+    } else {
+      toast('NO PICTURE UNDER THE CROSSHAIR');
+    }
+    // Back where SET CHROMA KEY was hit, on INTENSITY if a key got picked.
+    const focusKey = state.chromaOn ? 'chromaIntensity' : null;
+    document.body.dataset.chrome = '1';
+    lastActivityAt = performance.now();   // the countdown isn't idle time for MENU TIMEOUT
+    refreshMenu();
+    if (fromList){
+      openList();
+      const row = focusKey ? menuRowIndexForKey(focusKey) : navItems().findIndex(el => el.dataset.act === 'chromaKey');
+      if (row >= 0) setMenuFocus(row, false);
+    } else {
+      const idx = osdItems.findIndex(i => focusKey ? i.key === focusKey : i.act === 'chromaKey');
+      if (idx >= 0) osdFocusIdx = idx;
+      renderOsd();
+    }
+  };
+  tick();
+}
+
+function removeChromaKey(){
+  state.chromaOn = false;
+  refreshMenu();
+  toast('CHROMA KEY REMOVED');
+}
+
 // RESET ALL in the reduced menu: only the settings that menu shows.
 function resetReducedSettings(){
   for (const k of REDUCED_KEYS) state[k] = DEFAULTS[k];
@@ -4634,6 +4811,7 @@ function handleAct(act, el){
       resetToDefaults();
       break;
     case 'resetReduced': resetReducedSettings(); break;
+    case 'chromaKey':    if (state.chromaOn) removeChromaKey(); else startChromaPick(); break;
     case 'reducedMenu':  setReducedMenu(true);  break;
     case 'fullMenu':     setReducedMenu(false); break;
   }
