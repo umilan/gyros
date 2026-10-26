@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.23</title>
+<title>GYROS v2.24</title>
 <style>
   :root{
     --bg:#000000;
@@ -459,7 +459,7 @@
 <div class="overlay dialog" id="hint" hidden>
   <div class="dlgPane">
     <div class="paneInner">
-      <div class="paneTitle">GYROSCOPE</div>
+      <div class="paneTitle" id="hintTitle">GYROSCOPE</div>
       <div class="hr"></div>
       <p class="helpText">This app uses your device's gyroscope for head tracking. Tap the button below to grant access.</p>
       <button class="textbtn" id="hintBtn">ENABLE HEAD TRACKING</button>
@@ -569,8 +569,9 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.23';
+const APP_VERSION = '2.24';
 document.title = `GYROS v${APP_VERSION}`;
+document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
 /* =========================================================================
    State
@@ -4500,6 +4501,16 @@ btKeysDlg.addEventListener('dblclick', e=>{
    Keyboard: arrows drive the OSD (and the list when open)
    ========================================================================= */
 document.addEventListener('keydown', e=>{
+  /* ---- Gyroscope prompt (iOS): Enter or Space confirms ENABLE HEAD
+     TRACKING -- a key press counts as the user gesture iOS wants. Handled
+     here rather than left to the focused button so nothing below (key
+     mapping, the OSD) takes the key first. ---- */
+  if (!hint.hidden && (e.key === 'Enter' || e.key === ' ')){
+    e.preventDefault();
+    enableMotion();
+    return;
+  }
+
   /* ---- Learn BT Keys capture mode: swallow every keystroke here instead
      of letting it reach anything below, so testing a remote's buttons never
      also drives the OSD/list underneath. Must be the very first check. ---- */
@@ -5186,6 +5197,10 @@ requestWakeLock();
 if (typeof DeviceOrientationEvent !== 'undefined' &&
     typeof DeviceOrientationEvent.requestPermission === 'function'){
   hint.hidden = false;          // iOS: needs a tap before motion is allowed
+  // Keyboard focus on the button, so Enter / Space confirms it (see keydown).
+  const hintBtn = document.getElementById('hintBtn');
+  hintBtn.classList.add('kbfocus');
+  hintBtn.focus();
 } else {
   enableMotion();
 }
