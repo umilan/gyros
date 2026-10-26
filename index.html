@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.18</title>
+<title>GYROS v2.19</title>
 <style>
   :root{
     --bg:#000000;
@@ -542,7 +542,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.18';
+const APP_VERSION = '2.19';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -575,7 +575,7 @@ const DEFAULTS = {
                             // concave/pinch warp, positive a convex/bulge warp — a
                             // pure 2D post-process, camera FOV is unaffected. See
                             // fisheyeAmount()
-  brightness: 0,           // content brightness; shader multiplier is 1 + brightness/100
+  brightness: 100,         // content brightness; shader multiplier is 1 + brightness/100
   posX: 0, posY: 0, eyeDist: 0,
   contentZoom: 0,          // CONTENT ZOOM: zooms the actual content (photo/video/
                             // model/demo) itself, -90..300 same convention as ZOOM
