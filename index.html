@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.28</title>
+<title>GYROS v2.29</title>
 <style>
   :root{
     --bg:#000000;
@@ -426,7 +426,7 @@
   body:has(.overlay:not([hidden])) .navArrow{display:none;}
 
   /* SET CHROMA KEY's aiming crosshair -- one per eye, on the exact centre of
-     the picture (where startChromaPick() samples), with the countdown under
+     the picture (where endChromaPick() samples), with how to pick under
      it. Not shifted by SBS EYE DIST: that moves the UI chrome, not the
      picture. */
   .chromaPick{
@@ -436,9 +436,12 @@
     color:var(--accent);
   }
   .chromaPick svg{width:64px;height:64px;display:block;}
-  .chromaPickCount{
+  .chromaPickHint{
     position:absolute;top:100%;margin-top:6px;
-    font-size:10px;letter-spacing:0.18em;white-space:nowrap;
+    font-size:10px;letter-spacing:0.18em;line-height:1.7;
+    white-space:nowrap;text-align:center;
+    padding:var(--gap) var(--pad);border-radius:var(--radius);
+    background:rgba(0,0,0,0.5);   /* readable on any backdrop, same as .toast */
   }
   body[data-chroma-pick="1"] .chromaPickL{display:flex;}
   body[data-chroma-pick="1"][data-sbs="1"] .chromaPickL{left:25%;}
@@ -533,11 +536,11 @@
 <div class="toast toastR"></div>
 <div class="chromaPick chromaPickL" aria-hidden="true">
   <svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="32" cy="32" r="14"/><path d="M32 2v20M32 42v20M2 32h20M42 32h20"/></g></svg>
-  <div class="chromaPickCount"></div>
+  <div class="chromaPickHint">AIM AT THE KEY COLOUR<br>TAP OR ENTER TO PICK · ESC CANCELS</div>
 </div>
 <div class="chromaPick chromaPickR" aria-hidden="true">
   <svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="32" cy="32" r="14"/><path d="M32 2v20M32 42v20M2 32h20M42 32h20"/></g></svg>
-  <div class="chromaPickCount"></div>
+  <div class="chromaPickHint">AIM AT THE KEY COLOUR<br>TAP OR ENTER TO PICK · ESC CANCELS</div>
 </div>
 
 <!-- Content navigator: the arrow points back toward the loaded content
@@ -580,7 +583,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.28';
+const APP_VERSION = '2.29';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -4584,6 +4587,17 @@ btKeysDlg.addEventListener('dblclick', e=>{
    Keyboard: arrows drive the OSD (and the list when open)
    ========================================================================= */
 document.addEventListener('keydown', e=>{
+  /* ---- Chroma key crosshair waiting (startChromaPick()): Enter, Space or
+     the left/right arrow picks, Esc (or its X alias) cancels; every other
+     key is held back so nothing changes underneath while aiming. ---- */
+  if (chromaPick){
+    e.preventDefault();
+    if (e.repeat) return;
+    if (['Enter', ' ', 'ArrowLeft', 'ArrowRight'].includes(e.key)) endChromaPick(true);
+    else if (['Escape', 'x', 'X'].includes(e.key)) endChromaPick(false);
+    return;
+  }
+
   /* ---- Gyroscope prompt (iOS): Enter or Space confirms ENABLE HEAD
      TRACKING -- a key press counts as the user gesture iOS wants. Handled
      here rather than left to the focused button so nothing below (key
@@ -4882,12 +4896,12 @@ function resetToDefaults(){
 }
 
 /* ---- Chroma key: SET CHROMA KEY shows a crosshair on the centre of the
-   picture for 2s (aim it with your head), then reads that spot back from
+   picture (aim it with your head) and waits: a tap, Enter, Space or the
+   left/right arrow picks, Esc cancels. The pick reads that spot back from
    the left eye's render target -- so it's the colour as actually rendered,
    before BRIGHTNESS -- and keys everything near it to black in the blit
    shader (keyMask()). ---- */
-const CHROMA_PICK_MS = 2000;
-let chromaPickTimer = null;
+let chromaPick = null;   // { add, fromList } while the crosshair waits
 
 function applyChromaUniforms(){
   const u = quadMat.uniforms;
@@ -4933,47 +4947,66 @@ function readChromaKeyColor(){
 
 // add: ADD KEY COLOUR -- keep the colours picked so far and add this one.
 function startChromaPick(add = false){
-  if (chromaPickTimer) return;
+  if (chromaPick) return;
   const fromList = uiState === 'list';
   if (fromList) closeList();
   document.body.dataset.chrome = '0';
   document.body.dataset.chromaPick = '1';
-  const counts = document.querySelectorAll('.chromaPickCount');
-  const started = performance.now();
-  const tick = ()=>{
-    const left = CHROMA_PICK_MS - (performance.now() - started);
-    if (left > 0){
-      counts.forEach(el => el.textContent = `AIM AT THE KEY COLOUR · ${Math.ceil(left / 1000)}`);
-      chromaPickTimer = setTimeout(tick, Math.min(100, left));
-      return;
-    }
-    chromaPickTimer = null;
-    document.body.dataset.chromaPick = '0';
-    const rgb = readChromaKeyColor();
-    if (rgb){
-      state.chromaKeys = add ? [...state.chromaKeys, rgb] : [rgb];
-      state.chromaOn = true;
-      toast(add ? `KEY COLOUR ${state.chromaKeys.length} OF ${CHROMA_MAX_KEYS} ADDED` : 'CHROMA KEY SET');
-    } else {
-      toast('NO PICTURE UNDER THE CROSSHAIR');
-    }
-    // Back where SET CHROMA KEY was hit, on INTENSITY if a key got picked.
-    const focusKey = state.chromaOn ? 'chromaIntensity' : null;
-    document.body.dataset.chrome = '1';
-    lastActivityAt = performance.now();   // the countdown isn't idle time for MENU TIMEOUT
-    refreshMenu();
-    if (fromList){
-      openList();
-      const row = focusKey ? menuRowIndexForKey(focusKey) : navItems().findIndex(el => el.dataset.act === 'chromaKey');
-      if (row >= 0) setMenuFocus(row, false);
-    } else {
-      const idx = osdItems.findIndex(i => focusKey ? i.key === focusKey : i.act === 'chromaKey');
-      if (idx >= 0) osdFocusIdx = idx;
-      renderOsd();
-    }
-  };
-  tick();
+  chromaPick = { add, fromList };
 }
+
+// picked: false = cancelled.
+function endChromaPick(picked){
+  if (!chromaPick) return;
+  const { add, fromList } = chromaPick;
+  chromaPick = null;
+  document.body.dataset.chromaPick = '0';
+  const rgb = picked ? readChromaKeyColor() : null;
+  if (rgb){
+    state.chromaKeys = add ? [...state.chromaKeys, rgb] : [rgb];
+    state.chromaOn = true;
+    toast(add ? `KEY COLOUR ${state.chromaKeys.length} OF ${CHROMA_MAX_KEYS} ADDED` : 'CHROMA KEY SET');
+  } else {
+    toast(picked ? 'NO PICTURE UNDER THE CROSSHAIR' : 'CANCELLED');
+  }
+  // Back where SET CHROMA KEY / ADD KEY COLOUR was hit, on INTENSITY if a
+  // key got picked.
+  const focusKey = rgb ? 'chromaIntensity' : null;
+  const focusAct = add ? 'chromaAdd' : 'chromaKey';
+  document.body.dataset.chrome = '1';
+  lastActivityAt = performance.now();   // the wait isn't idle time for MENU TIMEOUT
+  refreshMenu();
+  if (fromList){
+    openList();
+    const row = focusKey ? menuRowIndexForKey(focusKey) : navItems().findIndex(el => el.dataset.act === focusAct);
+    if (row >= 0) setMenuFocus(row, false);
+  } else {
+    const idx = osdItems.findIndex(i => focusKey ? i.key === focusKey : i.act === focusAct);
+    if (idx >= 0) osdFocusIdx = idx;
+    renderOsd();
+  }
+}
+
+// While the crosshair waits, a tap anywhere picks -- and the whole tap
+// (down, up, click) is kept from everything else, so it doesn't also show
+// or hide the menus.
+let chromaPickTap = false;
+window.addEventListener('pointerdown', e=>{
+  if (!chromaPick) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  chromaPickTap = true;
+}, { capture: true });
+window.addEventListener('pointerup', e=>{
+  if (!chromaPickTap) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  endChromaPick(true);
+  setTimeout(()=>{ chromaPickTap = false; }, 400);   // in case no click follows
+}, { capture: true });
+window.addEventListener('click', e=>{
+  if (!chromaPickTap) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  chromaPickTap = false;
+}, { capture: true });
 
 function removeChromaKey(){
   state.chromaOn = false;
