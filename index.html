@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.20</title>
+<title>GYROS v2.21</title>
 <style>
   :root{
     --bg:#000000;
@@ -542,7 +542,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.20';
+const APP_VERSION = '2.21';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -809,6 +809,8 @@ const MENU = [
   { title:'CONTENT', items:[
     { type:'enum',  key:'mode',    label:'MODE', options:MODES },
     { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
+    // Only once several photos/videos are loaded -- see REDUCED_MENU below.
+    { type:'action', act:'reducedMenu', label:'SHOW REDUCED MENU', textbtn:true, whenTrue:'galleryMulti' },
     { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
     { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.1, dec:1, when:'video' },
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
@@ -846,6 +848,30 @@ const MENU = [
     { type:'action', act:'closeMenu', label:'CLOSE',             textbtn:true }
   ]}
 ];
+
+// What the settings list and OSD strip show instead of MENU while browsing
+// several loaded photos/videos with SHOW REDUCED MENU on: the few settings
+// that matter per picture. The rows are MENU's own item objects, so the
+// repurposed GALLERY row (ENUM_SPEC.shape) and step bounds stay shared.
+const menuItem = key => MENU.flatMap(s => s.items).find(i => i.key === key || i.act === key);
+const REDUCED_MENU = [
+  { title:'MEDIA', items:[
+    menuItem('shape'),
+    menuItem('posY'),
+    menuItem('contentZoom'),
+    menuItem('scaleY'),
+    menuItem('playSpeed')
+  ]},
+  { title:'ACTIONS', items:[
+    menuItem('recenter'),
+    { type:'action', act:'resetReduced', label:'RESET ALL',         textbtn:true },
+    { type:'action', act:'fullMenu',     label:'SHOW ALL CONTROLS', textbtn:true }
+  ]}
+];
+// The settings RESET ALL puts back -- just the reduced menu's own.
+const REDUCED_KEYS = ['posY', 'contentZoom', 'scaleY', 'playSpeed'];
+function reducedMenuOn(){ return !!(state.reducedMenu && state.galleryMulti); }
+function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
 const SPEC = {}; // key -> item spec, for step bounds
 const ENUM_SPEC = {}; // key -> item spec, for enum options
@@ -902,7 +928,7 @@ function paneHTML(){
   // RESET TO DEFAULTS / CLOSE come from MENU's own ACTIONS section below --
   // the pane is a straight render of MENU, nothing appended after the loop,
   // so this is exactly what the OSD strip's flattened osdItems sees too.
-  for (const section of MENU){
+  for (const section of activeMenu()){
     // ACTIONS has no visible heading in the full list (still used as the
     // OSD strip's sectionLabel via buildOsdItems(), untouched here).
     if (section.title !== 'ACTIONS'){
@@ -917,7 +943,9 @@ function paneHTML(){
 const menuPanes = document.getElementById('menuPanes');
 function buildPanes(){
   const count = state.sbs ? 2 : 1;
-  if (menuPanes.children.length === count) return;
+  const kind = reducedMenuOn() ? 'reduced' : 'full';
+  if (menuPanes.children.length === count && menuPanes.dataset.menu === kind) return;
+  menuPanes.dataset.menu = kind;
   menuPanes.innerHTML = '';
   for (let i = 0; i < count; i++){
     const pane = document.createElement('div');
@@ -1015,6 +1043,9 @@ function fmt(key, v){
 
 function refreshMenu(){
   syncMountRows();
+  // The gallery came or went, or SHOW REDUCED MENU / SHOW ALL CONTROLS was
+  // hit: re-render the list for the other menu (buildPanes() calls back here).
+  if (menuPanes.dataset.menu !== (reducedMenuOn() ? 'reduced' : 'full')){ buildPanes(); return; }
   // Same reason as in buildOsdItems(): keep the full list's focus on the
   // row it was on when rows above it get shown or hidden below.
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
@@ -3130,6 +3161,7 @@ function clearGallery(){
   galleryItems.forEach(it => URL.revokeObjectURL(it.url));
   galleryItems = [];
   galleryIdx = -1;
+  state.galleryMulti = false;
   document.body.dataset.gallery = '0';
 }
 
@@ -3189,6 +3221,7 @@ function loadGalleryFiles(fileList){
     file: f
   }));
   document.body.dataset.gallery = galleryItems.length > 1 ? '1' : '0';
+  state.galleryMulti = galleryItems.length > 1;
   state.mode = 3;
   ENUM_SPEC.shape.label = 'GALLERY';
   ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase().slice(0, 28));
@@ -3372,7 +3405,7 @@ function buildOsdItems(){
   // item itself, not its position.
   const focusedId = osdItemId(osdItems[osdFocusIdx]);
   osdItems = [];
-  MENU.forEach(section=>{
+  activeMenu().forEach(section=>{
     section.items.forEach(item=>{
       if (item.type === 'hr') return;
       if (item.when && !item.when.split(',').includes(state.content)) return;
@@ -3836,7 +3869,7 @@ function keyMapApply(e){
   }
   if (!found) return false;
   let item = null;
-  MENU.forEach(section => section.items.forEach(i => { if (!item && osdItemId(i) === found) item = i; }));
+  [...MENU, ...REDUCED_MENU].forEach(section => section.items.forEach(i => { if (!item && osdItemId(i) === found) item = i; }));
   if (!item) return false;
   e.preventDefault();
   // Not applicable right now (e.g. a video-only row with no video loaded):
@@ -4556,6 +4589,25 @@ function resetToDefaults(){
   toast('DEFAULTS RESTORED');
 }
 
+// RESET ALL in the reduced menu: only the settings that menu shows.
+function resetReducedSettings(){
+  for (const k of REDUCED_KEYS) state[k] = DEFAULTS[k];
+  applyPlaySpeed();
+  applyAll();   // also saves state
+  refreshMenu();
+  toast('RESET');
+}
+
+// SHOW REDUCED MENU / SHOW ALL CONTROLS: swap menus and land on the GALLERY
+// row in whichever of the list or OSD strip is open.
+function setReducedMenu(on){
+  state.reducedMenu = on;
+  buildOsdItems();
+  osdFocusIdx = Math.max(0, osdItems.findIndex(i => i.key === 'shape'));
+  refreshMenu();
+  if (uiState === 'list') setMenuFocus(Math.max(0, menuRowIndexForKey('shape')));
+}
+
 function handleAct(act, el){
   const key = el.dataset.key;
   switch (act){
@@ -4581,6 +4633,9 @@ function handleAct(act, el){
     case 'reset':
       resetToDefaults();
       break;
+    case 'resetReduced': resetReducedSettings(); break;
+    case 'reducedMenu':  setReducedMenu(true);  break;
+    case 'fullMenu':     setReducedMenu(false); break;
   }
 }
 
