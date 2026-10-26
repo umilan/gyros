@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.26</title>
+<title>GYROS v2.27</title>
 <style>
   :root{
     --bg:#000000;
@@ -290,6 +290,12 @@
     text-align:center;transition:opacity .55s ease;
   }
   @media (hover:hover){.textbtn:hover{opacity:.75;}}
+  /* In the settings list an action sits in the same row rhythm as the
+     settings around it, instead of the dialogs' extra gap above. */
+  #menu .textbtn{
+    display:flex;align-items:center;justify-content:center;
+    min-height:var(--row-h);margin-top:0;padding:0 var(--pad-lg);
+  }
   .textbtn:active{opacity:.55;}
   .dialog button:focus{background:rgba(246,196,28,0.18);}
   .dialog .keyboardFocus{background:rgba(246,196,28,0.18);}
@@ -569,7 +575,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.26';
+const APP_VERSION = '2.27';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -853,20 +859,11 @@ const MENU = [
   { title:'CONTENT', items:[
     { type:'enum',  key:'mode',    label:'MODE', options:MODES },
     { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
-    // Only once several photos/videos are loaded -- see REDUCED_MENU below.
-    { type:'action', act:'reducedMenu', label:'SHOW REDUCED MENU', textbtn:true, whenTrue:'galleryMulti' },
+    // Only once a photo/video (or several) is loaded -- see REDUCED_MENU below.
+    { type:'action', act:'reducedMenu', label:'SHOW REDUCED MENU', textbtn:true, whenTrue:'mediaLoaded' },
     { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
     { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.1, dec:1, when:'video' },
-    { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' },
-    // Chroma key -- see startChromaPick(). The action's label flips to
-    // REMOVE CHROMA KEY once a colour is picked (refreshMenu()).
-    { type:'action', act:'chromaKey', label:'SET CHROMA KEY', textbtn:true, when:'video' },
-    { type:'action', act:'chromaAdd', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaCanAdd' },
-    { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
-    { type:'check', key:'chromaMatte',     label:'SHOW MATTE', when:'video', whenTrue:'chromaOn' }
+    { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
   ]},
   { title:'POSITIONING', items:[
     { type:'step', key:'posX',    label:'POS X',        min:-200, max:200, step:1 },
@@ -896,6 +893,19 @@ const MENU = [
     { type:'check', key:'gyroFlipY',label:'GYRO INVERT Y' },
     { type:'action', act:'recenter', label:'RECENTER', textbtn:true }
   ]},
+  // Last before ACTIONS; the whole section, heading too, only with a photo
+  // or video on screen.
+  { title:'CHROMA KEY', when:'video', items:[
+    // See startChromaPick(). The action's label flips to
+    // REMOVE CHROMA KEY once a colour is picked (refreshMenu()).
+    { type:'action', act:'chromaKey', label:'SET CHROMA KEY', textbtn:true, when:'video' },
+    { type:'action', act:'chromaAdd', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaCanAdd' },
+    { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
+    { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
+    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
+    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
+    { type:'check', key:'chromaMatte',     label:'SHOW MATTE', when:'video', whenTrue:'chromaOn' }
+  ]},
   { title:'ACTIONS', items:[
     { type:'action', act:'reset',     label:'RESET TO DEFAULTS', textbtn:true },
     { type:'action', act:'closeMenu', label:'CLOSE',             textbtn:true }
@@ -903,7 +913,7 @@ const MENU = [
 ];
 
 // What the settings list and OSD strip show instead of MENU while browsing
-// several loaded photos/videos with SHOW REDUCED MENU on: the few settings
+// loaded photos/videos (one or several) with SHOW REDUCED MENU on: the few settings
 // that matter per picture. The rows are MENU's own item objects, so the
 // repurposed GALLERY row (ENUM_SPEC.shape) and step bounds stay shared.
 const menuItem = key => MENU.flatMap(s => s.items).find(i => i.key === key || i.act === key);
@@ -923,7 +933,7 @@ const REDUCED_MENU = [
 ];
 // The settings RESET ALL puts back -- just the reduced menu's own.
 const REDUCED_KEYS = ['posY', 'contentZoom', 'scaleY', 'playSpeed'];
-function reducedMenuOn(){ return !!(state.reducedMenu && state.galleryMulti); }
+function reducedMenuOn(){ return !!(state.reducedMenu && state.mediaLoaded); }
 function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
 const CHROMA_ITEM = menuItem('chromaKey');
@@ -987,8 +997,11 @@ function paneHTML(){
   for (const section of activeMenu()){
     // ACTIONS has no visible heading in the full list (still used as the
     // OSD strip's sectionLabel via buildOsdItems(), untouched here).
-    if (section.title !== 'ACTIONS'){
-      html += `<div class="section">${section.title}</div>`;
+    // ACTIONS gets a divider instead, so RESET / CLOSE don't read as part
+    // of the section above them.
+    if (section.title === 'ACTIONS') html += '<div class="hr"></div>';
+    else {
+      html += `<div class="section"${section.when ? ` data-when="${section.when}"` : ''}>${section.title}</div>`;
     }
     html += section.items.map(itemHTML).join('');
   }
@@ -3418,7 +3431,7 @@ function clearGallery(){
   galleryItems.forEach(it => URL.revokeObjectURL(it.url));
   galleryItems = [];
   galleryIdx = -1;
-  state.galleryMulti = false;
+  state.mediaLoaded = false;
   document.body.dataset.gallery = '0';
 }
 
@@ -3437,6 +3450,7 @@ function setStandaloneMedia(file){
   }];
   galleryIdx = 0;
   state.shape = 0;
+  state.mediaLoaded = true;
   rememberMedia([file]);
   document.body.dataset.gallery = '0';
   ENUM_SPEC.shape.label = 'GALLERY';
@@ -3480,7 +3494,7 @@ function loadGalleryFiles(fileList, startIdx = 0){
   }));
   rememberMedia(galleryItems.map(it => it.file));
   document.body.dataset.gallery = galleryItems.length > 1 ? '1' : '0';
-  state.galleryMulti = galleryItems.length > 1;
+  state.mediaLoaded = true;
   state.mode = 3;
   ENUM_SPEC.shape.label = 'GALLERY';
   ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase().slice(0, 28));
