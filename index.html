@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.27</title>
+<title>GYROS v2.28</title>
 <style>
   :root{
     --bg:#000000;
@@ -42,6 +42,11 @@
      specificity than this universal rule). */
   *:focus,*:focus-visible{outline:none;}
   [hidden]{display:none !important;}
+  /* No text selection anywhere -- a long press or drag on a label (e.g. in
+     the headset, or while dragging to pan) would otherwise select it and
+     pop up the iOS callout. The URL field still needs normal editing. */
+  *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+  input,textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default;}
   html,body{height:100%;margin:0;}
   body{
     background:var(--bg);
@@ -575,7 +580,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.27';
+const APP_VERSION = '2.28';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
