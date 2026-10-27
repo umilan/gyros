@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.39</title>
+<title>GYROS v2.40</title>
 <style>
   :root{
     --bg:#000000;
@@ -508,7 +508,7 @@
 <div class="overlay dialog" id="btKeysDlg" hidden>
   <div class="dlgPane">
     <div class="paneInner">
-      <div class="paneTitle">LEARN BT KEYS</div>
+      <div class="paneTitle">LEARN BT KEYS<button class="paneCloseBtn" data-dlgclose tabindex="-1" aria-label="Close">&#215;</button></div>
       <div class="hr"></div>
       <p class="helpText"><b>↑/↓</b> select a command below. <b>←/→</b> starts listening for it — press the button on your Bluetooth remote you want mapped to it. <b>Esc</b> while listening cancels, or clears an already-set one.</p>
       <div class="section">COMMANDS</div>
@@ -526,12 +526,13 @@
 <div class="overlay dialog" id="urlDlg" hidden>
   <div class="dlgPane">
     <div class="paneInner">
-      <div class="paneTitle" id="urlDlgTitle">URL</div>
+      <div class="paneTitle"><span id="urlDlgTitle">URL</span><button class="paneCloseBtn" data-dlgclose tabindex="-1" aria-label="Close">&#215;</button></div>
       <div class="hr"></div>
       <p class="helpText" id="urlDlgNote"></p>
       <div class="section">ADDRESS</div>
       <input class="dlgInput" type="url" id="urlInput" placeholder="" autocomplete="off" spellcheck="false">
       <button class="textbtn" id="urlOk">LOAD</button>
+      <button class="textbtn" data-dlgclose>CLOSE</button>
     </div>
   </div>
 </div>
@@ -587,7 +588,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.39';
+const APP_VERSION = '2.40';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -976,7 +977,8 @@ const REDUCED_MENU = [
     { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 }
   ]},
   { title:'ACTIONS', items:[
-    { type:'check', key:'allControls', label:'ALL CONTROLS' }
+    { type:'check', key:'allControls', label:'ALL CONTROLS' },
+    { type:'action', act:'closeMenu', label:'CLOSE', textbtn:true }
   ]}
 ];
 function reducedMenuOn(){ return !!(state.reducedMenu && state.mediaLoaded); }
@@ -1036,7 +1038,7 @@ function itemHTML(item){
 function paneHTML(){
   let html = '<div class="paneInner" style="padding-top:50vh;padding-bottom:50vh">'
     + '<div class="paneTitle">MENU'
-    + '<button class="paneCloseBtn" data-act="closeList" aria-label="Close settings">&#215;</button>'
+    + '<button class="paneCloseBtn" data-act="closeList" tabindex="-1" aria-label="Close settings">&#215;</button>'
     + '</div>';
   // RESET TO DEFAULTS / CLOSE come from MENU's own ACTIONS section below --
   // the pane is a straight render of MENU, nothing appended after the loop,
@@ -3969,7 +3971,7 @@ function closeList(){
    entries. Same one-pane-per-eye treatment as buildPanes()/buildBotPanes(). */
 function loadTypePaneHTML(){
   return `<div class="paneInner">
-      <div class="paneTitle">LOAD</div>
+      <div class="paneTitle">LOAD<button class="paneCloseBtn" data-loadtype="close" tabindex="-1" aria-label="Close">&#215;</button></div>
       <button class="row" data-loadtype="demo"><span class="label">DEMO SHAPE</span></button>
       <button class="row" data-loadtype="video"><span class="label">IMAGE / VIDEO</span></button>
       <button class="row" data-loadtype="folder"><span class="label">FOLDER (PHOTOS + VIDEOS)</span></button>
@@ -3992,12 +3994,12 @@ function buildLoadTypeDlg(){
 }
 
 function loadTypeButtons(){
-  return [...loadTypeDlg.querySelectorAll('.dlgPane:first-child button')];
+  return [...loadTypeDlg.querySelectorAll('.dlgPane:first-child button:not(.paneCloseBtn)')];
 }
 
 function markLoadTypeFocus(index){
   loadTypeDlg.querySelectorAll('.dlgPane').forEach(pane=>{
-    [...pane.querySelectorAll('button')].forEach((button, buttonIndex)=>{
+    [...pane.querySelectorAll('button:not(.paneCloseBtn)')].forEach((button, buttonIndex)=>{
       button.classList.toggle('keyboardFocus', buttonIndex === index);
     });
   });
@@ -4020,17 +4022,18 @@ function handleLoadTypeDlgKeydown(e){
     loadTypeDlg.hidden = true;
     return;
   }
-  if (e.key !== 'Tab' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown' &&
-      e.key !== 'Enter' && e.key !== ' '){
+  const key = DLG_WASD[e.key.toLowerCase()] || e.key;
+  if (key !== 'Tab' && key !== 'ArrowUp' && key !== 'ArrowDown' &&
+      key !== 'Enter' && key !== ' ' && key !== 'ArrowLeft' && key !== 'ArrowRight'){
     return;
   }
   e.preventDefault();
   const current = buttons.indexOf(document.activeElement);
-  if (e.key === 'Enter' || e.key === ' '){
+  if (key === 'Enter' || key === ' ' || key === 'ArrowLeft' || key === 'ArrowRight'){
     (current >= 0 ? buttons[current] : buttons[0]).click();
     return;
   }
-  const direction = e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1;
+  const direction = key === 'ArrowUp' || (key === 'Tab' && e.shiftKey) ? -1 : 1;
   focusLoadTypeButton(current < 0 ? 0 : current + direction);
 }
 
@@ -4039,7 +4042,7 @@ loadTypeDlg.addEventListener('focusin', e=>{
   if (!button) return;
   const pane = button.closest('.dlgPane');
   if (!pane) return;
-  const index = [...pane.querySelectorAll('button')].indexOf(button);
+  const index = [...pane.querySelectorAll('button:not(.paneCloseBtn)')].indexOf(button);
   if (index >= 0) markLoadTypeFocus(index);
 });
 
@@ -4460,12 +4463,17 @@ menu.addEventListener('click', e=>{
 window.addEventListener('blur', stopOsdHold);
 document.addEventListener('visibilitychange', ()=>{ if (document.hidden) stopOsdHold(); });
 
-/* every dialog closes on a tap outside its .paneInner content zone, and on Escape */
+/* every dialog closes on a tap outside its .paneInner content zone, on its
+   header's x or footer CLOSE ([data-dlgclose]), and on Escape. Every menu
+   and dialog has the same pair: the x is tap-only (tabindex -1, left out of
+   each keyboard order), CLOSE is in the keyboard order and fires on Enter,
+   Space, left/right or A/D like any other button there. */
 document.querySelectorAll('.dialog').forEach(dlg=>{
   dlg.addEventListener('click', e=>{
-    if (!e.target.closest('.paneInner')) dlg.hidden = true;
+    if (!e.target.closest('.paneInner') || e.target.closest('[data-dlgclose]')) dlg.hidden = true;
   });
 });
+const DLG_WASD = { w:'ArrowUp', a:'ArrowLeft', s:'ArrowDown', d:'ArrowRight' };
 
 /* =========================================================================
    Menu keyboard navigation (list mode)
@@ -4659,8 +4667,15 @@ function focusBtClose(button){
 // closing other UI, etc.) ever sees it.
 function handleBtKeysDlgKeydown(e){
   e.preventDefault();
+  // W/A/S/D stand for the arrows while browsing -- never while listening,
+  // where the key itself is what's being learned.
+  if (!btKeysListening && DLG_WASD[e.key.toLowerCase()]) Object.defineProperty(e, 'key', { value: DLG_WASD[e.key.toLowerCase()] });
 
   const bottomClose = btKeysDlg.querySelector('.btKeysBottomClose');
+  if (!btKeysListening && document.activeElement === bottomClose && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')){
+    btKeysDlg.hidden = true;
+    return;
+  }
   if (!btKeysListening && (e.key === 'Tab' || e.key === 'Enter' || e.key === ' ')){
     if (e.key === 'Enter' || e.key === ' '){
       if (document.activeElement === bottomClose) btKeysDlg.hidden = true;
@@ -4834,6 +4849,28 @@ document.addEventListener('keydown', e=>{
   if (!loadTypeDlg.hidden){
     handleLoadTypeDlgKeydown(e);
     return;
+  }
+
+  /* ---- URL dialog: ↑/↓ move between the address field, LOAD and CLOSE;
+     on a button, ←/→ or A/D fire it (Enter/Space do natively). Typing in
+     the field is left alone. ---- */
+  if (!urlDlg.hidden && e.key !== 'Escape'){
+    const order = [urlInput, ...urlDlg.querySelectorAll('.textbtn')];
+    const at = order.indexOf(document.activeElement);
+    const onButton = at > 0;
+    const key = onButton ? (DLG_WASD[e.key.toLowerCase()] || e.key) : e.key;
+    if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'Tab'){
+      e.preventDefault();
+      const dir = key === 'ArrowUp' || (key === 'Tab' && e.shiftKey) ? -1 : 1;
+      order[((at < 0 ? 0 : at + dir) + order.length) % order.length].focus();
+      return;
+    }
+    if (onButton && (key === 'ArrowLeft' || key === 'ArrowRight')){
+      e.preventDefault();
+      order[at].click();
+      return;
+    }
+    if (onButton || at === 0) return;   // the field and its buttons keep everything else
   }
 
   /* ---- Escape ---- */
