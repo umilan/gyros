@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.36</title>
+<title>GYROS v2.37</title>
 <style>
   :root{
     --bg:#000000;
@@ -583,7 +583,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.36';
+const APP_VERSION = '2.37';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -922,8 +922,9 @@ const MENU = [
     { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
-    { type:'check', key:'chromaMatte',     label:'SHOW MATTE', when:'video', whenTrue:'chromaOn' }
+    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' }
+    // SHOW MATTE (state.chromaMatte, the shader's chromaMatte) has no row:
+    // hidden from the settings, it stays off.
   ]},
   // People cut-out with an on-device model -- see updateCutout().
   { title:'PEOPLE', when:'video', items:[
