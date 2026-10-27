@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.37</title>
+<title>GYROS v2.38</title>
 <style>
   :root{
     --bg:#000000;
@@ -270,6 +270,10 @@
   @media (hover:hover){button.row:hover{background:rgba(255,255,255,0.07);}}
   button.row:active{background:rgba(255,255,255,0.14);}
   .row .label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  /* Nested rows (the reduced menu's BG REMOVAL tree): indented per level. */
+  .row.sub1 .label{padding-left:var(--pad-lg);}
+  .row.sub2 .label{padding-left:calc(2 * var(--pad-lg));}
+  .row.actionRow .label{color:var(--accent);}
   .row.kbfocus,.textbtn.kbfocus{background:rgba(246,196,28,0.25);outline:0px solid rgba(246,196,28,0.75);outline-offset:0px;}
 
   /* stepper */
@@ -583,7 +587,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.37';
+const APP_VERSION = '2.38';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -701,6 +705,7 @@ const state = Object.assign({}, DEFAULTS);
 // up to CHROMA_MAX_KEYS -- see startChromaPick() -- and SHOW MATTE.
 state.chromaKeys = [];
 state.chromaMatte = false;
+state.rmBgOpen = false;   // reduced menu: BG REMOVAL folded open
 
 function loadState(){
   try{
@@ -945,26 +950,34 @@ const MENU = [
 // repurposed GALLERY row (ENUM_SPEC.shape) and step bounds stay shared.
 const menuItem = key => MENU.flatMap(s => s.items).find(i => i.key === key || i.act === key);
 const REDUCED_MENU = [
-  { title:'MEDIA', items:[
-    menuItem('shape'),
-    menuItem('posY'),
+  { title:'MEDIA', noTitle:true, items:[
+    // GALLERY under its own label; the options follow whatever is loaded.
+    { type:'enum', key:'shape', label:'MEDIA', get options(){ return ENUM_SPEC.shape.options; } },
+    menuItem('playSpeed'),
     menuItem('contentZoom'),
-    menuItem('scaleY'),
-    menuItem('playSpeed')
+    menuItem('posY'),
+    menuItem('scaleY')
   ]},
-  // The full menu's own CHROMA KEY section, rows and heading gating alike.
-  MENU.find(s => s.title === 'CHROMA KEY'),
-  MENU.find(s => s.title === 'PEOPLE'),
+  // BG REMOVAL folds open (rmBgOpen) onto its two methods; each method's own
+  // settings show while it's on. sub: indent level. Flags set in refreshMenu().
+  { title:'BG REMOVAL', noTitle:true, items:[
+    { type:'check', key:'rmBgOpen', label:'BG REMOVAL', when:'video' },
+    { type:'enum',  key:'cutout', label:'AI ALGO', options:CUTOUT_MODES, when:'video', whenTrue:'rmBgOpen', sub:1 },
+    { type:'check', key:'cutoutAccurate', label:'ACCURATE', when:'video', whenTrue:'rmAiRows', sub:2 },
+    { type:'step',  key:'cutoutSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmAiRows', sub:2 },
+    { type:'step',  key:'cutoutRefine', label:'EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'rmAiRows', sub:2 },
+    { type:'check', key:'chromaOn', label:'CHROMA', when:'video', whenTrue:'rmBgOpen', sub:1 },
+    { type:'action', act:'chromaClear', label:'REMOVE COLOURS', when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'action', act:'chromaAdd',   label:'ADD COLOUR', when:'video', whenTrue:'rmChromaAdd', sub:2 },
+    { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'step',  key:'chromaSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'step',  key:'chromaRefine', label:'EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 }
+  ]},
   { title:'ACTIONS', items:[
-    menuItem('recenter'),
-    { type:'action', act:'resetReduced', label:'RESET ALL',         textbtn:true },
-    { type:'action', act:'fullMenu',     label:'SHOW ALL CONTROLS', textbtn:true }
+    { type:'check', key:'allControls', label:'ALL CONTROLS' }
   ]}
 ];
-// The settings RESET ALL puts back -- just the reduced menu's own. The
-// picked key colours stay; REMOVE CHROMA KEY is how those go.
-const REDUCED_KEYS = ['posY', 'contentZoom', 'scaleY', 'playSpeed',
-  'chromaIntensity', 'chromaSmooth', 'chromaRefine', 'chromaSpill', 'cutoutSmooth', 'cutoutRefine'];
 function reducedMenuOn(){ return !!(state.reducedMenu && state.mediaLoaded); }
 function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
@@ -982,11 +995,12 @@ ENUM_SPEC.shape.options = SHAPES;
 function itemHTML(item){
   const when = (item.when ? ` data-when="${item.when}"` : '')
     + (item.whenTrue ? ` data-when-true="${item.whenTrue}"` : '');
+  const sub = item.sub ? ` sub${item.sub}` : '';
   switch(item.type){
     case 'hr':
       return '<div class="hr"></div>';
     case 'check':
-      return `<div class="row"${when}>
+      return `<div class="row${sub}"${when}>
         <span class="label">${item.label}</span>
         <span class="stepper">
           <button class="rnd" data-act="boolstep" data-key="${item.key}" data-dir="-1" aria-label="${item.label} No">&#8722;</button>
@@ -996,10 +1010,10 @@ function itemHTML(item){
     case 'action':
       if (item.textbtn)
         return `<button class="textbtn" data-act="${item.act}"${when}>${item.label}</button>`;
-      return `<button class="row" data-act="${item.act}"${when}>
+      return `<button class="row actionRow${sub}" data-act="${item.act}"${when}>
         <span class="label">${item.label}</span></button>`;
     case 'step':
-      return `<div class="row"${when}>
+      return `<div class="row${sub}"${when}>
         <span class="label">${item.label}</span>
         <span class="stepper">
           <button class="rnd" data-act="step" data-key="${item.key}" data-dir="-1" aria-label="Decrease ${item.label}">&#8722;</button>
@@ -1007,7 +1021,7 @@ function itemHTML(item){
           <button class="rnd" data-act="step" data-key="${item.key}" data-dir="1" aria-label="Increase ${item.label}">+</button>
         </span></div>`;
     case 'enum':
-      return `<div class="row"${when}>
+      return `<div class="row${sub}"${when}>
         <span class="label">${item.label}</span>
         <span class="stepper">
           <button class="rnd" data-act="enumstep" data-key="${item.key}" data-dir="-1" aria-label="Previous ${item.label}">&#8722;</button>
@@ -1032,7 +1046,7 @@ function paneHTML(){
     // ACTIONS gets a divider instead, so RESET / CLOSE don't read as part
     // of the section above them.
     if (section.title === 'ACTIONS') html += '<div class="hr"></div>';
-    else {
+    else if (!section.noTitle){
       html += `<div class="section"${section.when ? ` data-when="${section.when}"` : ''}>${section.title}</div>`;
     }
     html += section.items.map(itemHTML).join('');
@@ -1133,8 +1147,13 @@ function buildBotPanes(){
   renderOsd();
 }
 
+// What a yes/no row shows, where YES/NO isn't the right word.
+const BOOL_TEXT = {
+  rmBgOpen: ['HIDE', 'SHOW'], allControls: ['HIDE', 'SHOW'],
+  cutoutAccurate: ['OFF', 'ON'], chromaOn: ['OFF', 'ON']
+};
 function fmt(key, v){
-  if (typeof v === 'boolean') return v ? 'YES' : 'NO';
+  if (typeof v === 'boolean' || BOOL_TEXT[key]) return (BOOL_TEXT[key] || ['NO', 'YES'])[v ? 1 : 0];
   if (ENUM_SPEC[key]) return ENUM_SPEC[key].options[v];
   if (key === 'menuTimeout') return v <= 0 ? 'OFF' : `${Math.round(v)}S`;
   if (key === 'predictMs') return `${Math.round(v)}MS`;
@@ -1145,7 +1164,7 @@ function fmt(key, v){
 
 function refreshMenu(){
   syncMountRows();
-  // The gallery came or went, or SHOW REDUCED MENU / SHOW ALL CONTROLS was
+  // The gallery came or went, or SHOW REDUCED MENU / ALL CONTROLS was
   // hit: re-render the list for the other menu (buildPanes() calls back here).
   if (menuPanes.dataset.menu !== (reducedMenuOn() ? 'reduced' : 'full')){ buildPanes(); return; }
   // Same reason as in buildOsdItems(): keep the full list's focus on the
@@ -1153,6 +1172,12 @@ function refreshMenu(){
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
   state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length < CHROMA_MAX_KEYS;
   state.cutoutOn = state.cutout > 0;
+  // Reduced menu tree (REDUCED_MENU): which branches are open.
+  state.cutoutAccurate = state.cutoutModel === 1;
+  state.allControls = !reducedMenuOn();
+  state.rmAiRows = !!state.rmBgOpen && state.cutoutOn;
+  state.rmChromaRows = !!state.rmBgOpen && !!state.chromaOn;
+  state.rmChromaAdd = state.rmChromaRows && state.chromaKeys.length < CHROMA_MAX_KEYS;
   menuPanes.querySelectorAll('[data-val]').forEach(el=>{
     const k = el.dataset.val;
     el.textContent = fmt(k, state[k]);
@@ -3539,7 +3564,7 @@ function setStandaloneMedia(file){
   ENUM_SPEC.shape.options = [file.name.toUpperCase().slice(0, 28)];
   menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
     const labelEl = el.closest('.row')?.querySelector('.label');
-    if (labelEl) labelEl.textContent = 'GALLERY';
+    if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'GALLERY';
   });
   refreshMenu();
 }
@@ -3582,7 +3607,7 @@ function loadGalleryFiles(fileList, startIdx = 0){
   ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase().slice(0, 28));
   menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
     const labelEl = el.closest('.row')?.querySelector('.label');
-    if (labelEl) labelEl.textContent = 'GALLERY';
+    if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'GALLERY';
   });
   showGalleryItem(startIdx);
   // A remembered set coming back on startup just shows; a fresh load opens
@@ -3781,7 +3806,7 @@ function renderOsd(){
   const item = osdItems[osdFocusIdx];
   if (!item) return;
   let val = '', label = item.label;
-  if (item.type === 'check') val = state[item.key] ? 'YES' : 'NO';
+  if (item.type === 'check') val = fmt(item.key, state[item.key]);
   else if (item.type === 'step')  val = fmt(item.key, state[item.key]);
   else if (item.type === 'enum')  val = item.options[state[item.key]];
   else if (item.type === 'action'){
@@ -3824,11 +3849,7 @@ function osdChangeItem(dir){
       stepEnumValue(item, dir);
       break;
     case 'check':
-      if (item.key === 'sourceSbs') cancelSbsProbe();
-      state[item.key] = !state[item.key];
-      applyAll();
-      refreshMenu();
-      saveState();
+      setCheck(item.key, !state[item.key]);
       break;
     case 'action':
       handleAct(item.act, { dataset:{} });
@@ -4038,7 +4059,7 @@ function loadDemo(){
     ENUM_SPEC.shape.options = SHAPES;
     menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
       const labelEl = el.closest('.row')?.querySelector('.label');
-      if (labelEl) labelEl.textContent = 'DEMO';
+      if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'DEMO';
     });
     state.shape = 0;
   }
@@ -4256,11 +4277,7 @@ function keyMapApply(e){
       stepEnumValue(item, dir);
       break;
     case 'check':
-      if (item.key === 'sourceSbs') cancelSbsProbe();
-      state[item.key] = (keyMap[found].inc && keyMap[found].dec) ? dir > 0 : !state[item.key];
-      applyAll();
-      refreshMenu();
-      saveState();
+      setCheck(item.key, (keyMap[found].inc && keyMap[found].dec) ? dir > 0 : !state[item.key]);
       break;
     case 'action':
       handleAct(item.act, { dataset:{} });
@@ -4354,7 +4371,7 @@ function midiFlush(){
         break;
       }
       case 'check':
-        if (state[item.key] !== (v >= 64)){ state[item.key] = v >= 64; applyAll(); refreshMenu(); saveState(); }
+        if (!!state[item.key] !== (v >= 64)) setCheck(item.key, v >= 64);
         break;
       case 'action':
         continue;   // a knob doesn't fire actions
@@ -5415,16 +5432,37 @@ function removeChromaKey(){
   toast('CHROMA KEY REMOVED');
 }
 
-// RESET ALL in the reduced menu: only the settings that menu shows.
-function resetReducedSettings(){
-  for (const k of REDUCED_KEYS) state[k] = DEFAULTS[k];
-  applyPlaySpeed();
-  applyAll();   // also saves state
+// Every yes/no row lands here, from a tap, the strip, a mapped key or MIDI.
+// A few aren't plain settings: they open a branch of the reduced menu, or
+// stand in for another setting.
+function setCheck(key, v){
+  switch (key){
+    case 'rmBgOpen': state.rmBgOpen = v; break;
+    case 'allControls': if (v) setReducedMenu(false); return;
+    case 'cutoutAccurate': state.cutoutModel = v ? 1 : 0; break;
+    case 'chromaOn':
+      // Keying back on reuses the picked colours; with none yet, pick one.
+      if (v && !state.chromaKeys.length){ startChromaPick(); return; }
+      state.chromaOn = v;
+      break;
+    default:
+      if (key === 'sourceSbs') cancelSbsProbe();
+      state[key] = v;
+      applyAll();
+  }
   refreshMenu();
-  toast('RESET');
+  saveState();
 }
 
-// SHOW REDUCED MENU / SHOW ALL CONTROLS: swap menus and land on the GALLERY
+// REMOVE COLOURS (reduced menu): forget the picked colours, keying stays on
+// so ADD COLOUR picks afresh.
+function clearChromaKeys(){
+  state.chromaKeys = [];
+  refreshMenu();
+  toast('KEY COLOURS REMOVED');
+}
+
+// SHOW REDUCED MENU / ALL CONTROLS: swap menus and land on the GALLERY
 // row in whichever of the list or OSD strip is open.
 function setReducedMenu(on){
   state.reducedMenu = on;
@@ -5438,10 +5476,7 @@ function handleAct(act, el){
   const key = el.dataset.key;
   switch (act){
     case 'boolstep':
-      if (key === 'sourceSbs') cancelSbsProbe();
-      state[key] = Number(el.dataset.dir) > 0;
-      applyAll();
-      refreshMenu();
+      setCheck(key, Number(el.dataset.dir) > 0);
       break;
     case 'step':
       stepValue(key, Number(el.dataset.dir));   // already refreshes the menu
@@ -5459,11 +5494,10 @@ function handleAct(act, el){
     case 'reset':
       resetToDefaults();
       break;
-    case 'resetReduced': resetReducedSettings(); break;
+    case 'chromaClear':  clearChromaKeys(); break;
     case 'chromaKey':    if (state.chromaOn) removeChromaKey(); else startChromaPick(); break;
     case 'chromaAdd':    startChromaPick(true); break;
     case 'reducedMenu':  setReducedMenu(true);  break;
-    case 'fullMenu':     setReducedMenu(false); break;
   }
 }
 
