@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.35</title>
+<title>GYROS v2.36</title>
 <style>
   :root{
     --bg:#000000;
@@ -583,7 +583,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.35';
+const APP_VERSION = '2.36';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -619,7 +619,7 @@ const DEFAULTS = {
                             // inside the SMOOTHING band, like shifting a
                             // feathered selection -- positive cuts out more,
                             // negative less. No effect at SMOOTHING 0.
-  cutout: 0,              // CUT-OUT: 0 OFF | 1 KEEP PEOPLE | 2 REMOVE PEOPLE -- see updateCutout()
+  cutout: 0,              // CUT-OUT: 0 OFF | 1 ON (background removed) -- see updateCutout()
   cutoutModel: 0,         // MODEL: 0 FAST | 1 ACCURATE (CUTOUT_MODEL_URLS)
   cutoutSmooth: 20,       // SMOOTHING (people), 0..100: how soft the cut edge is
   cutoutRefine: 0,        // REFINE EDGE (people), -1..1: shifts the edge inside the
@@ -726,6 +726,8 @@ function loadState(){
     if (saved.mountAuto === undefined) Object.assign(state, mountDefaults(state.view));
     // content and shape are session-ish: a model/video source cannot be restored
     if (state.content !== 'demo') state.content = 'demo';
+    // CUT-OUT once had a third REMOVE PEOPLE mode (2); that's just off now.
+    if (state.cutout > 1) state.cutout = 0;
     state.mode = 0;
   }catch(e){ /* ignore corrupt settings */ }
 }
@@ -844,7 +846,7 @@ function switchView(newIdx){
 }
 
 // PEOPLE section options -- see updateCutout().
-const CUTOUT_MODES = ['OFF', 'KEEP PEOPLE', 'REMOVE PEOPLE'];
+const CUTOUT_MODES = ['OFF', 'ON'];
 const CUTOUT_MODEL_NAMES = ['FAST', 'ACCURATE'];
 
 const MENU = [
@@ -5080,8 +5082,8 @@ function resetToDefaults(){
 
 /* ---- People cut-out: an on-device person segmentation model (MediaPipe
    Image Segmenter, loaded from the CDN the first time CUT-OUT is turned
-   on) finds the people in the photo/video; KEEP PEOPLE blacks out
-   everything else, REMOVE PEOPLE blacks out the people. Each new frame is
+   on) finds the people in the photo/video and blacks out everything
+   else -- the background is removed, the people stay. Each new frame is
    drawn into a small canvas, segmented there, and the result becomes an
    alpha map on the eye meshes -- over the black scene, transparent reads as
    black, same as chroma key, and the two can be combined. On video the
@@ -5205,8 +5207,7 @@ function cutoutSegment(src){   // src is reassigned to the frame copy for video
 // Person confidence -> alpha, the same way chroma key builds its mask:
 // SMOOTHING widens the soft band around the 50% confidence line and also
 // blurs the result (up to 4 mask pixels), and REFINE EDGE then moves the cut
-// within that soft edge -- positive cuts out more, negative less. Both act
-// on what's kept: the people in KEEP PEOPLE, the rest in REMOVE PEOPLE.
+// within that soft edge -- positive cuts out more, negative less.
 // (No blending with the previous frame: on video that smears the mask
 // behind anyone moving.)
 function cutoutBuildAlpha(){
@@ -5221,7 +5222,6 @@ function cutoutBuildAlpha(){
     cutout.texL.minFilter = cutout.texL.magFilter = THREE.LinearFilter;
     cutout.texR = cutout.texL.clone();   // same pixels, its own crop (SBS right half)
   }
-  const keep = state.cutout === 1;
   const f = state.cutoutSmooth / 100, r = state.cutoutRefine;
   const half = 0.02 + 0.3 * f;   // soft band half-width in confidence
   const lo = 0.5 - half, hi = 0.5 + half;
@@ -5232,7 +5232,7 @@ function cutoutBuildAlpha(){
     for (let x = 0; x < w; x++){
       let t = Math.min(1, Math.max(0, (person[src + x] - lo) / (hi - lo)));
       t = t * t * (3 - 2 * t);
-      alpha[dst + x] = keep ? t : 1 - t;
+      alpha[dst + x] = t;
     }
   }
   // Spatial softening: a box blur, rows then columns.
