@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.38</title>
+<title>GYROS v2.39</title>
 <style>
   :root{
     --bg:#000000;
@@ -587,7 +587,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.38';
+const APP_VERSION = '2.39';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -884,7 +884,8 @@ const MENU = [
     { type:'enum',  key:'mode',    label:'MODE', options:MODES },
     { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
     // Only once a photo/video (or several) is loaded -- see REDUCED_MENU below.
-    { type:'action', act:'reducedMenu', label:'SHOW REDUCED MENU', textbtn:true, whenTrue:'mediaLoaded' },
+    // Reads OFF here; ON swaps to the reduced menu (setCheck()).
+    { type:'check', key:'reducedMenu', label:'REDUCED MENU', whenTrue:'mediaLoaded' },
     { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
     { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.5, dec:1, when:'video' },
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
@@ -945,7 +946,7 @@ const MENU = [
 ];
 
 // What the settings list and OSD strip show instead of MENU while browsing
-// loaded photos/videos (one or several) with SHOW REDUCED MENU on: the few settings
+// loaded photos/videos (one or several) with REDUCED MENU on: the few settings
 // that matter per picture. The rows are MENU's own item objects, so the
 // repurposed GALLERY row (ENUM_SPEC.shape) and step bounds stay shared.
 const menuItem = key => MENU.flatMap(s => s.items).find(i => i.key === key || i.act === key);
@@ -1150,7 +1151,7 @@ function buildBotPanes(){
 // What a yes/no row shows, where YES/NO isn't the right word.
 const BOOL_TEXT = {
   rmBgOpen: ['HIDE', 'SHOW'], allControls: ['HIDE', 'SHOW'],
-  cutoutAccurate: ['OFF', 'ON'], chromaOn: ['OFF', 'ON']
+  cutoutAccurate: ['OFF', 'ON'], chromaOn: ['OFF', 'ON'], reducedMenu: ['OFF', 'ON']
 };
 function fmt(key, v){
   if (typeof v === 'boolean' || BOOL_TEXT[key]) return (BOOL_TEXT[key] || ['NO', 'YES'])[v ? 1 : 0];
@@ -1164,7 +1165,7 @@ function fmt(key, v){
 
 function refreshMenu(){
   syncMountRows();
-  // The gallery came or went, or SHOW REDUCED MENU / ALL CONTROLS was
+  // The gallery came or went, or REDUCED MENU / ALL CONTROLS was
   // hit: re-render the list for the other menu (buildPanes() calls back here).
   if (menuPanes.dataset.menu !== (reducedMenuOn() ? 'reduced' : 'full')){ buildPanes(); return; }
   // Same reason as in buildOsdItems(): keep the full list's focus on the
@@ -5439,6 +5440,7 @@ function setCheck(key, v){
   switch (key){
     case 'rmBgOpen': state.rmBgOpen = v; break;
     case 'allControls': if (v) setReducedMenu(false); return;
+    case 'reducedMenu': setReducedMenu(v); return;
     case 'cutoutAccurate': state.cutoutModel = v ? 1 : 0; break;
     case 'chromaOn':
       // Keying back on reuses the picked colours; with none yet, pick one.
@@ -5462,7 +5464,7 @@ function clearChromaKeys(){
   toast('KEY COLOURS REMOVED');
 }
 
-// SHOW REDUCED MENU / ALL CONTROLS: swap menus and land on the GALLERY
+// REDUCED MENU / ALL CONTROLS: swap menus and land on the GALLERY
 // row in whichever of the list or OSD strip is open.
 function setReducedMenu(on){
   state.reducedMenu = on;
@@ -5497,7 +5499,6 @@ function handleAct(act, el){
     case 'chromaClear':  clearChromaKeys(); break;
     case 'chromaKey':    if (state.chromaOn) removeChromaKey(); else startChromaPick(); break;
     case 'chromaAdd':    startChromaPick(true); break;
-    case 'reducedMenu':  setReducedMenu(true);  break;
   }
 }
 
