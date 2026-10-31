@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.40</title>
+<title>GYROS v2.41</title>
 <style>
   :root{
     --bg:#000000;
@@ -531,7 +531,12 @@
       <p class="helpText" id="urlDlgNote"></p>
       <div class="section">ADDRESS</div>
       <input class="dlgInput" type="url" id="urlInput" placeholder="" autocomplete="off" spellcheck="false">
+      <button class="textbtn" id="urlPaste">PASTE &amp; LOAD</button>
       <button class="textbtn" id="urlOk">LOAD</button>
+      <div id="urlProxyRow">
+        <div class="section">PAGE PROXY (OPTIONAL)</div>
+        <input class="dlgInput" type="url" id="urlProxy" placeholder="https://proxy.example/?url=" autocomplete="off" spellcheck="false">
+      </div>
       <button class="textbtn" data-dlgclose>CLOSE</button>
     </div>
   </div>
@@ -588,7 +593,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.40';
+const APP_VERSION = '2.41';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -3405,12 +3410,15 @@ function loadSBSImage(file){
   });
 }
 
-async function playVideo(src, label, file){
+// `hintOverride` ({ value, authoritative }) replaces the filename/metadata
+// guess -- used by URL loads, where a resolved page/API says (or a pasted
+// VR link implies) what the layout is.
+async function playVideo(src, label, file, hintOverride){
   usingImage = false;
   cancelSbsProbe();
   stopReverse();
   restoreVideoMaterials();
-  const sbsHint = await resolveSbsHint(label, file);
+  const sbsHint = hintOverride || await resolveSbsHint(label, file);
   if (sbsHint.value !== state.sourceSbs){
     state.sourceSbs = sbsHint.value;
     refreshMenu();
@@ -3538,7 +3546,7 @@ let galleryIdx = -1;
 
 function clearGallery(){
   forgetMedia();
-  galleryItems.forEach(it => URL.revokeObjectURL(it.url));
+  galleryItems.forEach(it => { if (it.url && it.url.startsWith('blob:')) URL.revokeObjectURL(it.url); });
   galleryItems = [];
   galleryIdx = -1;
   state.mediaLoaded = false;
@@ -3618,6 +3626,37 @@ function loadGalleryFiles(fileList, startIdx = 0){
   if (!mediaRestoring) focusGalleryRow();
 }
 
+/* A catalog found behind a pasted URL (DeoVR list, PLAYA API, a page with
+   several videos) -- same GALLERY row and stepping as a picked folder, but
+   items are remote: nothing is copied into IndexedDB, and an item may carry
+   only a resolve() that fetches its stream when it's first shown.
+   items: [{ name, url?, resolve?, isSbs, sbsAuthoritative }] */
+function loadUrlGallery(items, startIdx = 0){
+  if (!items.length){ toast('NO VIDEOS FOUND'); return; }
+  clearGallery();
+  galleryItems = items.map(it => ({
+    name: it.name || 'video',
+    url: it.url || null,
+    resolve: it.resolve || null,
+    kind: 'video',
+    isSbs: it.isSbs !== false,                 // VR catalogs: assume SBS until told otherwise
+    sbsAuthoritative: !!it.sbsAuthoritative,
+    sbsChecked: true                            // no filename/metadata check for remote items
+  }));
+  document.body.dataset.gallery = galleryItems.length > 1 ? '1' : '0';
+  state.mediaLoaded = true;
+  state.mode = 3;
+  ENUM_SPEC.shape.label = 'GALLERY';
+  ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase().slice(0, 28));
+  menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
+    const labelEl = el.closest('.row')?.querySelector('.label');
+    if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'GALLERY';
+  });
+  showGalleryItem(startIdx);
+  focusGalleryRow();
+  toast(galleryItems.length + ' VIDEOS FOUND');
+}
+
 function showGalleryItem(idx){
   if (!galleryItems.length) return;
   galleryIdx = ((idx % galleryItems.length) + galleryItems.length) % galleryItems.length;
@@ -3660,6 +3699,16 @@ async function showGalleryVideo(item){
   state.content = 'video';
   applyAll();
   refreshMenu();
+  // URL galleries (a pasted catalog -- see loadUrlGallery()) only know each
+  // video's stream once it's asked for: one API call per item, on demand.
+  if (!item.url && item.resolve){
+    let r = null;
+    try{ r = await item.resolve(); }catch(e){}
+    if (galleryItems[galleryIdx] !== item) return;   // moved on meanwhile
+    if (!r || !r.url){ toast(r && r.reason ? r.reason : 'CANNOT PLAY ' + item.name.toUpperCase().slice(0, 24)); return; }
+    item.url = r.url;
+    if (r.sbs){ item.isSbs = r.sbs.value; item.sbsAuthoritative = r.sbs.authoritative; }
+  }
   if (!item.sbsChecked){
     const sbsHint = await resolveSbsHint(item.name, item.file);
     item.isSbs = sbsHint.value;
@@ -3976,6 +4025,7 @@ function loadTypePaneHTML(){
       <button class="row" data-loadtype="video"><span class="label">IMAGE / VIDEO</span></button>
       <button class="row" data-loadtype="folder"><span class="label">FOLDER (PHOTOS + VIDEOS)</span></button>
       <button class="row" data-loadtype="model"><span class="label">3D MODEL (.OBJ / .STL / .USDZ)</span></button>
+      <button class="row" data-loadtype="pasteUrl"><span class="label">PASTE LINK FROM CLIPBOARD</span></button>
       <button class="row" data-loadtype="videoUrl"><span class="label">IMAGE / VIDEO URL</span></button>
       <button class="row" data-loadtype="modelUrl"><span class="label">3D MODEL URL</span></button>
       <button class="textbtn" data-loadtype="close">CLOSE</button>
@@ -4093,6 +4143,7 @@ loadTypeDlg.addEventListener('click', e=>{
     case 'video':    videoFile.click(); break;
     case 'folder':   folderFiles.click(); break;
     case 'model':    modelFile.click(); break;
+    case 'pasteUrl': pasteAndLoad(); break;
     case 'videoUrl': openUrlDlg('video'); break;
     case 'modelUrl': openUrlDlg('model'); break;
     case 'close':    break;
@@ -4106,59 +4157,443 @@ topbar.addEventListener('click', e=>{
   openList();
 });
 
-/* ---- URL dialog (video or model) ---- */
+/* ---- URL dialog (video or model) ----
+   A pasted/typed address can be a direct file link, or a page that merely
+   has a VR video on it. loadFromUrl() works out which and opens the video
+   as SBS:
+     - direct .mp4/.m3u8/... (or a server that says video/*): played as is
+     - DeoVR JSON (a site's /deovr list, a single-video JSON, deovr:// links)
+     - PLAYA API v2 (a site's /api/playa/v2 catalog, or one /video/<id>)
+     - any other HTML page: <video>/<source>, og:video, JSON-LD VideoObject,
+       links to video files, and video URLs inside the page's scripts
+   A bare site address tries the PLAYA catalog, then /deovr, then the page.
+   Catalogs open as a GALLERY (one stream fetched per item, on demand).
+   Everything here runs in the browser, so the page and the video must allow
+   cross-origin requests (CORS). Pages usually don't -- an optional proxy
+   (PAGE PROXY in the dialog) is used for the page/JSON lookups only, never
+   for the video stream itself. */
 let urlMode = 'video';
+const urlProxyInput = document.getElementById('urlProxy');
+const URL_PROXY_STORE = 'gyrosUrlProxy';
+try{ urlProxyInput.value = localStorage.getItem(URL_PROXY_STORE) || ''; }catch(e){}
+function saveUrlProxy(){
+  try{ localStorage.setItem(URL_PROXY_STORE, urlProxyInput.value.trim()); }catch(e){}
+}
+
 function openUrlDlg(mode){
   urlMode = mode;
   const isVideo = mode === 'video';
   document.getElementById('urlDlgTitle').textContent = isVideo ? 'IMAGE / VIDEO URL' : 'MODEL URL';
   document.getElementById('urlDlgNote').textContent = isVideo
-    ? 'The server must allow cross-origin requests (CORS), or loading will fail — if it does, save the file and use IMAGE / VIDEO instead.'
+    ? 'A direct file link, or a web page / DeoVR / PLAYA link with a VR video on it — the video is found and opened as SBS. The site must allow cross-origin requests (CORS); for pages that don\'t, set a page proxy below.'
     : 'Supports .obj, .stl and .usdz URLs (USDZ: plain-text USDA form only). The server must allow cross-origin requests (CORS).';
   urlInput.placeholder = isVideo
     ? 'https://example.com/clip.mp4'
     : 'https://example.com/model.obj';
+  document.getElementById('urlProxyRow').hidden = !isVideo;
   urlInput.value = '';
   urlDlg.hidden = false;
   urlInput.focus();
 }
 function submitUrl(){
-  const url = urlInput.value.trim();
-  if (!url){ urlDlg.hidden = true; return; }
+  const raw = urlInput.value.trim();
   urlDlg.hidden = true;
-  forgetMedia();
-  const label = url.split('/').pop().split('?')[0] || 'file';
-  const ext = label.includes('.') ? label.split('.').pop().toLowerCase() : '';
-  if (urlMode === 'model'){ loadModel(url, ext, label); return; }
+  saveUrlProxy();
+  if (!raw) return;
+  loadFromUrl(raw, urlMode);
+}
 
-  const IMG_EXTS = ['jpg','jpeg','png','webp','gif','avif','svg'];
-  const VID_EXTS = ['mp4','m4v','mov','webm','mkv','avi','3gp'];
-  // A fetch() to a URL blocked by CORS (or just unreachable) rejects with
-  // the same generic error either way -- the browser deliberately doesn't
-  // say which, so this message covers both rather than guessing wrong.
-  const BLOCKED_MSG = 'BLOCKED OR UNREACHABLE — SAVE & LOAD AS A FILE';
+/* ---- clipboard ---- */
+// Pulls the first link out of whatever was copied (a bare URL, a share-sheet
+// "Title https://…" blurb, a deovr:// deeplink, or just "site.com").
+function normalizePastedUrl(text){
+  if (!text) return null;
+  text = String(text).trim();
+  let u;
+  const m = text.match(/(?:deovr:\/\/)?https?:\/\/[^\s"'<>]+/i);
+  if (m) u = m[0];
+  else if (/^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/\S*)?$/i.test(text)) u = 'https://' + text;
+  else return null;
+  u = u.replace(/^deovr:\/\//i, '').replace(/[),.;\]]+$/, '');
+  try{ return new URL(u).href; }catch(e){ return null; }
+}
+// null = the browser wouldn't let us read it (unsupported or refused)
+async function readClipboardText(){
+  if (!navigator.clipboard || !navigator.clipboard.readText) return null;
+  try{ return await navigator.clipboard.readText(); }catch(e){ return null; }
+}
+async function pasteAndLoad(){
+  const text = await readClipboardText();
+  const u = normalizePastedUrl(text);
+  if (u){ loadFromUrl(u, 'video'); return; }
+  openUrlDlg('video');
+  toast(text == null ? 'PASTE THE LINK INTO THE FIELD' : 'NO LINK IN CLIPBOARD', 2200);
+}
+document.getElementById('urlPaste').addEventListener('click', async ()=>{
+  const text = await readClipboardText();
+  const u = normalizePastedUrl(text);
+  if (!u){
+    toast(text == null ? 'PASTE THE LINK INTO THE FIELD' : 'NO LINK IN CLIPBOARD', 2200);
+    urlInput.focus();
+    return;
+  }
+  urlInput.value = u;
+  submitUrl();
+});
+// Cmd/Ctrl+V anywhere outside a text field loads the copied link directly.
+document.addEventListener('paste', e=>{
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  const u = normalizePastedUrl(e.clipboardData && e.clipboardData.getData('text'));
+  if (!u) return;
+  e.preventDefault();
+  loadTypeDlg.hidden = true;
+  urlDlg.hidden = true;
+  loadFromUrl(u, 'video');
+});
 
-  // Treat image URLs as SBS images -- fetch as a blob and hand off to the
-  // shared local-file loader (loadSBSImage), which is what actually renders it.
-  const loadAsImage = () => fetch(url)
+/* ---- fetching ---- */
+const URL_IMG_EXTS = ['jpg','jpeg','png','webp','gif','avif','svg'];
+const URL_VID_EXTS = ['mp4','m4v','mov','webm','mkv','avi','3gp','m3u8'];
+const URL_MODEL_EXTS = ['obj','stl','usdz'];
+const IS_TOUCH_DEVICE = navigator.maxTouchPoints > 0;
+// Phones choke on 6K/8K VR streams: pick the best one at or under this
+// (rough frame height; SBS widths are halved when that's all we know).
+const STREAM_MAX_H = IS_TOUCH_DEVICE ? 2160 : 4096;
+
+function urlExt(u){
+  try{
+    const last = new URL(u).pathname.split('/').pop();
+    return last.includes('.') ? last.split('.').pop().toLowerCase() : '';
+  }catch(e){ return ''; }
+}
+function urlLabel(u){
+  try{
+    const x = new URL(u);
+    return decodeURIComponent(x.pathname.split('/').pop()) || x.hostname;
+  }catch(e){ return 'file'; }
+}
+function isVideoUrl(u){ return /\.(mp4|m4v|mov|webm|mkv|m3u8)(?:[?#]|$)/i.test(u); }
+
+function proxiedUrl(url){
+  const p = (urlProxyInput.value || '').trim();
+  if (!p) return null;
+  return p.includes('{url}') ? p.replace('{url}', encodeURIComponent(url)) : p + encodeURIComponent(url);
+}
+
+/* Fetches a page/JSON. A media response is never downloaded: headers only,
+   then aborted. Returns { status, type, text? , media? } or { blocked }. */
+async function peekUrl(url){
+  const tryOne = async u => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(()=>ctrl.abort(), 15000);
+    try{
+      const r = await fetch(u, { signal: ctrl.signal, credentials: 'omit' });
+      const type = (r.headers.get('content-type') || '').toLowerCase();
+      if (/^(video|audio|image)\//.test(type) || /mpegurl/.test(type)){
+        ctrl.abort();
+        return { status: r.status, type, media: r.ok };
+      }
+      if (!r.ok){ ctrl.abort(); return { status: r.status, type }; }
+      return { status: r.status, type, text: await r.text() };
+    }finally{ clearTimeout(timer); }
+  };
+  try{ return await tryOne(url); }
+  catch(e){
+    const pu = proxiedUrl(url);
+    if (!pu) return { blocked: true };
+    try{ return await tryOne(pu); }catch(e2){ return { blocked: true }; }
+  }
+}
+function parseJsonText(text){
+  const t = (text || '').trim();
+  if (!t || (t[0] !== '{' && t[0] !== '[')) return null;
+  try{ return JSON.parse(t); }catch(e){ return null; }
+}
+async function fetchJson(url){
+  const p = await peekUrl(url);
+  return p.text ? parseJsonText(p.text) : null;
+}
+
+/* ---- picking a stream ---- */
+const SBS_YES = { value: true,  authoritative: true };
+const SBS_NO  = { value: false, authoritative: true };
+// A VR link with no stated layout: try SBS, let the content probe overrule.
+const SBS_TRY = { value: true,  authoritative: false };
+
+function urlSbsGuess(name){
+  const s = String(name || '');
+  if (/sbs|(?:^|[^a-z])(lr|3dh|half-?sbs)(?:[^a-z]|$)/i.test(s)) return SBS_YES;
+  if (/(?:^|[^a-z])(tb|ou|3dv|top.?bottom|over.?under|mono|2d)(?:[^a-z]|$)/i.test(s)) return SBS_NO;
+  return SBS_TRY;
+}
+
+// Rough frame height from a URL/label ("…_2160p.mp4", "5K", "5760x2880"), 0 = unknown.
+function resHintOf(str){
+  const s = String(str || '');
+  let m = s.match(/(\d{3,4})p(?![a-z])/i);
+  if (m) return +m[1];
+  m = s.match(/(?:^|[^a-z0-9])([4-8])k(?![a-z0-9])/i);
+  if (m) return { 4: 2160, 5: 2880, 6: 3072, 7: 3584, 8: 4096 }[m[1]];
+  m = s.match(/(?:^|\D)(3840|4096|5120|5760|6144|7680|8192)(?:\D|$)/);
+  if (m) return +m[1] / 2;
+  m = s.match(/(?:^|\D)(720|1080|1440|1920|2048|2160|2560|2880)(?:\D|$)/);
+  if (m) return +m[1];
+  return 0;
+}
+// Best quality at or under `cap`; when everything is above it, the lowest;
+// when nothing says, the first.
+function pickByQuality(list, q, cap = STREAM_MAX_H){
+  if (!list.length) return null;
+  const known = list.filter(x => q(x) > 0);
+  if (!known.length) return list[0];
+  const ok = known.filter(x => q(x) <= cap).sort((a, b) => q(b) - q(a));
+  return ok.length ? ok[0] : known.sort((a, b) => q(a) - q(b))[0];
+}
+
+/* ---- DeoVR JSON (deovr.com/app/doc) ---- */
+function deovrSbs(v){
+  const m = String(v.stereoMode || '').toLowerCase();
+  if (m === 'sbs') return SBS_YES;
+  if (m === 'tb' || m === 'off' || v.is3d === false) return SBS_NO;
+  return SBS_TRY;
+}
+function deovrVideo(v, base){
+  const abs = u => { try{ return new URL(u, base).href; }catch(e){ return null; } };
+  const sources = [];
+  (v.encodings || []).forEach(enc => (enc && enc.videoSources || []).forEach(src => {
+    if (src && src.url) sources.push({ url: abs(src.url), res: +src.resolution || resHintOf(src.url) });
+  }));
+  const best = pickByQuality(sources.filter(x => x.url), x => x.res);
+  const url = best ? best.url : (v.path ? abs(v.path) : null);
+  if (!url) return null;
+  return { url, sbs: deovrSbs(v), name: v.title || '' };
+}
+function deovrListItems(obj, base){
+  const out = [];
+  (obj.scenes || []).forEach(sc => (sc && sc.list || []).forEach(v => {
+    if (!v) return;
+    if (v.encodings || v.path){
+      const r = deovrVideo(v, base);
+      if (r) out.push({ name: r.name || 'video', url: r.url, isSbs: r.sbs.value, sbsAuthoritative: r.sbs.authoritative });
+    } else if (v.video_url){
+      let vu; try{ vu = new URL(v.video_url, base).href; }catch(e){ return; }
+      out.push({ name: v.title || 'video', resolve: async ()=>{
+        const j = await fetchJson(vu);
+        return j ? deovrVideo(j, vu) : null;
+      }});
+    }
+  }));
+  return out;
+}
+
+/* ---- PLAYA API v2 (github.com/Playa-vr/PLAYA-API-v2) -- guest access only ---- */
+function playaBaseOf(url){
+  const m = url.match(/^(.*?\/api\/playa\/v2)(?:[/?#]|$)/i);
+  return m ? m[1] : null;
+}
+function playaData(j){
+  return j && j.status && typeof j.status === 'object' && j.status.code === 1 ? j.data : null;
+}
+function playaSbs(stereo){
+  const s = String(stereo || '').toUpperCase();
+  if (s === 'LR' || s === 'RL') return SBS_YES;
+  if (s === 'MN' || s === 'TB' || s === 'BT') return SBS_NO;
+  return SBS_TRY;
+}
+const PLAYA_REASONS = { login: 'SITE LOGIN REQUIRED', premium: 'PREMIUM ONLY ON THIS SITE' };
+function playaVideo(view){
+  const details = view.details || [];
+  const ordered = [...details.filter(d => d.type === 'full'), ...details.filter(d => d.type !== 'full')];
+  let reason = null;
+  for (const d of ordered){
+    const links = (d.links || []).filter(Boolean);
+    const streams = links.filter(l => l.is_stream !== false);
+    const pool = (streams.length ? streams : links).filter(l => l.url);
+    if (!pool.length){
+      reason = reason || links.map(l => l.unavailable_reason || l.UnavailableReason).find(Boolean) || null;
+      continue;
+    }
+    // quality_order 40-49 = 4K; PLAYA's own mobile apps stop there too
+    const best = pickByQuality(pool, l => +l.quality_order || 0, IS_TOUCH_DEVICE ? 49 : 1e9);
+    return { url: best.url, sbs: playaSbs(best.stereo), name: view.title || '' };
+  }
+  return { reason: reason ? (PLAYA_REASONS[reason] || String(reason).toUpperCase()) : 'NO PLAYABLE STREAM' };
+}
+function playaListItem(base, v){
+  return {
+    name: v.title || ('video ' + v.id),
+    resolve: async ()=>{
+      const d = playaData(await fetchJson(base + '/video/' + encodeURIComponent(v.id)));
+      return d ? playaVideo(d) : null;
+    }
+  };
+}
+async function playaCatalog(base){
+  const page = playaData(await fetchJson(base + '/videos?page-index=0&page-size=100'));
+  const list = page && Array.isArray(page.content) ? page.content : [];
+  return list.map(v => playaListItem(base, v));
+}
+
+/* Any JSON we know: PLAYA envelope, DeoVR list or single video. */
+async function resolveJson(j, src){
+  if (!j || typeof j !== 'object') return null;
+  if (j.status && typeof j.status === 'object' && 'code' in j.status){
+    const d = playaData(j);
+    if (!d) return { reason: String(j.status.message || 'SITE ERROR').toUpperCase().slice(0, 40) };
+    if (d.details){ const v = playaVideo(d); return v.url ? { video: v } : { reason: v.reason }; }
+    const base = playaBaseOf(src);
+    if (Array.isArray(d.content) && base) return { list: d.content.map(v => playaListItem(base, v)) };
+    return null;
+  }
+  if (Array.isArray(j.scenes)){
+    const items = deovrListItems(j, src);
+    return items.length ? { list: items } : null;
+  }
+  if (j.encodings || j.path){ const v = deovrVideo(j, src); return v ? { video: v } : null; }
+  if (j.video_url){
+    let vu; try{ vu = new URL(j.video_url, src).href; }catch(e){ return null; }
+    const jj = await fetchJson(vu);
+    const v = jj && deovrVideo(jj, vu);
+    return v ? { video: v } : null;
+  }
+  return null;
+}
+
+/* ---- HTML pages ---- */
+function scrapeHtmlForVideos(html, base){
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const found = [];   // { url, score, label }
+  const add = (u, score, label) => {
+    if (!u) return;
+    let abs;
+    try{ abs = new URL(String(u).trim().replace(/&amp;/g, '&'), base).href; }catch(e){ return; }
+    if (!/^https?:/i.test(abs) || found.some(f => f.url === abs)) return;
+    // hover previews / thumbnails rank below the real thing
+    if (/preview|thumb|teaser|hover|sprite|poster/i.test(abs)) score -= 1.5;
+    found.push({ url: abs, score, label: label || '' });
+  };
+  const deovrLinks = [];
+  doc.querySelectorAll('video[src]').forEach(v => add(v.getAttribute('src'), 7));
+  doc.querySelectorAll('video source[src], source[src][type^="video"], source[src][type*="mpegurl"]').forEach(sv =>
+    add(sv.getAttribute('src'), 7, ['label', 'res', 'size', 'title', 'data-res', 'data-quality']
+      .map(a => sv.getAttribute(a)).filter(Boolean).join(' ')));
+  ['og:video:secure_url', 'og:video:url', 'og:video', 'twitter:player:stream'].forEach(prop =>
+    doc.querySelectorAll(`meta[property="${prop}"],meta[name="${prop}"]`).forEach(m => {
+      const c = m.getAttribute('content');
+      if (c && isVideoUrl(c)) add(c, 6);
+    }));
+  doc.querySelectorAll('script[type="application/ld+json"]').forEach(sc => {
+    try{
+      const walk = o => {
+        if (!o || typeof o !== 'object') return;
+        if (Array.isArray(o)){ o.forEach(walk); return; }
+        if (o.contentUrl && /video/i.test(String(o['@type'] || ''))) add(o.contentUrl, 6);
+        Object.values(o).forEach(walk);
+      };
+      walk(JSON.parse(sc.textContent));
+    }catch(e){}
+  });
+  doc.querySelectorAll('a[href]').forEach(a => {
+    const h = a.getAttribute('href') || '';
+    if (/^deovr:\/\//i.test(h)){
+      try{ deovrLinks.push(new URL(h.replace(/^deovr:\/\//i, ''), base).href); }catch(e){}
+    } else if (isVideoUrl(h)) add(h, 4, a.textContent.trim());
+  });
+  // Web players usually keep their sources in script JSON -- scan the raw
+  // text as well, with JSON-escaped slashes undone.
+  const raw = html.replace(/\\u002[fF]/g, '/').replace(/\\\//g, '/');
+  const re = /https?:\/\/[^\s"'<>\\]+?\.(?:mp4|m4v|mov|webm|m3u8)(?:\?[^\s"'<>\\]*)?/gi;
+  let m, n = 0;
+  while ((m = re.exec(raw)) && n++ < 500) add(m[0], 2);
+  const title = ((doc.querySelector('meta[property="og:title"]') || {}).content || doc.title || '').trim();
+  return { found, deovrLinks, title };
+}
+
+/* ---- the pipeline ---- */
+// Returns { video:{url,sbs,name} } | { list:[…] } | { image } | { reason } | { blocked } | null
+async function resolveMediaPage(url){
+  const u = new URL(url);
+  const playaBase = playaBaseOf(url);
+  // A PLAYA API base itself -> its catalog.
+  if (playaBase && /\/api\/playa\/v2\/?$/i.test(u.pathname)){
+    const cat = await playaCatalog(playaBase);
+    return cat.length ? { list: cat } : null;
+  }
+  // A bare site: its catalog beats whatever the home page happens to show.
+  if (u.pathname === '/' || u.pathname === ''){
+    const cat = await playaCatalog(u.origin + '/api/playa/v2');
+    if (cat.length) return { list: cat };
+    const dj = await fetchJson(u.origin + '/deovr');
+    const r = dj && await resolveJson(dj, u.origin + '/deovr');
+    if (r) return r;
+  }
+  const peek = await peekUrl(url);
+  if (peek.blocked) return { blocked: true };
+  if (peek.media) return /^image\//.test(peek.type) ? { image: url } : { video: { url, sbs: null, name: '' } };
+  if (!peek.text) return peek.status ? { reason: 'SITE ANSWERED HTTP ' + peek.status } : null;
+  const json = parseJsonText(peek.text);
+  if (json) return resolveJson(json, url);
+
+  const { found, deovrLinks, title } = scrapeHtmlForVideos(peek.text, url);
+  // deovr:// links come with a stated layout -- prefer them
+  for (const link of deovrLinks.slice(0, 3)){
+    if (isVideoUrl(link)){ found.push({ url: link, score: 8, label: '' }); continue; }
+    const j = await fetchJson(link);
+    const r = j && await resolveJson(j, link);
+    if (r && (r.video || r.list)){
+      if (r.video && !r.video.name) r.video.name = title;
+      return r;
+    }
+  }
+  if (!found.length) return null;
+  const top = Math.max(...found.map(f => f.score));
+  const best = pickByQuality(found.filter(f => f.score === top), f => resHintOf(f.url + ' ' + f.label));
+  return { video: { url: best.url, sbs: null, name: title } };
+}
+
+// Treat image URLs as SBS images -- fetch as a blob and hand off to the
+// shared local-file loader (loadSBSImage), which is what actually renders it.
+// A fetch() blocked by CORS (or just unreachable) rejects with the same
+// generic error either way -- the browser deliberately doesn't say which.
+const URL_BLOCKED_MSG = 'BLOCKED OR UNREACHABLE — SAVE & LOAD AS A FILE';
+function loadImageUrl(url, label){
+  return fetch(url)
     .then(r=>{ if (!r.ok) throw new Error('http ' + r.status); return r.blob(); })
     .then(blob=>{ const f = new File([blob], label, { type: blob.type || 'image/jpeg' }); loadSBSImage(f); })
-    .catch(()=> toast(BLOCKED_MSG));
+    .catch(()=> toast(URL_BLOCKED_MSG));
+}
+function playUrlVideo(url, label, sbs){
+  playVideo(url, label, undefined, sbs || urlSbsGuess(label + ' ' + url));
+}
 
-  if (IMG_EXTS.includes(ext)){ loadAsImage(); return; }
-  if (VID_EXTS.includes(ext)){ playVideo(url, label); return; }
+let urlLoadSeq = 0;
+async function loadFromUrl(raw, mode = 'video'){
+  const url = normalizePastedUrl(raw);
+  if (!url){ toast('NOT A LINK', 1800); return; }
+  const seq = ++urlLoadSeq;
+  forgetMedia();
+  const ext = urlExt(url);
+  const label = urlLabel(url);
+  if (mode === 'model' || URL_MODEL_EXTS.includes(ext)){ loadModel(url, ext, label); return; }
+  if (URL_IMG_EXTS.includes(ext)){ loadImageUrl(url, label); return; }
+  if (URL_VID_EXTS.includes(ext)){ playUrlVideo(url, label); return; }
 
-  // No recognizable file extension -- common for CDN/dynamic image URLs
-  // (Pinterest, Reddit, many photo hosts). Ask the server what it actually
-  // is via a cheap HEAD request rather than silently guessing "video" and
-  // failing with an unrelated, more confusing error.
-  fetch(url, { method: 'HEAD' })
-    .then(r=>{
-      const type = r.headers.get('content-type') || '';
-      if (type.startsWith('image/')) loadAsImage();
-      else playVideo(url, label);
-    })
-    .catch(()=> toast(BLOCKED_MSG));
+  toast('LOOKING FOR VIDEO…', 20000);
+  let res = null;
+  try{ res = await resolveMediaPage(url); }catch(e){ res = null; }
+  if (seq !== urlLoadSeq) return;   // another link was pasted meanwhile
+  if (!res){ toast('NO VIDEO FOUND ON THIS PAGE', 2500); return; }
+  if (res.blocked){
+    toast(proxiedUrl(url) ? 'PAGE BLOCKED — EVEN VIA THE PROXY' : 'PAGE BLOCKED (CORS) — SET A PAGE PROXY IN IMAGE / VIDEO URL', 3500);
+    return;
+  }
+  if (res.reason){ toast(res.reason, 2500); return; }
+  if (res.list){ loadUrlGallery(res.list); return; }
+  if (res.image){ loadImageUrl(res.image, label); return; }
+  const v = res.video;
+  if (URL_IMG_EXTS.includes(urlExt(v.url))){ loadImageUrl(v.url, v.name || urlLabel(v.url)); return; }
+  playUrlVideo(v.url, (v.name || urlLabel(v.url)).slice(0, 80), v.sbs);
 }
 document.getElementById('urlOk').addEventListener('click', submitUrl);
 
@@ -4829,6 +5264,10 @@ document.addEventListener('keydown', e=>{
     return;
   }
 
+  // Cmd/Ctrl+V: leave it to the browser, so the 'paste' event (copied link
+  // -> loadFromUrl()) fires instead of a mapped key or the V shortcut.
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'v' || e.key === 'V')) return;
+
   /* ---- Key mapping (see "Key mapping" above): while it's listening every
      key is captured; otherwise a mapped key goes to its setting before any
      built-in meaning of that key is considered. Dialogs and text fields
@@ -4851,13 +5290,13 @@ document.addEventListener('keydown', e=>{
     return;
   }
 
-  /* ---- URL dialog: ↑/↓ move between the address field, LOAD and CLOSE;
-     on a button, ←/→ or A/D fire it (Enter/Space do natively). Typing in
-     the field is left alone. ---- */
+  /* ---- URL dialog: ↑/↓ move between the fields and buttons in on-screen
+     order; on a button, ←/→ or A/D fire it (Enter/Space do natively).
+     Typing in a field is left alone. ---- */
   if (!urlDlg.hidden && e.key !== 'Escape'){
-    const order = [urlInput, ...urlDlg.querySelectorAll('.textbtn')];
+    const order = [...urlDlg.querySelectorAll('.dlgInput, .textbtn')].filter(el => !el.closest('[hidden]'));
     const at = order.indexOf(document.activeElement);
-    const onButton = at > 0;
+    const onButton = at >= 0 && order[at].tagName === 'BUTTON';
     const key = onButton ? (DLG_WASD[e.key.toLowerCase()] || e.key) : e.key;
     if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'Tab'){
       e.preventDefault();
@@ -4870,7 +5309,7 @@ document.addEventListener('keydown', e=>{
       order[at].click();
       return;
     }
-    if (onButton || at === 0) return;   // the field and its buttons keep everything else
+    if (at >= 0) return;   // the fields and buttons keep everything else
   }
 
   /* ---- Escape ---- */
@@ -5100,6 +5539,7 @@ document.addEventListener('keydown', e=>{
   }
 });
 urlInput.addEventListener('keydown', e=>{ if (e.key === 'Enter') submitUrl(); });
+urlProxyInput.addEventListener('keydown', e=>{ if (e.key === 'Enter') submitUrl(); });
 
 /* menu interactions (delegated so both SBS panes work with one handler) */
 function stepValue(key, dir){
