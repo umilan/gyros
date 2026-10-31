@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.46</title>
+<title>GYROS v2.47</title>
 <style>
   :root{
     --bg:#000000;
@@ -607,7 +607,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.46';
+const APP_VERSION = '2.47';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -2197,22 +2197,10 @@ function recenter(){
   rig.position.set(0, 0, 0);
   camL.rotation.set(0, 0, 0);
   camR.rotation.set(0, 0, 0);
-  camL.clearViewOffset();
-  camR.clearViewOffset();
-  // Restore the viewer framing as well as the sensor heading. Otherwise a
-  // previous pan or trapezoid adjustment can leave the cube at an edge after
-  // a double-tap recenter.
-  state.posX = 0;
-  state.posY = 0;
-  state.contentZoom = 0;
-  state.zoom = 0;
-  state.scaleX = 0;
-  state.scaleY = 0;
-  state.trapezoid = 0;
-  updateQuad();
+  // Only where you're looking is reset. POS X/Y, CONTENT ZOOM, ZOOM, SCALE
+  // and TRAPEZOID are kept as set (RESET TO DEFAULTS clears those); this
+  // just re-applies POS X/Y's view offset to the cameras.
   applyEyeProjection();
-  refreshMenu();
-  saveState();
   toast('RECENTERED');
 }
 
