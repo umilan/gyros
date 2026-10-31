@@ -110,6 +110,14 @@ be — so it always boots to the demo.
   auto-rotate, SBS source, PLAY SPEED (video,
   -5 to 5: 1 is normal, 0 holds the frame, negative plays backward),
   2D TO 3D and 3D DEPTH (see below).
+- **PROJECTION** (CONTENT) — FLAT (a screen in front of you), 180 (VR180 /
+  equirectangular, a half sphere around you) or FISHEYE (a circular
+  180° fisheye straight from the lens). Detected when a photo or video
+  loads — from MP4 spherical metadata, then the file name (`fisheye`,
+  `mkx200`, `vr180`, `_180_` …), then the picture itself: black corners
+  around a disc mean FISHEYE, an SBS frame with square eyes (2:1 overall)
+  means 180. Photos are checked once, videos over their first three
+  readable frames. Set it by hand if the guess is wrong.
 - **2D TO 3D** — shows a flat (non-SBS) photo or video in stereo. An AI depth
   model, [Depth Anything V2 Small](https://huggingface.co/onnx-community/depth-anything-v2-small)
   (Apache-2.0), run in the browser by

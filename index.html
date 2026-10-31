@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.47</title>
+<title>GYROS v2.48</title>
 <style>
   :root{
     --bg:#000000;
@@ -607,7 +607,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.47';
+const APP_VERSION = '2.48';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -649,6 +649,9 @@ const DEFAULTS = {
   depth3d: 0,             // 2D TO 3D: 0 OFF | 1 ON -- a flat photo/video gets depth from an
                           // AI depth model and is shown in stereo, see updateDepth()
   depthAmount: 100,       // 3D DEPTH, percent of DEPTH_RANGE
+  projection: 0,          // PROJECTION: 0 FLAT | 1 180 (equirectangular half
+                          // sphere, VR180) | 2 FISHEYE (circular 180-degree
+                          // fisheye) -- set per photo/video by detectProjection...()
   cutoutModel: 0,         // MODEL: 0 FAST | 1 ACCURATE (CUTOUT_MODEL_URLS)
   cutoutSmooth: 20,       // SMOOTHING (people), 0..100: how soft the cut edge is
   cutoutRefine: 0,        // REFINE EDGE (people), -1..1: shifts the edge inside the
@@ -889,6 +892,7 @@ function switchView(newIdx){
 const CUTOUT_MODES = ['OFF', 'ON'];
 const CUTOUT_MODEL_NAMES = ['FAST', 'ACCURATE'];
 const DEPTH_MODES = ['OFF', 'ON'];
+const PROJECTIONS = ['FLAT', '180', 'FISHEYE'];
 
 const MENU = [
   { title:'GENERAL', items:[
@@ -932,6 +936,9 @@ const MENU = [
     // A flat (non-SBS) source made stereo from an AI depth map -- updateDepth().
     { type:'enum',  key:'depth3d', label:'2D TO 3D', options:DEPTH_MODES, when:'video', whenTrue:'monoSource' },
     { type:'step',  key:'depthAmount', label:'3D DEPTH', min:0, max:300, step:10, when:'video', whenTrue:'depthRows' },
+    // How the picture is mapped: a flat screen, or a half sphere around you
+    // -- see applyProjection(). Detected on load, can be set by hand.
+    { type:'enum',  key:'projection', label:'PROJECTION', options:PROJECTIONS, when:'video' },
     { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.5, dec:1, when:'video' },
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
   ]},
@@ -1219,7 +1226,7 @@ function refreshMenu(){
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
   state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length < CHROMA_MAX_KEYS;
   state.cutoutOn = state.cutout > 0;
-  state.monoSource = !state.sourceSbs;
+  state.monoSource = !state.sourceSbs && state.projection === 0;   // 2D TO 3D: flat mono only
   state.depthRows = state.monoSource && state.depth3d > 0;
   // Reduced menu tree (REDUCED_MENU): which branches are open.
   state.cutoutAccurate = state.cutoutModel === 1;
@@ -1261,7 +1268,7 @@ const video = document.getElementById('video');
 
 let renderer, scene, rig, camL, camR, world;
 let rtL, rtR, quadScene, quadCam, quadMesh, quadMat;
-let demoGroup, modelGroup, videoGroup, roomGroup;
+let demoGroup, modelGroup, videoGroup, roomGroup, domeGroup;
 let videoTexture, videoTextureR, videoMeshL, videoMeshR, videoMatL, videoMatR;
 // The real width/height of whatever is currently on screen, and whether it's a
 // still image. Needed because applyAll() re-calls applyVideoLayout() with no
@@ -1307,6 +1314,10 @@ function initThree(){
   modelGroup = new THREE.Group();
   videoGroup = new THREE.Group();
   world.add(demoGroup, modelGroup, videoGroup);
+  // PROJECTION 180 / FISHEYE: the eye meshes move here, a half sphere
+  // around the viewer -- see applyProjection().
+  domeGroup = new THREE.Group();
+  scene.add(domeGroup);
   // GRID ROOM surrounds the viewer, so it hangs off the scene itself, not
   // `world` -- content distance, CONTENT ZOOM and auto-rotate don't apply.
   roomGroup = new THREE.Group();
@@ -1565,6 +1576,8 @@ function initVideoMeshes(){
   videoMatR = new THREE.MeshBasicMaterial({ map: videoTextureR });
   videoMeshL = new THREE.Mesh(geo, videoMatL);
   videoMeshR = new THREE.Mesh(geo.clone(), videoMatR);
+  videoMeshL.userData.planeGeo = videoMeshL.geometry;   // applyProjection() swaps these out
+  videoMeshR.userData.planeGeo = videoMeshR.geometry;
   videoMeshL.layers.set(1);
   videoMeshR.layers.set(2);
   videoGroup.add(videoMeshL, videoMeshR);
@@ -1590,6 +1603,7 @@ function applyVideoLayout(w, h){
   };
   setCrop(videoMeshL.material.map, 0);
   setCrop(videoMeshR.material.map, state.sourceSbs ? 0.5 : 0);
+  applyProjection();
 }
 
 /* ---- final blit pass: every display adjustment happens here, so it works
@@ -3077,6 +3091,7 @@ function animate(){
   midiFlush();
   updateCutout();
   updateDepth();
+  updateDomeEyes();
   checkBotMenuIdle();
 
   const { w, h, ew, eh } = eyeSize();
@@ -3122,6 +3137,7 @@ function applyContent(){
   const demoOff = SHAPES[state.shape] === 'OFF';
   demoGroup.visible  = state.content === 'demo' && !demoOff;
   roomGroup.visible  = state.content === 'demo';   // empty unless GRID ROOM is built
+  domeGroup.visible  = state.content === 'video';  // empty unless PROJECTION isn't FLAT
   modelGroup.visible = state.content === 'model';
   videoGroup.visible = state.content === 'video';
   if (state.content !== 'video'){
@@ -3543,6 +3559,224 @@ async function resolveSbsHint(label, file){
   return { value: filenameHint, authoritative: filenameHint };
 }
 
+/* ---- PROJECTION: how the picture maps onto your view.
+     FLAT     a screen in front of you (the plane in videoGroup)
+     180      VR180 / equirectangular: each eye's picture covers the half
+              sphere in front of you, 180 degrees across and 180 up-down,
+              longitude and latitude spread evenly over its width and height
+     FISHEYE  a circular 180-degree fisheye straight from the lens: the
+              picture is a disc, its centre straight ahead and its rim 90
+              degrees off; the angle from centre grows evenly with distance
+              from the disc's centre (equidistant)
+   For 180 and FISHEYE the eye meshes move into domeGroup and become a half
+   sphere DOME_R around the viewer; each is kept centred on its own eye
+   every frame (updateDomeEyes()), so stereo parallax comes only from the
+   pictures, never from the sphere. The SBS crop (applyVideoLayout()) maps
+   the left/right halves onto the same sphere unchanged. 2D TO 3D is for
+   FLAT only.
+
+   Detection, most to least trusted -- as for SBS:
+     1) MP4 spherical metadata (sv3d box): 'equi' -> 180, 'mshp' (the lens
+        mesh VR180 cameras write) -> FISHEYE
+     2) the file name: "fisheye", "mkx200", "rf52" -> FISHEYE; "vr180",
+        "180x180", or 180 on its own between separators -> 180
+     3) the picture, on a photo once, on a video over up to 3 frames that
+        aren't black (projectionVerdict()): black corners around a bright
+        disc -> FISHEYE; else a stereo pair whose eyes are square (a 2:1
+        SBS frame, VR180's standard shape) -> 180; else FLAT. A mono square
+        picture stays FLAT -- plenty of ordinary photos are square. ---- */
+const DOME_R = 20;                  // m
+const DOME_SEG = 96;
+const FISHEYE_FOV = Math.PI;        // the disc's rim is this far across, rad (180 degrees)
+let domeGeo180 = null, domeGeoFish = null;
+
+function domeGeometry(fisheye){
+  // Front half sphere seen from inside: SphereGeometry's phi PI..2PI is the
+  // half facing -Z, and mirroring x turns the faces inward and runs u left
+  // to right. Its own UVs are then exactly equirectangular.
+  const g = new THREE.SphereGeometry(1, DOME_SEG, DOME_SEG, Math.PI, Math.PI, 0, Math.PI);
+  g.scale(-1, 1, 1);
+  if (fisheye){
+    const pos = g.attributes.position, uv = g.attributes.uv;
+    for (let i = 0; i < pos.count; i++){
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const theta = Math.acos(THREE.MathUtils.clamp(-z, -1, 1));   // angle off straight ahead
+      const r = 0.5 * theta / (FISHEYE_FOV / 2);
+      const len = Math.hypot(x, y);
+      uv.setXY(i, 0.5 + (len > 1e-9 ? r * x / len : 0), 0.5 + (len > 1e-9 ? r * y / len : 0));
+    }
+  }
+  return g;
+}
+
+// Puts the eye meshes on the plane or the dome, per state.projection.
+function applyProjection(){
+  if (!videoMeshL || !domeGroup) return;
+  const proj = state.projection;
+  if (proj && !domeGeo180){ domeGeo180 = domeGeometry(false); domeGeoFish = domeGeometry(true); }
+  for (const m of [videoMeshL, videoMeshR]){
+    if (!proj){
+      if (m.parent !== videoGroup) videoGroup.add(m);
+      m.geometry = m.userData.planeGeo;
+      m.position.set(0, 0, 0);
+      m.rotation.set(0, 0, 0);
+    } else {
+      if (m.parent !== domeGroup) domeGroup.add(m);
+      m.geometry = proj === 1 ? domeGeo180 : domeGeoFish;
+      m.scale.setScalar(DOME_R);
+    }
+  }
+}
+// Every frame: each dome centred on its own eye, turned by ANGLE.
+const domeEyePos = new THREE.Vector3();
+function updateDomeEyes(){
+  if (!state.projection || state.content !== 'video') return;
+  const ang = -THREE.MathUtils.degToRad(state.contentAngle);
+  camL.getWorldPosition(videoMeshL.position);
+  camR.getWorldPosition(videoMeshR.position);
+  videoMeshL.rotation.set(0, 0, ang);
+  videoMeshR.rotation.set(0, 0, ang);
+}
+
+function setProjection(p){
+  if (state.projection === p) return;
+  state.projection = p;
+  applyVideoLayout();
+  refreshMenu();
+}
+
+function projectionFromName(label){
+  if (!label) return null;
+  const s = String(label).toLowerCase();
+  if (/fish[\s_.-]?eye|mkx[\s_-]?2\d\d|(^|[^a-z0-9])rf52([^0-9]|$)/.test(s)) return 2;
+  if (/vr[\s_-]?180|180x180|(^|[\s_.()\[-])180([\s_.()\]-]|$)/.test(s)) return 1;
+  return null;
+}
+
+// MP4 'sv3d' (Google Spherical Video V2): 1 for equirectangular, 2 for a
+// lens mesh, null when absent or unreadable.
+async function detectMp4Projection(file){
+  try{
+    let box = await mp4FindChild(file, 0, file.size, 'moov');
+    for (const t of ['trak', 'mdia', 'minf', 'stbl', 'stsd']){
+      if (!box) return null;
+      box = await mp4FindChild(file, box.start + box.headerSize, box.size - box.headerSize, t);
+    }
+    if (!box) return null;
+    let offset = box.start + box.headerSize + 8;
+    const end = box.start + box.size;
+    for (let steps = 0; offset < end && steps < 1000; steps++){
+      const entry = await mp4ReadBoxHeader(file, offset);
+      if (!entry || entry.size <= 0) break;
+      const nestedStart = entry.start + entry.headerSize + 78;
+      const nestedLen = entry.start + entry.size - nestedStart;
+      const sv3d = nestedLen > 0 ? await mp4FindChild(file, nestedStart, nestedLen, 'sv3d') : null;
+      if (sv3d){
+        const proj = await mp4FindChild(file, sv3d.start + sv3d.headerSize, sv3d.size - sv3d.headerSize, 'proj');
+        if (!proj) return 1;
+        const inner = proj.start + proj.headerSize, innerLen = proj.size - proj.headerSize;
+        if (await mp4FindChild(file, inner, innerLen, 'mshp')) return 2;
+        if (await mp4FindChild(file, inner, innerLen, 'cbmp')) return null;   // cube map: not supported
+        return 1;
+      }
+      offset += entry.size;
+    }
+    return null;
+  }catch(e){
+    console.warn('[GYROS] sv3d metadata read failed (non-fatal):', e);
+    return null;
+  }
+}
+async function resolveProjectionHint(label, file){
+  if (file){
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (MP4_STEREO_EXTS.has(ext)){
+      const p = await detectMp4Projection(file);
+      if (p !== null) return p;
+    }
+  }
+  return projectionFromName(label);
+}
+
+/* One frame, one eye (the left half of an SBS frame): 'fish' | 'other' |
+   null (black, flat or unreadable). Looks at a PROJ_GRID x PROJ_GRID luma
+   grid: cells well outside the circle the eye's frame inscribes (its four
+   corners) against cells well inside it. */
+const PROJ_GRID = 48;
+let projCtx = null;
+function projectionVerdict(source, w, h, sbs){
+  if (!w || !h) return null;
+  const ew = sbs ? w / 2 : w;
+  if (ew / h < 0.8 || ew / h > 1.25) return 'other';   // a fisheye disc sits in a squarish frame
+  try{
+    if (!projCtx){
+      const c = document.createElement('canvas');
+      c.width = c.height = PROJ_GRID;
+      projCtx = c.getContext('2d', { willReadFrequently: true });
+    }
+    projCtx.drawImage(source, 0, 0, ew, h, 0, 0, PROJ_GRID, PROJ_GRID);
+    const px = projCtx.getImageData(0, 0, PROJ_GRID, PROJ_GRID).data;
+    const corner = [[0, 0], [0, 0], [0, 0], [0, 0]];   // [sum, count] per corner
+    let inSum = 0, inSq = 0, inN = 0, outSq = 0, outSum = 0, outN = 0;
+    for (let y = 0; y < PROJ_GRID; y++){
+      for (let x = 0; x < PROJ_GRID; x++){
+        const i = (y * PROJ_GRID + x) * 4;
+        const l = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+        const nx = (x + 0.5) / PROJ_GRID * 2 - 1, ny = (y + 0.5) / PROJ_GRID * 2 - 1;
+        const r = Math.hypot(nx, ny);
+        if (r < 0.85){ inSum += l; inSq += l * l; inN++; }
+        else if (r > 1.12){
+          outSum += l; outSq += l * l; outN++;
+          const c = corner[(ny > 0 ? 2 : 0) + (nx > 0 ? 1 : 0)]; c[0] += l; c[1]++;
+        }
+      }
+    }
+    const inMean = inSum / inN, inStd = Math.sqrt(Math.max(0, inSq / inN - inMean * inMean));
+    const outMean = outSum / outN, outStd = Math.sqrt(Math.max(0, outSq / outN - outMean * outMean));
+    if (inMean < 25 || inStd < 4) return null;   // black or featureless frame: no opinion
+    const cornersDark = corner.every(([sum, n]) => sum / n < 24);
+    return cornersDark && outStd < 10 && inMean > outMean + 25 ? 'fish' : 'other';
+  }catch(e){
+    return null;   // cross-origin pixels can't be read
+  }
+}
+// Final call from the frames' verdicts (an empty list: shape alone).
+function decideProjection(verdicts, w, h, sbs){
+  const fish = verdicts.filter(v => v === 'fish').length;
+  if (verdicts.length && fish * 2 > verdicts.length) return 2;
+  const eyeAspect = (sbs ? w / 2 : w) / h;
+  return sbs && eyeAspect > 0.94 && eyeAspect < 1.08 ? 1 : 0;
+}
+function imageProjection(img, w, h, sbs){
+  const v = projectionVerdict(img, w, h, sbs);
+  return decideProjection(v ? [v] : [], w, h, sbs);
+}
+
+// A video: up to PROJ_PROBE_FRAMES readable frames, PROJ_PROBE_INTERVAL
+// apart, starting a moment in so the SBS probe has usually answered first
+// (the eye's shape depends on it). Retired like the SBS probe by anything
+// newer, including PROJECTION set by hand.
+const PROJ_PROBE_FRAMES = 3, PROJ_PROBE_TRIES = 12, PROJ_PROBE_INTERVAL = 700, PROJ_PROBE_DELAY = 1200;
+let projProbeToken = 0;
+function cancelProjectionProbe(){ projProbeToken++; }
+function probeVideoProjection(onVerdict){
+  const token = ++projProbeToken;
+  const verdicts = [];
+  let tries = 0;
+  const finish = ()=> onVerdict(decideProjection(verdicts, video.videoWidth, video.videoHeight, state.sourceSbs));
+  const attempt = ()=>{
+    if (token !== projProbeToken) return;
+    if (video.readyState >= 2){
+      const v = projectionVerdict(video, video.videoWidth, video.videoHeight, state.sourceSbs);
+      if (v) verdicts.push(v);
+      if (verdicts.length >= PROJ_PROBE_FRAMES){ finish(); return; }
+    }
+    if (++tries < PROJ_PROBE_TRIES) setTimeout(attempt, PROJ_PROBE_INTERVAL);
+    else if (video.videoWidth) finish();
+  };
+  setTimeout(attempt, PROJ_PROBE_DELAY);
+}
+
 /* ---- video loading ---- */
 const videoFile = document.getElementById('videoFile');
 videoFile.addEventListener('change', ()=>{
@@ -3801,9 +4035,11 @@ function loadSBSImage(file){
   const url = mediaObjectURL(file);
   const label = file.name;
   const filenameHint = /sbs/i.test(label);
-  applyImageTexture(url, (w, h, img) => {
+  cancelProjectionProbe();
+  applyImageTexture(url, async (w, h, img) => {
     const isSbs = filenameHint || imageLooksSbs(img, w, h);
     if (state.sourceSbs !== isSbs){ state.sourceSbs = isSbs; refreshMenu(); }
+    setProjection(projectionFromName(label) ?? imageProjection(img, w, h, isSbs));
     state.mode = 1;
     state.content = 'video';   // reuse the video display group
     applyAll();
@@ -3822,6 +4058,9 @@ function loadSBSImage(file){
 async function playVideo(src, label, file, hintOverride){
   usingImage = false;
   cancelSbsProbe();
+  cancelProjectionProbe();
+  const projHint = await resolveProjectionHint(label, file);
+  setProjection(projHint ?? 0);
   stopReverse();
   restoreVideoMaterials();
   const sbsHint = hintOverride || await resolveSbsHint(label, file);
@@ -3841,6 +4080,7 @@ async function playVideo(src, label, file, hintOverride){
   };
   if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
   if (!sbsHint.authoritative) probeVideoSbs(setSourceSbs);
+  if (projHint === null) probeVideoProjection(setProjection);
   state.content = 'video';
   state.mode = 1;
   applyAll();
@@ -4084,12 +4324,15 @@ function showGalleryImage(item){
   state.content = 'video';
   applyAll();
   refreshMenu();
+  cancelProjectionProbe();
   applyImageTexture(item.url, (w, h, img) => {
     if (!item.sbsChecked){
       item.isSbs = item.isSbs || imageLooksSbs(img, w, h);
       item.sbsChecked = true;
     }
     setSourceSbs(item.isSbs);
+    if (item.projection === undefined) item.projection = projectionFromName(item.name) ?? imageProjection(img, w, h, item.isSbs);
+    setProjection(item.projection);
   }, () => {
     toast('COULD NOT LOAD ' + item.name.toUpperCase().slice(0, 24));
   });
@@ -4098,6 +4341,7 @@ function showGalleryImage(item){
 async function showGalleryVideo(item){
   usingImage = false;
   cancelSbsProbe();
+  cancelProjectionProbe();
   stopReverse();
   restoreVideoMaterials();
   // Same immediate switch as showGalleryImage() above, for the same reason.
@@ -4139,6 +4383,16 @@ async function showGalleryVideo(item){
     item.sbsAuthoritative = true;
     setSourceSbs(isSbs);
   });
+  if (item.projection === undefined){
+    const hint = await resolveProjectionHint(item.name, item.file);
+    if (galleryItems[galleryIdx] !== item) return;
+    if (hint !== null) item.projection = hint;
+    else{
+      setProjection(0);
+      probeVideoProjection(p => { item.projection = p; setProjection(p); });
+    }
+  }
+  if (item.projection !== undefined) setProjection(item.projection);
 }
 
 folderFiles.addEventListener('change', ()=>{
@@ -4370,7 +4624,13 @@ function stepEnumValue(node, dir){
     if (SHAPES[state.shape] !== 'OFF') state.content = 'demo';
     applyAll();
   }
-  if (node.key === 'portraitRot') applyAll();   // turns the page now if it's portrait
+  if (node.key === 'portraitRot') applyAll();
+  if (node.key === 'projection'){
+    cancelProjectionProbe();   // the user's choice wins over a late detection
+    if (galleryItems.length && galleryItems[galleryIdx]) galleryItems[galleryIdx].projection = state.projection;
+    applyVideoLayout();
+    refreshMenu();
+  }   // turns the page now if it's portrait
   if (node.key === 'trackingAlgo'){
     recenter();   // avoid a jump: each algorithm accumulates its own reference
     motionRateUnavailableWarned = false;   // give GYRO (BETA) a fresh verdict each time it's selected
@@ -6296,7 +6556,7 @@ function depthNextSetup(){
 
 // Runs every frame from animate().
 function updateDepth(){
-  const on = state.depth3d > 0 && state.content === 'video' && !state.sourceSbs;
+  const on = state.depth3d > 0 && state.content === 'video' && !state.sourceSbs && state.projection === 0;
   if (!on){
     depthUniforms.depthAmt.value = 0;
     depth.failed = false;   // turning it on again tries again
