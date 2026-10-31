@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.53</title>
+<title>GYROS v2.54</title>
 <style>
   :root{
     --bg:#000000;
@@ -447,8 +447,9 @@
 
   /* SET CHROMA KEY's aiming crosshair -- one per eye, on the exact centre of
      the picture (where endChromaPick() samples), with how to pick under
-     it. Not shifted by SBS EYE DIST: that moves the UI chrome, not the
-     picture. */
+     it. Shifted by SBS EYE DIST like the rest of the per-eye UI, so the two
+     crosshairs fuse at the UI's depth; readChromaKeyColor() samples under
+     the shifted left crosshair to match. */
   .chromaPick{
     position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
     z-index:45;pointer-events:none;
@@ -464,8 +465,12 @@
     background:rgba(0,0,0,0.5);   /* readable on any backdrop, same as .toast */
   }
   body[data-chroma-pick="1"] .chromaPickL{display:flex;}
-  body[data-chroma-pick="1"][data-sbs="1"] .chromaPickL{left:25%;}
-  body[data-chroma-pick="1"][data-sbs="1"] .chromaPickR{display:flex;left:75%;}
+  body[data-chroma-pick="1"][data-sbs="1"] .chromaPickL{
+    left:25%;transform:translate(-50%,-50%) translateX(calc(-1 * var(--ui-eye-shift)));
+  }
+  body[data-chroma-pick="1"][data-sbs="1"] .chromaPickR{
+    display:flex;left:75%;transform:translate(-50%,-50%) translateX(var(--ui-eye-shift));
+  }
 
   /* diagnostic overlay, opt-in via ?debug=1 -- see kbDebugLog() below.
      pointer-events:none so it can never intercept a tap/click even while
@@ -609,7 +614,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.53';
+const APP_VERSION = '2.54';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -5960,13 +5965,14 @@ btKeysDlg.addEventListener('dblclick', e=>{
    Keyboard: arrows drive the OSD (and the list when open)
    ========================================================================= */
 document.addEventListener('keydown', e=>{
-  /* ---- Chroma key crosshair waiting (startChromaPick()): Enter, Space or
-     the left/right arrow picks, Esc (or its X alias) cancels; every other
+  /* ---- Chroma key crosshair waiting (startChromaPick()): Enter, Space,
+     any arrow (or its W/A/S/D alias) picks, Esc (or its X alias) cancels; every other
      key is held back so nothing changes underneath while aiming. ---- */
   if (chromaPick){
     e.preventDefault();
     if (e.repeat) return;
-    if (['Enter', ' ', 'ArrowLeft', 'ArrowRight'].includes(e.key)) endChromaPick(true);
+    const k = DLG_WASD[e.key.toLowerCase()] || e.key;
+    if (['Enter', ' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(k)) endChromaPick(true);
     else if (['Escape', 'x', 'X'].includes(e.key)) endChromaPick(false);
     return;
   }
@@ -6675,8 +6681,8 @@ async function depthRun(src){
 }
 
 /* ---- Chroma key: SET CHROMA KEY shows a crosshair on the centre of the
-   picture (aim it with your head) and waits: a tap, Enter, Space or the
-   left/right arrow picks, Esc cancels. The pick reads that spot back from
+   picture (aim it with your head) and waits: a tap, Enter, Space or any
+   arrow picks, Esc cancels. The pick reads that spot back from
    the left eye's render target -- so it's the colour as actually rendered,
    before BRIGHTNESS -- and keys everything near it to black in the blit
    shader (keyMask()). ---- */
@@ -6706,10 +6712,12 @@ function applyChromaUniforms(){
 }
 
 // Average colour (sRGB 0..1) of a 5x5 patch of the left eye target under the
-// eye's centre, or null if the picture doesn't cover the centre.
+// left crosshair, or null if the picture doesn't cover it.
 function readChromaKeyColor(){
-  // The centre of the eye (NDC 0,0) through the same mapping as the shader.
-  const p = new THREE.Vector3(0, 0, 1).applyMatrix3(quadMat.uniforms.quadXform.value);
+  // The left crosshair: the eye's centre (NDC 0,0), moved left by SBS EYE
+  // DIST in SBS (see .chromaPickL), through the same mapping as the shader.
+  const nx = state.sbs ? -state.uiEyeDist / 100 : 0;
+  const p = new THREE.Vector3(nx, 0, 1).applyMatrix3(quadMat.uniforms.quadXform.value);
   let u = p.x / p.z, v = p.y / p.z;
   if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) return null;
   if (state.flipX) u = 1 - u;
