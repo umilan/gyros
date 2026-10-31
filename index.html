@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.48</title>
+<title>GYROS v2.49</title>
 <style>
   :root{
     --bg:#000000;
@@ -607,7 +607,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.48';
+const APP_VERSION = '2.49';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -939,7 +939,7 @@ const MENU = [
     // How the picture is mapped: a flat screen, or a half sphere around you
     // -- see applyProjection(). Detected on load, can be set by hand.
     { type:'enum',  key:'projection', label:'PROJECTION', options:PROJECTIONS, when:'video' },
-    { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.5, dec:1, when:'video' },
+    { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.25, dec:2, when:'video' },
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
   ]},
   { title:'POSITIONING', items:[
@@ -5394,6 +5394,48 @@ function keyMapApply(e){
   return true;
 }
 
+/* ---- Default shortcuts, laid out for a numeric keypad (the main row's
+   digits and symbols work the same). Keys you map yourself win over these
+   (keyMapApply() runs first). Steps are the setting's own step times
+   `mult`, so a press visibly moves things; holding a key repeats.
+     -  +   PLAY SPEED down / up (0.25 a press)
+     8  2   POS Y up / down
+     6  4   CONTENT ZOOM up / down
+     3  1   next / previous item -- gallery photo/video, or DEMO shape
+     9  7   PERSPECTIVE + / -
+     /  *   EYE DISTANCE + / -   ---- */
+const DEFAULT_KEYS = {
+  '-': { key:'playSpeed', dir:-1, mult:1 }, '+': { key:'playSpeed', dir:1, mult:1 },
+  '8': { key:'posY', dir:1, mult:5 },        '2': { key:'posY', dir:-1, mult:5 },
+  '6': { key:'contentZoom', dir:1, mult:5 }, '4': { key:'contentZoom', dir:-1, mult:5 },
+  '3': { item:1 },                           '1': { item:-1 },
+  '9': { key:'fov', dir:1, mult:5 },         '7': { key:'fov', dir:-1, mult:5 },
+  '/': { key:'eyeDist', dir:1, mult:5 },     '*': { key:'eyeDist', dir:-1, mult:5 }
+};
+function defaultKeyApply(e){
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  // Numpad digits count by the key itself, NumLock on or off.
+  const d = DEFAULT_KEYS[/^Numpad[0-9]$/.test(e.code) ? e.code.slice(6) : e.key];
+  if (!d) return false;
+  e.preventDefault();
+  if (d.item){
+    if (e.repeat) return true;
+    // Only where there's a list to step through: a gallery, or the demo shapes.
+    if (galleryItems.length || (state.content === 'demo' && ENUM_SPEC.shape.options === SHAPES)){
+      stepEnumValue(ENUM_SPEC.shape, d.item);
+      if (!galleryItems.length) toast(SHAPES[state.shape]);
+      renderOsd();
+    }
+    return true;
+  }
+  if (d.key === 'playSpeed' && (state.content !== 'video' || usingImage)) return true;   // video only
+  const spec = SPEC[d.key];
+  setStepValue(d.key, state[d.key] + d.dir * spec.step * d.mult);
+  renderOsd();
+  toast(spec.label + ' ' + fmt(d.key, state[d.key]));
+  return true;
+}
+
 function keyMapItem(id){
   let item = null;
   [...MENU, ...REDUCED_MENU].forEach(section => section.items.forEach(i => { if (!item && osdItemId(i) === id) item = i; }));
@@ -5946,6 +5988,9 @@ document.addEventListener('keydown', e=>{
   if (loadTypeDlg.hidden && urlDlg.hidden &&
       !(document.activeElement && document.activeElement.tagName === 'INPUT') &&
       keyMapApply(e)) return;
+  if (loadTypeDlg.hidden && urlDlg.hidden &&
+      !(document.activeElement && document.activeElement.tagName === 'INPUT') &&
+      defaultKeyApply(e)) return;
 
   // Keyboard aliases shown in the Bluetooth command list. Keep capture mode
   // above this block so learning X/Z/[ ] records the real incoming key.
@@ -6215,10 +6260,11 @@ function stepValue(key, dir){
 // Also how a MIDI knob/fader sets a step setting directly (midiApply()).
 function setStepValue(key, v){
   const spec = SPEC[key];
-  // Fractional steps land on the step's own grid (PLAY SPEED 0.5: 1.0, 1.5,
-  // ...), so a value saved off it before (1.3) snaps back on.
+  // Fractional steps land on the step's own grid (PLAY SPEED 0.25: 1.00,
+  // 1.25, ...), so a value saved off it before (1.3) snaps back on.
   const next = THREE.MathUtils.clamp(v, spec.min, spec.max);
-  state[key] = spec.dec ? Math.round(Math.round(next / spec.step) * spec.step * 10) / 10 : Math.round(next);
+  const p10 = Math.pow(10, spec.dec || 0);
+  state[key] = spec.dec ? Math.round(Math.round(next / spec.step) * spec.step * p10) / p10 : Math.round(next);
   if (key === 'mountTilt' || key === 'mountRoll' || key === 'mountYaw') state.mountAuto = false;   // a hand-set angle sticks
   if (key === 'playSpeed') applyPlaySpeed();
   updateQuad();

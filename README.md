@@ -64,6 +64,18 @@ RESET TO DEFAULTS.
 viewing, `↑` opens the strip, `↓` opens the list, `←/→` change eye distance.
 `Esc` closes whatever is open. Mouse wheel and trackpad pinch zoom.
 
+**Shortcuts** (laid out for a numeric keypad; the main keyboard's digits and
+symbols work too; your own key mappings take priority):
+
+| key | does |
+|---|---|
+| `-` / `+` | PLAY SPEED down / up (0.25 steps) |
+| `8` / `2` | POS Y up / down |
+| `6` / `4` | CONTENT ZOOM up / down |
+| `3` / `1` | next / previous file in a gallery, or DEMO shape |
+| `9` / `7` | PERSPECTIVE + / − |
+| `/` / `*` | EYE DISTANCE + / − |
+
 **Gamepad** (Bluetooth or USB, standard layout): D-pad or left stick = arrows,
 `A` = activate, `B` = Esc, `X` = play / pause, `Y` = swap strip and list,
 `LB`/`RB` = `[` / `]`, hold a trigger for Shift, `START` = load dialog,
