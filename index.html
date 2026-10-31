@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.50</title>
+<title>GYROS v2.51</title>
 <style>
   :root{
     --bg:#000000;
@@ -404,8 +404,10 @@
   }
   .toast.show{opacity:1;}
   .toastR{display:none;}
-  body[data-sbs="1"] .toastL{left:25%;}
-  body[data-sbs="1"] .toastR{display:block;left:75%;}
+  /* SBS EYE DIST moves each eye's toast like the rest of that eye's UI, so
+     it sits at the same depth as the panes. */
+  body[data-sbs="1"] .toastL{left:25%;transform:translateX(-50%) translateX(calc(-1 * var(--ui-eye-shift)));}
+  body[data-sbs="1"] .toastR{display:block;left:75%;transform:translateX(-50%) translateX(var(--ui-eye-shift));}
 
   /* Content navigator — points back toward the loaded content once the gyro
      has carried the view off it. Opacity is driven from JS in proportion to
@@ -607,7 +609,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.50';
+const APP_VERSION = '2.51';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
