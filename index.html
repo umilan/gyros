@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.41</title>
+<title>GYROS v2.42</title>
 <style>
   :root{
     --bg:#000000;
@@ -593,7 +593,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.41';
+const APP_VERSION = '2.42';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -684,6 +684,10 @@ const DEFAULTS = {
                             // facing forward.
   mountRoll: 0,            // PHONE ROLL, degrees: the phone turned in its own
                             // plane, i.e. its long edge not level.
+  mountYaw: 0,             // PHONE YAW, degrees: the phone turned left/right
+                            // about the head's vertical axis (a visor that
+                            // sits skewed on the face). AUTO TILT can't see
+                            // it -- only CALIBRATE HEAD measures it.
   neckDepth: 1,            // 6DOF DEPTH: strength of V2.8 (6DOF)'s neck-model
                             // head translation, multiplier on V28_NECK (0 =
                             // rotation only, 1 = a real neck). No effect on
@@ -787,6 +791,7 @@ function applyView(){
   state.mirrorUI = VIEW_MIRROR[state.view];
   syncMountRows();
   if (!state.holo3) fovMeasureEnd();
+  if (!state.mountRows) headCalEnd();
 }
 // AUTO TILT / PHONE TILT / PHONE ROLL only do anything on the V2.8 (6DOF)
 // pipeline, which HOLO2 and HOLO3 always use -- hide them otherwise
@@ -809,15 +814,15 @@ const PER_VIEW_KEYS = [
   'trapezoid',
   'flipX', 'flipY',
   'freezeX',
-  'mountAuto', 'mountTilt', 'mountRoll'
+  'mountAuto', 'mountTilt', 'mountRoll', 'mountYaw'
 ];
 // HOLO2 and HOLO3 can't work without knowing the mount, so they start on
 // AUTO TILT with a 45-degree guess; the other views start with the phone
 // taken as upright.
 function mountDefaults(idx){
   return VIEW_ABOVE[idx]
-    ? { mountAuto:true, mountTilt:45, mountRoll:0 }
-    : { mountAuto:DEFAULTS.mountAuto, mountTilt:DEFAULTS.mountTilt, mountRoll:DEFAULTS.mountRoll };
+    ? { mountAuto:true, mountTilt:45, mountRoll:0, mountYaw:0 }
+    : { mountAuto:DEFAULTS.mountAuto, mountTilt:DEFAULTS.mountTilt, mountRoll:DEFAULTS.mountRoll, mountYaw:DEFAULTS.mountYaw };
 }
 function viewDefaults(idx){
   const d = {};
@@ -868,6 +873,9 @@ const MENU = [
     { type:'check', key:'mountAuto', label:'AUTO TILT',  whenTrue:'mountRows' },
     { type:'step',  key:'mountTilt', label:'PHONE TILT', min:-90, max:180, step:1, whenTrue:'mountRows' },
     { type:'step',  key:'mountRoll', label:'PHONE ROLL', min:-180, max:180, step:1, whenTrue:'mountRows' },
+    { type:'step',  key:'mountYaw',  label:'PHONE YAW',  min:-90, max:90, step:1, whenTrue:'mountRows' },
+    // Measures all three angles above from two head sweeps -- headCalStep().
+    { type:'action', act:'calibrateHead', label:'CALIBRATE HEAD', textbtn:true, whenTrue:'mountRows' },
     // HOLO3's see-through tuning -- see DEFAULTS.predictMs/smoothing/lensFov
     // and fovMeasureStep().
     { type:'step',  key:'predictMs', label:'PREDICTION', min:0, max:150, step:5, whenTrue:'holo3' },
@@ -1461,6 +1469,7 @@ function initBlit(){
       flipX: { value: 0 },
       flipY: { value: 0 },
       marks: { value: 0 },
+      calCross: { value: 0 },
       chromaOn: { value: 0 },
       keyCols: { value: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] },
       keyCount: { value: 0 },
@@ -1487,6 +1496,7 @@ function initBlit(){
       uniform float flipX;
       uniform float flipY;
       uniform float marks;        // MEASURE FOV: 0 = off, else the side line's distance from centre in u
+      uniform float calCross;     // CALIBRATE HEAD: 1 = crosshair on the centre
       uniform float chromaOn;     // chroma key: 1 = key keyCols out to black
       uniform vec3 keyCols[3];    // picked colours, sRGB 0..1 as read back from the eye target
       uniform float keyCount;     // how many of keyCols are in use, 1..3
@@ -1616,6 +1626,12 @@ function initBlit(){
           bool cross = d.x < lw || (d.y < lw * aspect && d.x < 0.08);
           bool side = abs(uv.x - 0.5 - marks) < lw && d.y < 0.3;
           if (cross || side) col = vec4(0.965, 0.769, 0.110, 1.0);
+        }
+        // CALIBRATE HEAD's crosshair, same place and colour.
+        if (calCross > 0.0){
+          vec2 d = abs(uv - 0.5);
+          float lw = 0.004;
+          if ((d.x < lw && d.y < 0.05 * aspect) || (d.y < lw * aspect && d.x < 0.05)) col = vec4(0.965, 0.769, 0.110, 1.0);
         }
         gl_FragColor = col;
       }`,
@@ -2210,6 +2226,8 @@ function onDeviceOrientationV28(e){
   orientationToQuat(v28Cur, e);
   v28CurT = t;
   v28Samples++;
+  // CALIBRATE HEAD wants every bit of rotation, however long the gap.
+  if (headCal && v28Samples >= 2) headCalAddSample(v28Prev, v28Cur);
   if (v28Samples < 2 || dtS > V28_STALE){ v28Rate.set(0, 0, 0); return; }
   if (dtS < 1e-3) return;   // two events in the same tick: no usable rate
   // Turn rate from the rotation between the last two samples -- no axis
@@ -2306,7 +2324,8 @@ function v28BuildMount(){
   const roll = THREE.MathUtils.degToRad(measured ? v28AutoRoll : state.mountRoll);
   const above = VIEW_ABOVE[state.view];
   v28Mount.setFromAxisAngle(V28_X, above ? -(Math.PI / 2 + tilt) : -tilt)
-          .premultiply(v28MountRoll.setFromAxisAngle(V28_Z, -roll - (above && v28MountFlip ? Math.PI : 0)));
+          .premultiply(v28MountRoll.setFromAxisAngle(V28_Z, -roll - (above && v28MountFlip ? Math.PI : 0)))
+          .multiply(v28MountRoll.setFromAxisAngle(WORLD_UP, THREE.MathUtils.degToRad(state.mountYaw)));
 }
 
 // One frame of V2.8 (6DOF): sets rig.quaternion and rig.position.
@@ -2385,6 +2404,169 @@ function fovMeasureStep(){
     saveState();
     toast('FIELD OF VIEW ' + state.lensFov);
   }
+}
+
+/* CALIBRATE HEAD (GENERAL, on the V2.8 (6DOF) pipeline -- every view where
+   PHONE TILT/ROLL show): measures how the phone sits on the head from the
+   head's own movement, for rigs where gravity alone can't say -- a cheap
+   reflector visor that holds the phone tilted, turned and skewed away from
+   the face. Three presses of the same action:
+     1. a crosshair appears on the picture's centre. Turn the head left and
+        right along what feels level, as if drawing a horizontal line with it
+     2. then nod up and down, drawing a vertical line
+     3. done: the mount is solved and applied.
+   While sweeping, a line is drawn where the crosshair has pointed. Before
+   calibration it comes out slanted or bent -- that is the error being
+   measured; run it again afterwards and it should come out straight.
+
+   The maths: whatever way the phone is mounted, turning the head about its
+   own vertical axis turns the phone about that same axis, so the phone's
+   rotation in step 1 IS the head's up axis in phone coordinates, and step 2
+   gives the head's right axis. Each axis is the principal direction of all
+   the small rotations sampled during its sweep (sum of r r^T, so sweeping
+   back and forth adds up instead of cancelling, and wobble across it
+   averages out). Gravity decides which way up points, the current mount
+   which way right points; up is trusted most and right is squared to it.
+   Those two axes are the whole head->phone rotation, which is stored as
+   PHONE TILT, ROLL and YAW (v28BuildMount()). AUTO TILT is turned off so
+   the next RECENTER doesn't overwrite the result. */
+const HEADCAL_MIN_SWEEP = THREE.MathUtils.degToRad(15);   // total turn needed per sweep
+const HEADCAL_MIN_STRAIGHT = 0.7;    // share of the sweep that must be about one axis
+const HEADCAL_TRAIL_MAX = 600;
+const HEADCAL_TRAIL_DIST = 2.5;      // m: where the trail is drawn, in front of the content
+let headCal = 0;   // 0 off | 1 horizontal sweep | 2 vertical sweep
+const headCalCov = new Float64Array(9);
+let headCalTurn = 0;
+const headCalUp = new THREE.Vector3();
+const headCalV = new THREE.Vector3();
+const headCalM = new THREE.Quaternion();
+const headCalQ = new THREE.Quaternion();
+let headCalTrail = null, headCalTrailN = 0;
+
+// The rotation from one sample to the next, as a rotation vector in the
+// phone's frame (axis times angle, rad), added to the sweep's statistics.
+function headCalAddSample(prev, cur){
+  headCalQ.copy(prev).invert().multiply(cur);
+  if (headCalQ.w < 0) headCalQ.set(-headCalQ.x, -headCalQ.y, -headCalQ.z, -headCalQ.w);
+  const ang = 2 * Math.acos(Math.min(1, headCalQ.w));
+  const sn = Math.sin(ang / 2);
+  if (sn < 1e-9) return;
+  const k = ang / sn;
+  const r = [headCalQ.x * k, headCalQ.y * k, headCalQ.z * k];
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) headCalCov[i * 3 + j] += r[i] * r[j];
+  headCalTurn += Math.hypot(r[0], r[1], r[2]);
+}
+function headCalReset(){
+  headCalCov.fill(0);
+  headCalTurn = 0;
+  headCalTrailN = 0;
+  if (headCalTrail) headCalTrail.geometry.setDrawRange(0, 0);
+}
+// Principal axis of the sampled rotations, or null if the sweep was too
+// short or not about one axis.
+function headCalAxis(){
+  if (headCalTurn < HEADCAL_MIN_SWEEP) return null;
+  const C = headCalCov, v = new THREE.Vector3(0.6, 0.5, 0.4), w = new THREE.Vector3();
+  for (let k = 0; k < 60; k++){
+    w.set(C[0] * v.x + C[1] * v.y + C[2] * v.z,
+          C[3] * v.x + C[4] * v.y + C[5] * v.z,
+          C[6] * v.x + C[7] * v.y + C[8] * v.z);
+    if (w.lengthSq() < 1e-20) return null;
+    v.copy(w).normalize();
+  }
+  const trace = C[0] + C[4] + C[8];
+  w.set(C[0] * v.x + C[1] * v.y + C[2] * v.z,
+        C[3] * v.x + C[4] * v.y + C[5] * v.z,
+        C[6] * v.x + C[7] * v.y + C[8] * v.z);
+  return (trace > 0 && v.dot(w) / trace >= HEADCAL_MIN_STRAIGHT) ? v : null;
+}
+function headCalEnd(){
+  headCal = 0;
+  if (quadMat) quadMat.uniforms.calCross.value = 0;
+  if (headCalTrail) headCalTrail.visible = false;
+}
+function headCalStep(){
+  if (!state.mountRows) return;
+  if (headCal === 0){
+    fovMeasureEnd();
+    if (!headCalTrail){
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(HEADCAL_TRAIL_MAX * 3), 3));
+      headCalTrail = new THREE.Line(g, new THREE.LineBasicMaterial({ color:0xf6c41c, depthTest:false, depthWrite:false }));
+      headCalTrail.frustumCulled = false;
+      headCalTrail.renderOrder = 999;
+      scene.add(headCalTrail);
+    }
+    headCal = 1;
+    headCalReset();
+    headCalTrail.visible = true;
+    quadMat.uniforms.calCross.value = 1;
+    toast('1/2 · TURN HEAD LEFT-RIGHT ALONG A LEVEL LINE · CONFIRM', 8000);
+  } else if (headCal === 1){
+    const up = headCalAxis();
+    if (!up){ headCalReset(); toast('SWEEP AGAIN, WIDER AND STRAIGHTER · CONFIRM', 6000); return; }
+    // World up in the phone's frame says which way the axis points.
+    v28Up.set(0, 1, 0).applyQuaternion(v28Head.copy(v28Cur).invert());
+    headCalUp.copy(up).multiplyScalar(up.dot(v28Up) < 0 ? -1 : 1);
+    headCal = 2;
+    headCalReset();
+    toast('2/2 · NOD UP-DOWN ALONG A VERTICAL LINE · CONFIRM', 8000);
+  } else {
+    const r = headCalAxis();
+    if (!r){ headCalReset(); toast('SWEEP AGAIN, WIDER AND STRAIGHTER · CONFIRM', 6000); return; }
+    const right = r.clone();
+    v28BuildMount();
+    headCalV.set(1, 0, 0).applyQuaternion(v28Mount);   // the right axis as currently mounted
+    if (right.dot(headCalV) < 0) right.negate();
+    right.addScaledVector(headCalUp, -right.dot(headCalUp));
+    if (right.lengthSq() < 0.25){ headCalEnd(); toast('SWEEPS TOO ALIKE — CALIBRATION CANCELLED', 4000); return; }
+    right.normalize();
+    const back = new THREE.Vector3().crossVectors(right, headCalUp);
+    headCalM.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, headCalUp, back));
+    headCalEnd();
+    headCalApply(headCalM);
+  }
+}
+// Splits a head->phone rotation into the angles v28BuildMount() composes:
+// mount = Rz(-roll - flip*180) * Rx(base(tilt)) * Ry(yaw), i.e. Euler 'ZXY'.
+// Each has two solutions; the one with the least roll and yaw is the
+// reading anyone would give. HOLO2/HOLO3's way-round flip stays as gravity
+// read it (v28MeasureMount() reads it again at every RECENTER anyway).
+function headCalApply(m){
+  const above = VIEW_ABOVE[state.view];
+  const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+  const e = new THREE.Euler(), q = new THREE.Quaternion();
+  let best = null;
+  for (const f of [above && v28MountFlip ? 1 : 0]){
+    q.setFromAxisAngle(V28_Z, f * Math.PI).multiply(m);
+    e.setFromQuaternion(q, 'ZXY');
+    for (const [z, x, y] of [[e.z, e.x, e.y], [e.z + Math.PI, Math.PI - e.x, e.y + Math.PI]]){
+      const tilt = THREE.MathUtils.radToDeg(wrap(above ? -x - Math.PI / 2 : -x));
+      const roll = THREE.MathUtils.radToDeg(wrap(-z));
+      const yaw = THREE.MathUtils.radToDeg(wrap(y));
+      if (tilt < SPEC.mountTilt.min || tilt > SPEC.mountTilt.max || Math.abs(yaw) > SPEC.mountYaw.max) continue;
+      const score = Math.abs(roll) + Math.abs(yaw);
+      if (!best || score < best.score) best = { score, flip:!!f, tilt, roll, yaw };
+    }
+  }
+  if (!best){ toast('PHONE YAW OUT OF RANGE — CALIBRATION CANCELLED', 4000); return; }
+  const r1 = v => Math.round(v * 10) / 10;
+  state.mountAuto = false;
+  state.mountTilt = r1(best.tilt);
+  state.mountRoll = r1(best.roll);
+  state.mountYaw = r1(best.yaw);
+  v28RecenterPending = true;   // face the content along the new heading
+  refreshMenu();
+  saveState();
+  toast('TILT ' + Math.round(best.tilt) + ' · ROLL ' + Math.round(best.roll) + ' · YAW ' + Math.round(best.yaw), 4000);
+}
+// Each frame while sweeping: one more point where the crosshair points now.
+function headCalTrailStep(){
+  if (!headCal || !headCalTrail || headCalTrailN >= HEADCAL_TRAIL_MAX) return;
+  headCalV.set(0, 0, -HEADCAL_TRAIL_DIST).applyQuaternion(rig.quaternion).add(rig.position);
+  headCalTrail.geometry.attributes.position.setXYZ(headCalTrailN++, headCalV.x, headCalV.y, headCalV.z);
+  headCalTrail.geometry.attributes.position.needsUpdate = true;
+  headCalTrail.geometry.setDrawRange(0, headCalTrailN);
 }
 
 /* =========================================================================
@@ -2669,6 +2851,7 @@ function animate(){
   }
 
   updateNavArrow();   // reads rig.quaternion, so it runs after the gyro step
+  headCalTrailStep();
   pollGamepads();
   midiFlush();
   updateCutout();
@@ -5552,7 +5735,7 @@ function setStepValue(key, v){
   // ...), so a value saved off it before (1.3) snaps back on.
   const next = THREE.MathUtils.clamp(v, spec.min, spec.max);
   state[key] = spec.dec ? Math.round(Math.round(next / spec.step) * spec.step * 10) / 10 : Math.round(next);
-  if (key === 'mountTilt' || key === 'mountRoll') state.mountAuto = false;   // a hand-set angle sticks
+  if (key === 'mountTilt' || key === 'mountRoll' || key === 'mountYaw') state.mountAuto = false;   // a hand-set angle sticks
   if (key === 'playSpeed') applyPlaySpeed();
   updateQuad();
   applyEyeDistance();
@@ -5965,6 +6148,7 @@ function handleAct(act, el){
       break;
     case 'recenter':  recenter(); break;
     case 'measureFov': fovMeasureStep(); break;
+    case 'calibrateHead': headCalStep(); break;
     case 'closeList': closeList(); break;
     case 'closeMenu':
       if (uiState === 'list') closeList();

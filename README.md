@@ -83,7 +83,17 @@ be — so it always boots to the demo.
   AUTO TILT / PHONE TILT / PHONE ROLL (how the phone sits relative to your
   head, kept per view: with AUTO TILT on they are measured each time you
   RECENTER, so hold your head level when you do; step either angle by hand
-  to switch that off and fine-tune. On in HOLO2 and HOLO3, off elsewhere).
+  to switch that off and fine-tune. On in HOLO2 and HOLO3, off elsewhere),
+  PHONE YAW (the phone turned left/right on the face, which AUTO TILT can't
+  see) and CALIBRATE HEAD (see below).
+- **CALIBRATE HEAD** — measures PHONE TILT, ROLL and YAW from your own head
+  movement, for visors that hold the phone tilted and turned away from the
+  face. Press it and a crosshair appears; turn your head left and right
+  along what feels level (a line is drawn where the crosshair points),
+  press again, nod up and down along what feels vertical, press again. The
+  three angles are set and AUTO TILT is switched off. If a sweep was too
+  short or too wobbly you're asked to repeat it. Run it again afterwards:
+  the drawn lines should now come out straight.
 - **OPTICS** — SBS EYE DIST, EYE DISTANCE, PERSPECTIVE (camera field of
   view), BRIGHTNESS, MENU TIMEOUT.
 - **CONTENT** — demo shape, auto-rotate, SBS source, PLAY SPEED (video,
