@@ -96,7 +96,12 @@ be — so it always boots to the demo.
   the drawn lines should now come out straight.
 - **OPTICS** — SBS EYE DIST, EYE DISTANCE, PERSPECTIVE (camera field of
   view), BRIGHTNESS, MENU TIMEOUT.
-- **CONTENT** — demo shape, auto-rotate, SBS source, PLAY SPEED (video,
+- **CONTENT** — demo shape (the default, GRID ROOM, puts you inside a cube
+  with a grid on every wall: a ring on each wall's centre point, thicker
+  centre lines in axis colours — X red, Y green, Z blue — grid lines
+  numbered outward from the centre, the direction each centre line runs
+  toward at its ends, and the wall's name, e.g. −Z FRONT, +X RIGHT, +Y UP),
+  auto-rotate, SBS source, PLAY SPEED (video,
   -5 to 5: 1 is normal, 0 holds the frame, negative plays backward),
   2D TO 3D and 3D DEPTH (see below).
 - **2D TO 3D** — shows a flat (non-SBS) photo or video in stereo. An AI depth

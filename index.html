@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.43</title>
+<title>GYROS v2.44</title>
 <style>
   :root{
     --bg:#000000;
@@ -593,7 +593,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.43';
+const APP_VERSION = '2.44';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -615,6 +615,7 @@ const DEFAULTS = {
                      // itself with the headset lens centers. No effect with 3D SBS off.
   content: 'demo',        // demo | model | video
   shape: 0,               // index into SHAPES
+  shapesVer: 2,           // 2 = SHAPES starts with GRID ROOM; older saved indexes are reset to it
   sourceSbs: false,       // video source is side-by-side stereo
   autoRotate: true,       // spin demo / loaded model
   playSpeed: 1,           // PLAY SPEED (video only), -5..5: 1 = normal, 0 = held
@@ -742,6 +743,9 @@ function loadState(){
     }
     // Settings saved before the mount angles existed: start from this view's own.
     if (saved.mountAuto === undefined) Object.assign(state, mountDefaults(state.view));
+    // GRID ROOM was put in front of the shape list: an index saved before
+    // that points one shape off, so start on the new default instead.
+    if (saved.shapesVer !== 2){ state.shape = 0; state.shapesVer = 2; }
     // content and shape are session-ish: a model/video source cannot be restored
     if (state.content !== 'demo') state.content = 'demo';
     // CUT-OUT once had a third REMOVE PEOPLE mode (2); that's just off now.
@@ -761,6 +765,7 @@ function saveState(){
    Menu definition — one spec, rendered into every pane
    ========================================================================= */
 const SHAPES = [
+  'GRID ROOM',   // the default: a labelled grid on every wall around you -- buildGridRoom()
   'WIRE CUBE','SOLID CUBE','COLOR CUBE',
   'WIRE SPHERE','SOLID SPHERE','TORUS',
   'PYRAMID','OCTA','ICOSA','CRYSTAL',
@@ -1237,7 +1242,7 @@ const video = document.getElementById('video');
 
 let renderer, scene, rig, camL, camR, world;
 let rtL, rtR, quadScene, quadCam, quadMesh, quadMat;
-let demoGroup, modelGroup, videoGroup;
+let demoGroup, modelGroup, videoGroup, roomGroup;
 let videoTexture, videoTextureR, videoMeshL, videoMeshR, videoMatL, videoMatR;
 // The real width/height of whatever is currently on screen, and whether it's a
 // still image. Needed because applyAll() re-calls applyVideoLayout() with no
@@ -1283,6 +1288,10 @@ function initThree(){
   modelGroup = new THREE.Group();
   videoGroup = new THREE.Group();
   world.add(demoGroup, modelGroup, videoGroup);
+  // GRID ROOM surrounds the viewer, so it hangs off the scene itself, not
+  // `world` -- content distance, CONTENT ZOOM and auto-rotate don't apply.
+  roomGroup = new THREE.Group();
+  scene.add(roomGroup);
 
   buildDemo(state.shape);
   initVideoMeshes();
@@ -1290,6 +1299,117 @@ function initThree(){
 
   window.addEventListener('resize', onResize);
   onResize();
+}
+
+/* ---- GRID ROOM: a cube around the viewer, one grid per wall, for checking
+   tracking and optics against something that should stay put and straight.
+   Each wall has a grid every GRID_STEP, thicker centre lines crossing at
+   its centre point (a ring marks it), the grid lines numbered outward from
+   the centre along both centre lines, and the world direction each centre
+   line runs toward at its ends (+X, -Y ...). The wall's own name sits in a
+   corner: -Z FRONT (where you face after RECENTER), +Z BACK, +X RIGHT,
+   -X LEFT, +Y UP, -Y DOWN. Axis colours as in most 3D tools: X red, Y
+   green, Z blue -- centre lines in the colour of the axis they run along,
+   the ring and wall name in the colour of the wall's own axis. ---- */
+const GRID_ROOM_R = 4;        // m from the viewer to each wall
+const GRID_STEP = 0.5;        // m between grid lines
+const GRID_AXIS_COLOR = { X:'#ff5a5a', Y:'#4fd24f', Z:'#5a8dff' };
+const GRID_WALLS = [
+  // n: from the viewer to the wall; u, v: right and up as seen facing it
+  // (up on the ceiling/floor = how the view turns when you tilt your head
+  // back/down from facing FRONT)
+  { name:'FRONT', n:[0, 0, -1], u:[1, 0, 0],  v:[0, 1, 0] },
+  { name:'BACK',  n:[0, 0, 1],  u:[-1, 0, 0], v:[0, 1, 0] },
+  { name:'RIGHT', n:[1, 0, 0],  u:[0, 0, 1],  v:[0, 1, 0] },
+  { name:'LEFT',  n:[-1, 0, 0], u:[0, 0, -1], v:[0, 1, 0] },
+  { name:'UP',    n:[0, 1, 0],  u:[1, 0, 0],  v:[0, 0, 1] },
+  { name:'DOWN',  n:[0, -1, 0], u:[1, 0, 0],  v:[0, 0, -1] }
+];
+function gridAxisName(d){   // [0,0,-1] -> '-Z'
+  const i = d.findIndex(c => c !== 0);
+  return (d[i] > 0 ? '+' : '−') + 'XYZ'[i];
+}
+function buildGridRoom(group){
+  const R = GRID_ROOM_R, N = Math.round(R / GRID_STEP);
+  const texCache = new Map();
+  // A text label as a flat mesh `h` metres tall, centred on (x, y).
+  const label = (parent, text, color, h, x, y, z) => {
+    const key = text + color;
+    let tex = texCache.get(key);
+    if (!tex){
+      const c = document.createElement('canvas'), g = c.getContext('2d');
+      const font = 'bold 96px system-ui, -apple-system, Helvetica, Arial, sans-serif';
+      g.font = font;
+      c.width = Math.ceil(g.measureText(text).width) + 24; c.height = 120;
+      g.font = font; g.fillStyle = color; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, c.width / 2, c.height / 2 + 4);
+      tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      texCache.set(key, tex);
+    }
+    const w = h * tex.image.width / tex.image.height;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    m.position.set(x, y, z);
+    parent.add(m);
+  };
+  // Flat strips in the wall's plane, merged into one mesh per colour.
+  const strips = (parent, list, color, z) => {
+    const pos = [];
+    for (const [x0, y0, x1, y1, w] of list){
+      const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+      const nx = -dy / len * w / 2, ny = dx / len * w / 2;
+      pos.push(x0 + nx, y0 + ny, z, x0 - nx, y0 - ny, z, x1 + nx, y1 + ny, z,
+               x1 + nx, y1 + ny, z, x0 - nx, y0 - ny, z, x1 - nx, y1 - ny, z);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    parent.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })));
+  };
+  const grid = '#cfc89a', num = '#ffffff';
+  for (const wall of GRID_WALLS){
+    // Built as FRONT (wall at z = -R, viewer toward +z), then turned into place.
+    const face = new THREE.Group();
+    face.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      new THREE.Vector3(...wall.u), new THREE.Vector3(...wall.v),
+      new THREE.Vector3(...wall.n).negate()));
+    group.add(face);
+    const zW = -R, zC = -R + 0.01, zL = -R + 0.02;
+    const thin = [];
+    for (let i = -N; i <= N; i++){
+      if (i === 0) continue;
+      const t = i * GRID_STEP;
+      thin.push([t, -R, t, R, 0.014], [-R, t, R, t, 0.014]);
+    }
+    strips(face, thin, grid, zW);
+    const uAxis = gridAxisName(wall.u), vAxis = gridAxisName(wall.v), nAxis = gridAxisName(wall.n);
+    strips(face, [[-R, 0, R, 0, 0.045]], GRID_AXIS_COLOR[uAxis[1]], zC);   // runs along u
+    strips(face, [[0, -R, 0, R, 0.045]], GRID_AXIS_COLOR[vAxis[1]], zC);   // runs along v
+    // Centre point: a ring in the wall's own colour.
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.11, 0.16, 40),
+      new THREE.MeshBasicMaterial({ color: GRID_AXIS_COLOR[nAxis[1]], side: THREE.DoubleSide }));
+    ring.position.z = zL;
+    face.add(ring);
+    // Line numbers, outward from the centre on both centre lines.
+    for (let k = 1; k < N; k++){
+      const t = k * GRID_STEP, h = 0.2;
+      label(face, String(k), num, h,  t - 0.12,  0.17, zL);
+      label(face, String(k), num, h, -t + 0.12, -0.17, zL);
+      label(face, String(k), num, h,  0.15,  t - 0.12, zL);
+      label(face, String(k), num, h, -0.15, -t + 0.12, zL);
+    }
+    // Where each centre line points, at its ends.
+    const neg = a => (a[0] === '+' ? '−' : '+') + a[1];
+    const end = R - 0.3;
+    label(face, uAxis,      GRID_AXIS_COLOR[uAxis[1]], 0.28,  end, -0.24, zL);
+    label(face, neg(uAxis), GRID_AXIS_COLOR[uAxis[1]], 0.28, -end,  0.24, zL);
+    label(face, vAxis,      GRID_AXIS_COLOR[vAxis[1]], 0.28, -0.32,  end, zL);
+    label(face, neg(vAxis), GRID_AXIS_COLOR[vAxis[1]], 0.28,  0.32, -end, zL);
+    // The wall's name, in a quadrant so it never hides the centre lines.
+    label(face, nAxis + ' ' + wall.name, GRID_AXIS_COLOR[nAxis[1]], 0.42,
+          1.75 * GRID_STEP * 2, 1.5 * GRID_STEP * 2, zL);
+  }
 }
 
 /* ---- thick wireframe helper (WebGL cannot draw wide lines) ---- */
@@ -1346,8 +1466,10 @@ function solidMat(color){
 
 function buildDemo(index){
   disposeGroup(demoGroup);
+  disposeGroup(roomGroup);
   const name = SHAPES[index] || 'WIRE CUBE';
   if (name === 'OFF') return;   // demo hidden; nothing to build
+  if (name === 'GRID ROOM'){ buildGridRoom(roomGroup); return; }
 
   switch(name){
     case 'WIRE CUBE': {
@@ -2624,7 +2746,8 @@ function updateNavArrow(){
   if (!navArrowEls.length || !rig) return;
 
   // Nothing on screen to navigate back to -- don't point at an empty spot.
-  const nothingToPointAt = state.content === 'demo' && SHAPES[state.shape] === 'OFF';
+  // GRID ROOM is all around you and labels its own walls.
+  const nothingToPointAt = state.content === 'demo' && (SHAPES[state.shape] === 'OFF' || SHAPES[state.shape] === 'GRID ROOM');
 
   navFwd.copy(NAV_CONTENT_DIR).applyQuaternion(rig.quaternion);
   const away = navFwd.angleTo(NAV_CONTENT_DIR);       // 0 .. PI
@@ -2910,6 +3033,7 @@ function animate(){
 function applyContent(){
   const demoOff = SHAPES[state.shape] === 'OFF';
   demoGroup.visible  = state.content === 'demo' && !demoOff;
+  roomGroup.visible  = state.content === 'demo';   // empty unless GRID ROOM is built
   modelGroup.visible = state.content === 'model';
   videoGroup.visible = state.content === 'video';
   if (state.content !== 'video'){
