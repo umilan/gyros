@@ -39,7 +39,7 @@ Tap the folder icon, then choose **FROM FILE** or **FROM URL**.
 
 | gesture | does |
 |---|---|
-| drag | pan (POS X / POS Y) |
+| drag | pan (POS X / POS Y; sideways is reversed in HOLO2 and HOLO3) |
 | pinch | zoom |
 | two fingers up/down | eye distance |
 | tap | show / hide the controls |

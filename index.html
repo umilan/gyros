@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.49</title>
+<title>GYROS v2.50</title>
 <style>
   :root{
     --bg:#000000;
@@ -607,7 +607,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.49';
+const APP_VERSION = '2.50';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -7003,7 +7003,10 @@ stage.addEventListener('pointermove', e=>{
     gesture.moved = true;
     const dx = p.x - gesture.lastX, dy = p.y - gesture.lastY;
     gesture.lastX = p.x; gesture.lastY = p.y;
-    setValue('posX', state.posX + (dx / (ew / 2)) * 100);
+    // HOLO2/HOLO3: the picture is seen in a reflector, so a sideways drag
+    // moves it the other way round to follow the finger as seen there.
+    const panX = VIEW_ABOVE[state.view] ? -dx : dx;
+    setValue('posX', state.posX + (panX / (ew / 2)) * 100);
     setValue('posY', state.posY - (dy / (eh / 2)) * 100);
     toast(`POS ${state.posX} / ${state.posY}`);
   } else if (gesture.mode === 'two' && pointers.size >= 2){
