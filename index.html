@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.51</title>
+<title>GYROS v2.52</title>
 <style>
   :root{
     --bg:#000000;
@@ -609,7 +609,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.51';
+const APP_VERSION = '2.52';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -3636,6 +3636,12 @@ function updateDomeEyes(){
   const ang = -THREE.MathUtils.degToRad(state.contentAngle);
   camL.getWorldPosition(videoMeshL.position);
   camR.getWorldPosition(videoMeshR.position);
+  // CONTENT ZOOM on the dome: stretching the sphere sideways and up-down
+  // (not in depth) magnifies the middle of the view by that factor and
+  // leaves its rim at 90 degrees.
+  const zoom = Math.max(0.1, 1 + state.contentZoom / 100) * DOME_R;
+  videoMeshL.scale.set(zoom, zoom, DOME_R);
+  videoMeshR.scale.set(zoom, zoom, DOME_R);
   videoMeshL.rotation.set(0, 0, ang);
   videoMeshR.rotation.set(0, 0, ang);
 }
@@ -3645,6 +3651,7 @@ function setProjection(p){
   state.projection = p;
   applyVideoLayout();
   refreshMenu();
+  toast('PROJECTION ' + PROJECTIONS[p], 2500);   // never change the picture's shape silently
 }
 
 function projectionFromName(label){
@@ -6984,6 +6991,10 @@ document.getElementById('hintBtn').addEventListener('touchstart', e=>{
 }, { passive: true });
 
 stage.addEventListener('pointerdown', e=>{
+  // A new first finger: whatever is still listed is a finger whose lift was
+  // never seen (see endPointer below) -- drop it, or this drag would be read
+  // as a pinch against a ghost and jump the zoom.
+  if (e.isPrimary){ pointers.clear(); gesture = null; }
   const pt = appPoint(e);
   pointers.set(e.pointerId, { x:pt.x, y:pt.y, x0:pt.x, y0:pt.y, t:performance.now() });
   if (pointers.size === 1){
@@ -7029,6 +7040,7 @@ stage.addEventListener('pointermove', e=>{
 });
 
 function endPointer(e){
+  if (!pointers.has(e.pointerId)) return;   // not a stage touch
   const p = pointers.get(e.pointerId);
   pointers.delete(e.pointerId);
 
@@ -7046,8 +7058,11 @@ function endPointer(e){
     gesture = { mode:'pan', moved:true, lastX:only.x, lastY:only.y };
   }
 }
-stage.addEventListener('pointerup', endPointer);
-stage.addEventListener('pointercancel', endPointer);
+// On window, not the stage: a finger lifted over a pane, a dialog or the
+// edge of the screen must still end, or it stays listed forever.
+window.addEventListener('pointerup', endPointer, true);
+window.addEventListener('pointercancel', endPointer, true);
+window.addEventListener('blur', ()=>{ pointers.clear(); gesture = null; });
 
 /* =========================================================================
    Desktop wheel / trackpad gestures — complement to the pointer gestures
