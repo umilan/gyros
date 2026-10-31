@@ -97,7 +97,19 @@ be — so it always boots to the demo.
 - **OPTICS** — SBS EYE DIST, EYE DISTANCE, PERSPECTIVE (camera field of
   view), BRIGHTNESS, MENU TIMEOUT.
 - **CONTENT** — demo shape, auto-rotate, SBS source, PLAY SPEED (video,
-  -5 to 5: 1 is normal, 0 holds the frame, negative plays backward).
+  -5 to 5: 1 is normal, 0 holds the frame, negative plays backward),
+  2D TO 3D and 3D DEPTH (see below).
+- **2D TO 3D** — shows a flat (non-SBS) photo or video in stereo. An AI depth
+  model, [Depth Anything V2 Small](https://huggingface.co/onnx-community/depth-anything-v2-small)
+  (Apache-2.0), run in the browser by
+  [transformers.js](https://github.com/huggingface/transformers.js), guesses
+  how near every pixel is and the picture is bent into that shape, so each
+  eye sees it from its own side. 3D DEPTH sets how strong it is. The model
+  is downloaded the first time (about 50 MB with WebGPU, 27 MB without; the
+  browser keeps it). Photos are measured once at full quality; videos are
+  measured continuously at lower resolution, so depth trails fast motion a
+  little. Without WebGPU it runs on the CPU, which is fine for photos but
+  too slow for video.
 - **POSITIONING** — POS X/Y, eye distance.
 - **ZOOM** — zoom, scale X/Y, keystone top/bottom (TRPZD).
 - **FLIP** — flip X/Y.

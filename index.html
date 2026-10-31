@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.42</title>
+<title>GYROS v2.43</title>
 <style>
   :root{
     --bg:#000000;
@@ -593,7 +593,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.42';
+const APP_VERSION = '2.43';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -630,6 +630,9 @@ const DEFAULTS = {
                             // feathered selection -- positive cuts out more,
                             // negative less. No effect at SMOOTHING 0.
   cutout: 0,              // CUT-OUT: 0 OFF | 1 ON (background removed) -- see updateCutout()
+  depth3d: 0,             // 2D TO 3D: 0 OFF | 1 ON -- a flat photo/video gets depth from an
+                          // AI depth model and is shown in stereo, see updateDepth()
+  depthAmount: 100,       // 3D DEPTH, percent of DEPTH_RANGE
   cutoutModel: 0,         // MODEL: 0 FAST | 1 ACCURATE (CUTOUT_MODEL_URLS)
   cutoutSmooth: 20,       // SMOOTHING (people), 0..100: how soft the cut edge is
   cutoutRefine: 0,        // REFINE EDGE (people), -1..1: shifts the edge inside the
@@ -864,6 +867,7 @@ function switchView(newIdx){
 // PEOPLE section options -- see updateCutout().
 const CUTOUT_MODES = ['OFF', 'ON'];
 const CUTOUT_MODEL_NAMES = ['FAST', 'ACCURATE'];
+const DEPTH_MODES = ['OFF', 'ON'];
 
 const MENU = [
   { title:'GENERAL', items:[
@@ -901,6 +905,9 @@ const MENU = [
     // Reads OFF here; ON swaps to the reduced menu (setCheck()).
     { type:'check', key:'reducedMenu', label:'REDUCED MENU', whenTrue:'mediaLoaded' },
     { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
+    // A flat (non-SBS) source made stereo from an AI depth map -- updateDepth().
+    { type:'enum',  key:'depth3d', label:'2D TO 3D', options:DEPTH_MODES, when:'video', whenTrue:'monoSource' },
+    { type:'step',  key:'depthAmount', label:'3D DEPTH', min:0, max:300, step:10, when:'video', whenTrue:'depthRows' },
     { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.5, dec:1, when:'video' },
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
   ]},
@@ -1188,6 +1195,8 @@ function refreshMenu(){
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
   state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length < CHROMA_MAX_KEYS;
   state.cutoutOn = state.cutout > 0;
+  state.monoSource = !state.sourceSbs;
+  state.depthRows = state.monoSource && state.depth3d > 0;
   // Reduced menu tree (REDUCED_MENU): which branches are open.
   state.cutoutAccurate = state.cutoutModel === 1;
   state.allControls = !reducedMenuOn();
@@ -1409,7 +1418,8 @@ function initVideoMeshes(){
   videoTextureR.wrapS = THREE.ClampToEdgeWrapping;
   videoTextureR.wrapT = THREE.ClampToEdgeWrapping;
 
-  const geo = new THREE.PlaneGeometry(1, 1);
+  // Subdivided so 2D TO 3D can push each vertex to its depth (depthPatch()).
+  const geo = new THREE.PlaneGeometry(1, 1, DEPTH_SEGMENTS, DEPTH_SEGMENTS);
   videoMatL = new THREE.MeshBasicMaterial({ map: videoTexture });
   videoMatR = new THREE.MeshBasicMaterial({ map: videoTextureR });
   videoMeshL = new THREE.Mesh(geo, videoMatL);
@@ -2855,6 +2865,7 @@ function animate(){
   pollGamepads();
   midiFlush();
   updateCutout();
+  updateDepth();
   checkBotMenuIdle();
 
   const { w, h, ew, eh } = eyeSize();
@@ -5970,6 +5981,162 @@ function cutoutApplyMaterials(on){
     }
     if (want && mat.map){ want.repeat.copy(mat.map.repeat); want.offset.copy(mat.map.offset); }
   });
+}
+
+/* ---- 2D TO 3D: a flat photo or video shown in stereo. An open-source
+   monocular depth model -- Depth Anything V2 Small (Apache-2.0), run in the
+   browser by transformers.js (ONNX Runtime Web: WebGPU where the browser has
+   it, else WebAssembly on the CPU) -- estimates how near every pixel is. Each
+   eye mesh is a finely divided plane whose vertices are pushed toward or away
+   from the viewer by that depth (depthPatch()), so the two eye cameras,
+   already EYE DISTANCE apart, see real parallax -- and so does the 6DOF neck
+   model when the head moves.
+   Model and library come from the CDN the first time it's turned on
+   (~50 MB on WebGPU, ~27 MB on CPU; the browser caches them after that).
+   A photo is measured once, at the model's full resolution, before it is
+   shown in 3D. A video is measured continuously at a lower resolution: each
+   frame starts as soon as the previous one finishes, and the newest depth
+   is used, so depth trails fast motion by one inference (a few frames on
+   WebGPU; on CPU it is too slow for video to look right). ---- */
+const DEPTH_LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2';
+const DEPTH_MODEL = 'onnx-community/depth-anything-v2-small';
+// Tried in order; a setup that fails to load or to run moves on to the next.
+const DEPTH_SETUPS = [
+  { device:'webgpu', dtype:'fp16', gpu:true },
+  { device:'webgpu', dtype:'fp32', gpu:true },
+  { device:'wasm',   dtype:'q8' }
+];
+const DEPTH_SEGMENTS = 160;      // eye mesh subdivisions per side
+const DEPTH_RANGE = 0.8;         // m between nearest and farthest at 3D DEPTH 100
+const DEPTH_IN_IMAGE = 518;      // model input size (its native one) for a photo
+const DEPTH_IN_VIDEO = 266;      // ... and for video, for speed (multiple of 14)
+const DEPTH_FRAME_IMAGE = 1024;  // long side of the copy handed to the model
+const DEPTH_FRAME_VIDEO = 384;
+
+const depth = {
+  pipe: null, setup: 0, loading: false, failed: false, busy: false,
+  canvas: document.createElement('canvas'),
+  tex: null, doneSource: null, source: null, sourceTime: -1, lastToast: 0
+};
+const depthUniforms = { depthMap: { value: null }, depthAmt: { value: 0 } };
+
+// Hooks the depth displacement into whatever material an eye mesh has --
+// a photo swaps in new materials (applyImageTexture()), so this runs on
+// each one once. With depthAmt 0 the vertex is left exactly where it was.
+function depthPatch(mat){
+  if (!mat || mat.userData.depthPatched) return;
+  mat.userData.depthPatched = true;
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.depthMap = depthUniforms.depthMap;
+    sh.uniforms.depthAmt = depthUniforms.depthAmt;
+    sh.vertexShader = 'uniform sampler2D depthMap;\nuniform float depthAmt;\n' +
+      sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        // Same spot of the picture the colour comes from (the map's crop), but
+        // depth rows run top-down (row 0 = top of the picture) and uv.y
+        // bottom-up. 1 = nearest, so near things come toward the viewer.
+        #ifdef USE_MAP
+          vec2 depthUv = ( mapTransform * vec3( MAP_UV, 1 ) ).xy;
+        #else
+          vec2 depthUv = uv;
+        #endif
+        if (depthAmt > 0.0) transformed.z += depthAmt * (texture2D(depthMap, vec2(depthUv.x, 1.0 - depthUv.y)).r - 0.5);`);
+  };
+  mat.customProgramCacheKey = () => 'gyrosDepth';
+  mat.needsUpdate = true;
+}
+
+async function depthLoad(){
+  depth.loading = true;
+  const setup = DEPTH_SETUPS[depth.setup];
+  toast('LOADING 3D MODEL…', 4000);
+  try{
+    const tf = await import(DEPTH_LIB);
+    depth.pipe = await tf.pipeline('depth-estimation', DEPTH_MODEL, {
+      device: setup.device, dtype: setup.dtype,
+      progress_callback: p => {
+        const now = performance.now();
+        if (p.status === 'progress' && p.total > 1e6 && now - depth.lastToast > 700){
+          depth.lastToast = now;
+          toast('LOADING 3D MODEL ' + Math.round(p.progress) + '%', 1500);
+        }
+      }
+    });
+    depth.source = null;   // measure the current picture afresh
+    toast(setup.gpu ? '3D MODEL READY' : '3D MODEL READY (CPU — SLOW)', 2500);
+  }catch(e){
+    console.error('[GYROS] depth model failed (' + setup.device + ' ' + setup.dtype + '):', e);
+    depthNextSetup();
+  }finally{
+    depth.loading = false;
+  }
+}
+// The current setup can't load or run here: try the next, or give up.
+function depthNextSetup(){
+  if (depth.pipe){ try{ depth.pipe.dispose(); }catch(e){} depth.pipe = null; }
+  if (++depth.setup < DEPTH_SETUPS.length) return;
+  depth.setup = 0;
+  depth.failed = true;
+  toast('COULD NOT LOAD 3D MODEL', 2500);
+  state.depth3d = 0;
+  refreshMenu();
+}
+
+// Runs every frame from animate().
+function updateDepth(){
+  const on = state.depth3d > 0 && state.content === 'video' && !state.sourceSbs;
+  if (!on){
+    depthUniforms.depthAmt.value = 0;
+    depth.failed = false;   // turning it on again tries again
+    return;
+  }
+  depthPatch(videoMeshL.material);
+  depthPatch(videoMeshR.material);
+  const map = videoMeshL.material.map;
+  const src = usingImage ? map && map.image : video;
+  // A photo stays flat until its own depth is ready, rather than borrowing
+  // the previous one's.
+  const ready = !!depth.tex && (!usingImage || depth.doneSource === src);
+  depthUniforms.depthAmt.value = ready ? DEPTH_RANGE * state.depthAmount / 100 : 0;
+  if (!depth.pipe){ if (!depth.loading && !depth.failed) depthLoad(); return; }
+  if (depth.busy || !src || (!usingImage && video.readyState < 2)) return;
+  const time = usingImage ? 0 : video.currentTime;
+  if (src === depth.source && time === depth.sourceTime) return;
+  depth.source = src; depth.sourceTime = time;
+  depthRun(src);
+}
+
+async function depthRun(src){
+  const sw = src.videoWidth || src.naturalWidth || src.width, sh = src.videoHeight || src.naturalHeight || src.height;
+  if (!sw || !sh) return;
+  depth.busy = true;
+  const isImage = usingImage;
+  try{
+    const scale = Math.min(1, (isImage ? DEPTH_FRAME_IMAGE : DEPTH_FRAME_VIDEO) / Math.max(sw, sh));
+    const c = depth.canvas, w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
+    if (c.width !== w || c.height !== h){ c.width = w; c.height = h; }
+    c.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, w, h);
+    const size = isImage ? DEPTH_IN_IMAGE : DEPTH_IN_VIDEO;
+    depth.pipe.processor.image_processor.size = { width: size, height: size };
+    const out = await depth.pipe(c);
+    const img = out.depth;   // 0..255 per frame, 255 = nearest, input-sized, 1 channel
+    if (out.predicted_depth && out.predicted_depth.dispose) out.predicted_depth.dispose();
+    if (!depth.tex || depth.tex.image.width !== img.width || depth.tex.image.height !== img.height){
+      if (depth.tex) depth.tex.dispose();
+      depth.tex = new THREE.DataTexture(new Uint8Array(img.width * img.height), img.width, img.height, THREE.RedFormat, THREE.UnsignedByteType);
+      depth.tex.minFilter = depth.tex.magFilter = THREE.LinearFilter;
+      depth.tex.unpackAlignment = 1;
+      depthUniforms.depthMap.value = depth.tex;
+    }
+    depth.tex.image.data.set(img.data);
+    depth.tex.needsUpdate = true;
+    depth.doneSource = src;
+  }catch(e){
+    console.error('[GYROS] depth estimation failed:', e);
+    depth.source = null;
+    depthNextSetup();   // e.g. a WebGPU fp16 model that loaded but can't run
+  }finally{
+    depth.busy = false;
+  }
 }
 
 /* ---- Chroma key: SET CHROMA KEY shows a crosshair on the centre of the
