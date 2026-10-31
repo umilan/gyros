@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.52</title>
+<title>GYROS v2.53</title>
 <style>
   :root{
     --bg:#000000;
@@ -609,7 +609,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.52';
+const APP_VERSION = '2.53';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -3573,7 +3573,9 @@ async function resolveSbsHint(label, file){
    For 180 and FISHEYE the eye meshes move into domeGroup and become a half
    sphere DOME_R around the viewer; each is kept centred on its own eye
    every frame (updateDomeEyes()), so stereo parallax comes only from the
-   pictures, never from the sphere. The SBS crop (applyVideoLayout()) maps
+   pictures, never from the sphere. Moving the eyes apart therefore does
+   nothing there, so EYE DISTANCE instead turns the two domes apart --
+   each picture slides sideways by the same angle it does on FLAT. The SBS crop (applyVideoLayout()) maps
    the left/right halves onto the same sphere unchanged. 2D TO 3D is for
    FLAT only.
 
@@ -3629,11 +3631,16 @@ function applyProjection(){
     }
   }
 }
-// Every frame: each dome centred on its own eye, turned by ANGLE.
+// Every frame: each dome centred on its own eye, turned by ANGLE, and the
+// two turned apart by EYE DISTANCE: on FLAT an eye moved eyeDist/2 sideways
+// sees the screen CONTENT_DISTANCE away shift by atan(that / distance), so
+// each dome turns by that angle -- the left eye's picture to the right, the
+// right eye's to the left, as there.
 const domeEyePos = new THREE.Vector3();
 function updateDomeEyes(){
   if (!state.projection || state.content !== 'video') return;
   const ang = -THREE.MathUtils.degToRad(state.contentAngle);
+  const eyeTurn = Math.atan2(state.eyeDist / 2000, -CONTENT_DISTANCE);
   camL.getWorldPosition(videoMeshL.position);
   camR.getWorldPosition(videoMeshR.position);
   // CONTENT ZOOM on the dome: stretching the sphere sideways and up-down
@@ -3642,8 +3649,8 @@ function updateDomeEyes(){
   const zoom = Math.max(0.1, 1 + state.contentZoom / 100) * DOME_R;
   videoMeshL.scale.set(zoom, zoom, DOME_R);
   videoMeshR.scale.set(zoom, zoom, DOME_R);
-  videoMeshL.rotation.set(0, 0, ang);
-  videoMeshR.rotation.set(0, 0, ang);
+  videoMeshL.rotation.set(0, -eyeTurn, ang);
+  videoMeshR.rotation.set(0, eyeTurn, ang);
 }
 
 function setProjection(p){
