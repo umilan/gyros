@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.54</title>
+<title>GYROS v2.55</title>
 <style>
   :root{
     --bg:#000000;
@@ -614,7 +614,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.54';
+const APP_VERSION = '2.55';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -783,6 +783,7 @@ function saveState(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(()=>{
     try{ localStorage.setItem(STORE_KEY, JSON.stringify({ ...state, viewProfiles })); }catch(e){}
+    snapshotMedia();
   }, 200);
 }
 
@@ -892,7 +893,73 @@ function switchView(newIdx){
   // before these settings existed doesn't carry one.
   if (!viewProfiles[newIdx] || viewProfiles[newIdx].mountAuto === undefined) Object.assign(state, mountDefaults(newIdx));
   state.view = newIdx;
+  // The photo/video on screen may have its own framing for this view.
+  if (mediaId) Object.assign(state, mediaProfiles[mediaId]?.views?.[newIdx] || {});
   applyView();
+}
+
+/* ---- Per-media settings: each photo/video (and the demo, and each 3D
+   model) keeps its own framing and chroma key, so the next one doesn't
+   inherit the last one's. MEDIA_VIEW_KEYS are also per VIEW (PER_VIEW_KEYS),
+   so they're kept per media per view; MEDIA_KEYS once per media. Something
+   never shown before starts from DEFAULTS. Remembered in localStorage
+   (newest MEDIA_PROFILES_MAX), keyed by file name + size + date or URL. ---- */
+const MEDIA_VIEW_KEYS = ['posX', 'posY', 'contentZoom'];
+const MEDIA_KEYS = ['contentAngle', 'playSpeed',
+  'chromaOn', 'chromaKeys', 'chromaIntensity', 'chromaSmooth', 'chromaRefine', 'chromaSpill'];
+const MEDIA_PROFILES_KEY = 'gyrosMediaProfiles';
+const MEDIA_PROFILES_MAX = 300;
+let mediaProfiles = {};
+try{ mediaProfiles = JSON.parse(localStorage.getItem(MEDIA_PROFILES_KEY)) || {}; }catch(e){ mediaProfiles = {}; }
+let mediaId = null;   // what's on screen now; null before the first load
+const MEDIA_FRESH = { ...DEFAULTS, chromaOn: false, chromaKeys: [] };
+
+function fileMediaId(file){ return `file:${file.name}|${file.size}|${file.lastModified}`; }
+
+function snapshotMedia(){
+  if (!mediaId) return;
+  const prof = mediaProfiles[mediaId] || { views: {} };
+  for (const k of MEDIA_KEYS) prof[k] = Array.isArray(state[k]) ? state[k].map(c => [...c]) : state[k];
+  const v = {};
+  for (const k of MEDIA_VIEW_KEYS) v[k] = state[k];
+  prof.views = { ...prof.views, [state.view]: v };
+  delete mediaProfiles[mediaId];   // re-insert: newest last, for the cap below
+  mediaProfiles[mediaId] = prof;
+  const ids = Object.keys(mediaProfiles);
+  for (let i = 0; i < ids.length - MEDIA_PROFILES_MAX; i++) delete mediaProfiles[ids[i]];
+  saveMediaProfiles();
+}
+
+let mediaSaveTimer = null;
+function saveMediaProfiles(){
+  clearTimeout(mediaSaveTimer);
+  mediaSaveTimer = setTimeout(()=>{
+    try{ localStorage.setItem(MEDIA_PROFILES_KEY, JSON.stringify(mediaProfiles)); }catch(e){}
+  }, 200);
+}
+
+// Called by every loader before it shows `id`: puts the outgoing media's
+// values away and brings in the incoming one's (or the defaults).
+function switchMedia(id){
+  if (id === mediaId) return;
+  snapshotMedia();
+  mediaId = id;
+  const prof = mediaProfiles[id];
+  for (const k of MEDIA_KEYS){
+    const v = prof && prof[k] !== undefined ? prof[k] : MEDIA_FRESH[k];
+    state[k] = Array.isArray(v) ? v.map(c => [...c]) : v;
+  }
+  if (!Array.isArray(state.chromaKeys)) state.chromaKeys = [];
+  state.chromaOn = !!state.chromaOn && state.chromaKeys.length > 0;
+  state.chromaMatte = false;
+  Object.assign(state, viewDefaultsFor(MEDIA_VIEW_KEYS), prof?.views?.[state.view] || {});
+  applyPlaySpeed();
+  refreshMenu();
+}
+function viewDefaultsFor(keys){
+  const d = viewDefaults(state.view), o = {};
+  for (const k of keys) o[k] = d[k];
+  return o;
 }
 
 // PEOPLE section options -- see updateCutout().
@@ -3167,6 +3234,7 @@ function applyAll(){
 /* ---- model loading ---- */
 /* One loader for both sources: a picked file (blob URL) and a remote URL. */
 async function loadModel(url, ext, label){
+  switchMedia('model:' + label);
   try{
     let object;
     if (ext === 'obj'){
@@ -4053,6 +4121,7 @@ window.addEventListener('blur', stopBracketHold);
 
 /* ---- SBS image loader — reuses the video plane infrastructure ---- */
 function loadSBSImage(file){
+  switchMedia(fileMediaId(file));
   const url = mediaObjectURL(file);
   const label = file.name;
   const filenameHint = /sbs/i.test(label);
@@ -4077,6 +4146,7 @@ function loadSBSImage(file){
 // guess -- used by URL loads, where a resolved page/API says (or a pasted
 // VR link implies) what the layout is.
 async function playVideo(src, label, file, hintOverride){
+  switchMedia(file ? fileMediaId(file) : 'url:' + src);
   usingImage = false;
   cancelSbsProbe();
   cancelProjectionProbe();
@@ -4331,6 +4401,9 @@ function showGalleryItem(idx){
   rememberMediaIdx(galleryIdx);
   refreshMenu();              // update the row's shown value immediately — independent of load success
   const item = galleryItems[galleryIdx];
+  // A remote item's url can arrive later (resolve()): fix its id on first show.
+  item.mediaId ||= item.file ? fileMediaId(item.file) : 'url:' + (item.url || item.name);
+  switchMedia(item.mediaId);
   if (item.kind === 'image') showGalleryImage(item);
   else showGalleryVideo(item);
 }
@@ -4805,6 +4878,7 @@ function loadDemo(){
     });
     state.shape = 0;
   }
+  switchMedia('demo');
   state.mode = 0;
   state.content = 'demo';
   if (!video.paused) video.pause();
@@ -6300,6 +6374,9 @@ function setStepValue(key, v){
 function resetToDefaults(){
   Object.assign(state, DEFAULTS, { content: state.content, shape: state.shape });
   viewProfiles = VIEWS.map(()=>null);
+  mediaProfiles = {};
+  saveMediaProfiles();
+  state.chromaOn = false; state.chromaKeys = []; state.chromaMatte = false;
   applyView();
   v28RecenterPending = true;   // the view may have changed: re-solve the mount
   buildPanes();
