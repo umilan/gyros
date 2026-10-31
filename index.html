@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.45</title>
+<title>GYROS v2.46</title>
 <style>
   :root{
     --bg:#000000;
@@ -60,6 +60,20 @@
      alike -- for setups where the screen is viewed via a physical mirror
      rather than straight on, so the reflection reads correctly. */
   body[data-mirror="1"]{transform:scaleX(-1);}
+  /* IN PORTRAIT (applyAppRotation()): the screen says portrait -- iPhone
+     rotation lock -- while the phone is held landscape. The page turns
+     itself a quarter turn; a transformed body is the containing block of
+     every position:fixed element, so the whole UI turns with it. --scr-w
+     and --scr-h are the real (portrait) screen, --app-w/--app-h the
+     landscape box the app lays out in. */
+  body[data-rot="90"], body[data-rot="-90"]{
+    position:fixed;top:0;left:0;
+    width:var(--app-w);height:var(--app-h);transform-origin:0 0;
+  }
+  body[data-rot="90"]{transform:translate(var(--scr-w),0) rotate(90deg);}
+  body[data-rot="-90"]{transform:translate(0,var(--scr-h)) rotate(-90deg);}
+  body[data-rot="90"][data-mirror="1"]{transform:translate(var(--scr-w),0) rotate(90deg) translate(var(--app-w),0) scaleX(-1);}
+  body[data-rot="-90"][data-mirror="1"]{transform:translate(0,var(--scr-h)) rotate(-90deg) translate(var(--app-w),0) scaleX(-1);}
 
   /* ---------------- stage ---------------- */
   #stage{position:fixed;inset:0;}
@@ -593,7 +607,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.45';
+const APP_VERSION = '2.46';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -615,6 +629,7 @@ const DEFAULTS = {
                      // itself with the headset lens centers. No effect with 3D SBS off.
   content: 'demo',        // demo | model | video
   shape: 0,               // index into SHAPES
+  portraitRot: 0,         // IN PORTRAIT: 0 AUTO | 1 TOP LEFT | 2 TOP RIGHT | 3 OFF -- applyAppRotation()
   shapesVer: 2,           // 2 = SHAPES starts with GRID ROOM; older saved indexes are reset to it
   sourceSbs: false,       // video source is side-by-side stereo
   autoRotate: true,       // spin demo / loaded model
@@ -790,6 +805,7 @@ const TRACKING_ALGOS = ['CLASSIC', 'GYRO (BETA)', 'GYRO (STABLE)', 'V2.8 (6DOF)'
 // driving the two flags (sbs, mirrorUI) the rest of the app actually
 // branches on.
 const VIEWS = ['PLAIN', 'SBS', 'HOLO', 'HOLO2', 'HOLO3'];
+const PORTRAIT_ROTS = ['AUTO', 'TOP LEFT', 'TOP RIGHT', 'OFF'];
 const VIEW_SBS    = [false, true,  true,  true,  true];
 const VIEW_MIRROR = [false, false, true,  true,  true];
 const VIEW_ABOVE  = [false, false, false, true,  true];   // phone above the eyes, tracked through its mount
@@ -877,6 +893,9 @@ const DEPTH_MODES = ['OFF', 'ON'];
 const MENU = [
   { title:'GENERAL', items:[
     { type:'enum',  key:'view', label:'VIEW', options:VIEWS },
+    // What to do when the screen reports portrait (iPhone rotation lock)
+    // -- see applyAppRotation().
+    { type:'enum',  key:'portraitRot', label:'IN PORTRAIT', options:PORTRAIT_ROTS },
     // How the phone is mounted relative to the head -- see DEFAULTS.
     // mountAuto/mountTilt/mountRoll and v28BuildMount().
     { type:'check', key:'mountAuto', label:'AUTO TILT',  whenTrue:'mountRows' },
@@ -1061,7 +1080,7 @@ function itemHTML(item){
 }
 
 function paneHTML(){
-  let html = '<div class="paneInner" style="padding-top:50vh;padding-bottom:50vh">'
+  let html = '<div class="paneInner" style="padding-top:calc(var(--app-h,100vh) / 2);padding-bottom:calc(var(--app-h,100vh) / 2)">'
     + '<div class="paneTitle">MENU'
     + '<button class="paneCloseBtn" data-act="closeList" tabindex="-1" aria-label="Close settings">&#215;</button>'
     + '</div>';
@@ -1933,8 +1952,64 @@ function applyEyeProjection(){
   }
 }
 
+/* ---- IN PORTRAIT: with iPhone rotation lock on (say, so a headset that
+   holds the phone flat or upside down doesn't make iOS flip the layout),
+   the page stays portrait while the phone is held landscape. The app then
+   turns itself a quarter turn (CSS above), lays out in the swapped size
+   (eyeSize()), reads touches in its own turned frame (appPoint()) and gives
+   the head tracking the screen angle it would have had (screenAngleRad()).
+     TOP LEFT / TOP RIGHT  which way the top of the phone points, as you
+                           look at the screen
+     AUTO                  read from gravity: once when the first sensor
+                           reading comes in, and again at every RECENTER --
+                           never in between, so it can't flip mid-use the
+                           way iOS's own rotation would
+     OFF                   show portrait as portrait ---- */
+let appRot = 0;           // 0 | 90 (phone top to the left) | -90 (top to the right)
+let autoRotSide = null;   // AUTO's last gravity reading: 90 | -90, null = none yet
+let lastOriBeta = null, lastOriGamma = null;
+// AUTO's side from the newest orientation sample; null if the phone isn't
+// clearly on its side (flat, or upright portrait).
+function gravityRotSide(){
+  if (lastOriBeta === null) return null;
+  const b = THREE.MathUtils.degToRad(lastOriBeta), g = THREE.MathUtils.degToRad(lastOriGamma);
+  const upX = -Math.cos(b) * Math.sin(g);   // world up along the phone's portrait x axis
+  return Math.abs(upX) < 0.3 ? null : (upX > 0 ? 90 : -90);
+}
+// Sets appRot and the CSS that turns the page. True if it changed.
+function applyAppRotation(){
+  const sw = window.innerWidth, sh = window.innerHeight;
+  const mode = state.portraitRot;
+  let rot = 0;
+  if (sh > sw && mode !== 3) rot = mode === 1 ? 90 : mode === 2 ? -90 : (autoRotSide || 90);
+  const b = document.body;
+  b.style.setProperty('--scr-w', sw + 'px');
+  b.style.setProperty('--scr-h', sh + 'px');
+  b.style.setProperty('--app-w', (rot ? sh : sw) + 'px');
+  b.style.setProperty('--app-h', (rot ? sw : sh) + 'px');
+  b.dataset.rot = String(rot);
+  const changed = rot !== appRot;
+  appRot = rot;
+  return changed;
+}
+// A pointer event's position in the app's own (turned) frame.
+function appPoint(e){
+  if (appRot === 90) return { x: e.clientY, y: window.innerWidth - e.clientX };
+  if (appRot === -90) return { x: window.innerHeight - e.clientY, y: e.clientX };
+  return { x: e.clientX, y: e.clientY };
+}
+// An element's top and height in the app's frame (getBoundingClientRect()
+// is the screen's).
+function appRectY(el){
+  const r = el.getBoundingClientRect();
+  if (appRot === 90) return { top: window.innerWidth - r.right, height: r.width };
+  if (appRot === -90) return { top: r.left, height: r.width };
+  return { top: r.top, height: r.height };
+}
+
 function eyeSize(){
-  const w = window.innerWidth, h = window.innerHeight;
+  const w = appRot ? window.innerHeight : window.innerWidth;
+  const h = appRot ? window.innerWidth : window.innerHeight;
   return { w, h, ew: state.sbs ? w / 2 : w, eh: h };
 }
 
@@ -1949,6 +2024,9 @@ function applyUiEyeDist(){
 }
 
 function onResize(){
+  // The page turning (or un-turning) changes the screen angle the tracking
+  // is built on: start it afresh rather than jump. Not before motion is up.
+  if (applyAppRotation() && motionGranted) setTimeout(recenter, 0);
   const { w, h, ew, eh } = eyeSize();
   const dpr = renderer.getPixelRatio();
   renderer.setSize(w, h, false);
@@ -2063,7 +2141,8 @@ function onDeviceMotion(e){
 
 function screenAngleRad(){
   let angle = 0;
-  if (screen.orientation && typeof screen.orientation.angle === 'number') angle = screen.orientation.angle;
+  if (appRot) angle = appRot;   // IN PORTRAIT: the angle the screen would have had
+  else if (screen.orientation && typeof screen.orientation.angle === 'number') angle = screen.orientation.angle;
   else if (typeof window.orientation === 'number') angle = window.orientation;
   return THREE.MathUtils.degToRad(angle);
 }
@@ -2101,6 +2180,12 @@ function onDeviceOrientation(e){
 }
 
 function recenter(){
+  // IN PORTRAIT AUTO: RECENTER is also when the side is read again.
+  const side = gravityRotSide();
+  if (side !== null && side !== autoRotSide){
+    autoRotSide = side;
+    if (state.portraitRot === 0 && applyAppRotation()) onResize();
+  }
   recenterPending = true;
   recenterHoldUntil = performance.now() + 500;
   haveOrientation = false;
@@ -2353,6 +2438,11 @@ let v28RecenterPending = false;
 
 function onDeviceOrientationV28(e){
   if (e.alpha === null || e.beta === null || e.gamma === null) return;
+  lastOriBeta = e.beta; lastOriGamma = e.gamma;
+  if (autoRotSide === null){   // IN PORTRAIT AUTO: first clear reading decides
+    const side = gravityRotSide();
+    if (side !== null){ autoRotSide = side; if (state.portraitRot === 0) onResize(); }
+  }
   const t = (Number.isFinite(e.timeStamp) && e.timeStamp > 0) ? e.timeStamp : performance.now();
   const dtS = (t - v28CurT) / 1000;
   v28Prev.copy(v28Cur);
@@ -4292,6 +4382,7 @@ function stepEnumValue(node, dir){
     if (SHAPES[state.shape] !== 'OFF') state.content = 'demo';
     applyAll();
   }
+  if (node.key === 'portraitRot') applyAll();   // turns the page now if it's portrait
   if (node.key === 'trackingAlgo'){
     recenter();   // avoid a jump: each algorithm accumulates its own reference
     motionRateUnavailableWarned = false;   // give GYRO (BETA) a fresh verdict each time it's selected
@@ -5265,8 +5356,8 @@ function setMenuFocus(idx, smooth = true){
   const pane = menuPanes.querySelector('.pane');
   const item = items[idx];
   if (pane && item){
-    const paneRect = pane.getBoundingClientRect();
-    const itemRect = item.getBoundingClientRect();
+    const paneRect = appRectY(pane);
+    const itemRect = appRectY(item);
     // Convert item's midpoint to a position in the pane's scroll coordinate space
     const itemMid = itemRect.top - paneRect.top + pane.scrollTop + itemRect.height / 2;
     pane.scrollTo({ top: itemMid - pane.clientHeight / 2, behavior: smooth ? 'smooth' : 'instant' });
@@ -6597,9 +6688,10 @@ document.getElementById('hintBtn').addEventListener('touchstart', e=>{
 }, { passive: true });
 
 stage.addEventListener('pointerdown', e=>{
-  pointers.set(e.pointerId, { x:e.clientX, y:e.clientY, x0:e.clientX, y0:e.clientY, t:performance.now() });
+  const pt = appPoint(e);
+  pointers.set(e.pointerId, { x:pt.x, y:pt.y, x0:pt.x, y0:pt.y, t:performance.now() });
   if (pointers.size === 1){
-    gesture = { mode:'pan', moved:false, lastX:e.clientX, lastY:e.clientY };
+    gesture = { mode:'pan', moved:false, lastX:pt.x, lastY:pt.y };
   } else if (pointers.size === 2){
     gesture = Object.assign({ mode:'two' }, twoFingerMetrics());
   }
@@ -6608,7 +6700,8 @@ stage.addEventListener('pointerdown', e=>{
 stage.addEventListener('pointermove', e=>{
   const p = pointers.get(e.pointerId);
   if (!p || !gesture) return;
-  p.x = e.clientX; p.y = e.clientY;
+  const pt = appPoint(e);
+  p.x = pt.x; p.y = pt.y;
   const { ew, eh } = eyeSize();
 
   if (gesture.mode === 'pan' && pointers.size === 1){

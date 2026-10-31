@@ -76,6 +76,12 @@ Everything is shared across content types and saved to `localStorage` under
 `gyrosSettings`. The content type itself is not restored — a picked file cannot
 be — so it always boots to the demo.
 
+- **IN PORTRAIT** (GENERAL) — for iPhone rotation lock: when the screen
+  reports portrait but the phone sits landscape in the headset, GYROS turns
+  itself a quarter turn (picture, menus, touch and head tracking). AUTO reads
+  which way the phone lies from gravity when tracking starts and again at
+  each RECENTER, never in between, so it can't flip mid-use; TOP LEFT / TOP
+  RIGHT fix the side; OFF shows portrait as portrait.
 - **GENERAL** — VIEW (PLAIN collapses to a single full-width view and one menu
   pane; SBS is stereo; HOLO is stereo with a mirrored UI for mirror-viewed
   rigs; HOLO2 is HOLO for a phone mounted tilted above the eyes and seen in
