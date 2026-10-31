@@ -120,7 +120,7 @@ be — so it always boots to the demo.
 - **FLIP** — flip X/Y.
 - **GYRO** — per-axis multiply, freeze and invert, plus RECENTER, which makes
   wherever you are looking the new forward. TRACKING picks the algorithm;
-  V2.8 (6DOF) adds motion prediction, adaptive smoothing, a yaw-only
+  V2.8 (6DOF) adds motion prediction, adaptive smoothing, a
   RECENTER that keeps the horizon level, and a neck model that fakes head
   translation (6DOF DEPTH sets how strong).
 

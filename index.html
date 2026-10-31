@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.44</title>
+<title>GYROS v2.45</title>
 <style>
   :root{
     --bg:#000000;
@@ -593,7 +593,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.44';
+const APP_VERSION = '2.45';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -670,7 +670,7 @@ const DEFAULTS = {
                             // see TRACKING_ALGOS, onDeviceMotion() and
                             // applyStableTuning(), 3 = V2.8 (6DOF)
                             // (predicted + adaptively smoothed orientation,
-                            // yaw-only recenter, neck-model parallax -- see
+                            // level recenter, neck-model parallax -- see
                             // v28Step()). Defaults to V2.8 (6DOF); a
                             // session with a saved choice keeps it.
   // How the phone sits relative to the head, for V2.8 (6DOF) tracking and
@@ -2291,9 +2291,10 @@ function applyStableTuning(){
    3. Adaptive smoothing. A slerp toward the predicted pose whose strength
       follows how far behind it is: heavy at rest (no jitter), none in a
       turn (no lag).
-   4. Yaw-only recenter. RECENTER stores the heading you're facing and
-      nothing else, so recentering while pitched or rolled can't tilt the
-      world the way zeroing the whole quaternion (CLASSIC) does.
+   4. Level recenter. RECENTER stores the heading and up/down angle you're
+      facing and takes them off as angles; roll stays measured from gravity,
+      so recentering while pitched or rolled can't tilt the horizon the way
+      zeroing the whole quaternion (CLASSIC) does.
 
    "6DOF" is faked: there's no position sensor on this path. A neck model
    swings the eyes around a pivot below and behind them, so turning or
@@ -2343,11 +2344,11 @@ const v28Cur = new THREE.Quaternion();
 const v28Delta = new THREE.Quaternion();
 const v28Pred = new THREE.Quaternion();
 const v28Filtered = new THREE.Quaternion();
-const v28YawInv = new THREE.Quaternion();
 const v28Rate = new THREE.Vector3();   // smoothed angular velocity, device frame, rad/s
 const v28Vec = new THREE.Vector3();
 let v28CurT = 0, v28Samples = 0;
-let v28YawZero = 0;
+let v28YawZero = 0, v28PitchZero = 0;
+const v28Euler = new THREE.Euler();
 let v28RecenterPending = false;
 
 function onDeviceOrientationV28(e){
@@ -2412,7 +2413,7 @@ function v28Predict(now){
    the eyes but not square to them -- a headset that sits slanted, or a
    phone held in the hand leaning back. There PHONE TILT counts from
    upright (0 = upright, positive = top edge tipped away), and AUTO TILT
-   starts off, so RECENTER stays yaw-only until it's asked to level too. */
+   starts off, so RECENTER doesn't re-measure the mount until it's asked to. */
 const V28_X = new THREE.Vector3(1, 0, 0);
 const V28_Z = new THREE.Vector3(0, 0, 1);
 const v28Mount = new THREE.Quaternion();
@@ -2468,9 +2469,13 @@ function v28Step(dt, now){
     v28Filtered.copy(v28Cur);
     v28MeasureMount();
     v28BuildMount();
-    v28Vec.set(0, 0, -1).applyQuaternion(v28Head.copy(v28Cur).multiply(v28Mount));
-    // Looking straight up or down has no meaningful heading; keep the old one.
-    if (Math.hypot(v28Vec.x, v28Vec.z) >= 0.2) v28YawZero = Math.atan2(-v28Vec.x, -v28Vec.z);
+    // Wherever the head points now becomes straight ahead: heading AND
+    // up/down. (It used to be heading only, and looking steeply up or down
+    // -- a phone lying nearly flat in a reflector visor with no PHONE TILT
+    // set -- kept the old heading, so the view snapped back after RECENTER.)
+    v28Euler.setFromQuaternion(v28Head.copy(v28Cur).multiply(v28Mount), 'YXZ');
+    v28YawZero = v28Euler.y;
+    v28PitchZero = v28Euler.x;
   } else {
     // Strength follows how far behind the filtered pose is: within sensor
     // noise it barely moves, a real turn pulls it along with no lag.
@@ -2482,8 +2487,13 @@ function v28Step(dt, now){
     v28BuildMount();   // every frame, so a hand-set angle takes effect as it's stepped
   }
   v28MountAutoWas = state.mountAuto;
-  relQuat.copy(v28Filtered).multiply(v28Mount)
-         .premultiply(v28YawInv.setFromAxisAngle(WORLD_UP, -v28YawZero));
+  // Taken off as angles, not as a rotation of the whole world: roll stays
+  // measured from gravity, so the horizon stays level whichever way you
+  // turn after recentering while looking up or down.
+  v28Euler.setFromQuaternion(v28Head.copy(v28Filtered).multiply(v28Mount), 'YXZ');
+  v28Euler.y -= v28YawZero;
+  v28Euler.x -= v28PitchZero;
+  relQuat.setFromEuler(v28Euler);
   applyStableTuning();   // X/Y MULTIPLY, FREEZE, FLIP -- same swing-twist path as GYRO (STABLE)
   rig.position.copy(V28_NECK).applyQuaternion(rig.quaternion).sub(V28_NECK)
      .multiplyScalar(state.neckDepth);
