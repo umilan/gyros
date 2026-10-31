@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.55</title>
+<title>GYROS v2.56</title>
 <style>
   :root{
     --bg:#000000;
@@ -320,9 +320,9 @@
     min-height:var(--row-h);margin-top:0;padding:0 var(--pad-lg);
   }
   .textbtn:active{opacity:.55;}
-  .dialog button:focus{background:rgba(246,196,28,0.18);}
+  .dialog button:focus,.dialog button.mirrorFocus{background:rgba(246,196,28,0.18);}
   .dialog .keyboardFocus{background:rgba(246,196,28,0.18);}
-  .dialog .textbtn:focus{opacity:1;color:var(--accent);}
+  .dialog .textbtn:focus,.dialog .textbtn.mirrorFocus{opacity:1;color:var(--accent);}
   .dialog .textbtn.keyboardFocus{opacity:1;color:var(--accent);}
   .dialog .paneCloseBtn:focus{color:var(--accent);border-radius:50%;}
   #loadTypeDlg .row{justify-content:center;text-align:center;}
@@ -333,6 +333,15 @@
     z-index:50;          /* above bars */
     align-items:stretch; /* dlgPane fills the overlay */
     cursor:default;
+  }
+  /* A dialog with one pane per eye in SBS (LOAD, LEARN BT KEYS, and the
+     right-eye copies mirrorDialog() adds) gets the SBS EYE DIST shift, same
+     as the settings list's panes. */
+  body[data-sbs="1"] .dialog .dlgPane:first-child:not(:only-child){
+    transform:translateX(calc(-1 * var(--ui-eye-shift)));
+  }
+  body[data-sbs="1"] .dialog .dlgPane:last-child:not(:only-child){
+    transform:translateX(var(--ui-eye-shift));
   }
   /* Matches the logo-menu panel exactly */
   .dlgPane{
@@ -350,7 +359,7 @@
     color:var(--text);font-family:var(--font);font-size:15px;letter-spacing:0.04em;
   }
   .dlgInput::placeholder{color:var(--muted);}
-  .dlgInput:focus{outline:none;border-color:var(--accent);background:rgba(255,255,255,0.12);}
+  .dlgInput:focus,.dlgInput.mirrorFocus{outline:none;border-color:var(--accent);background:rgba(255,255,255,0.12);}
   .helpText{
     margin:0;padding:0 var(--pad-lg) var(--pad);
     font-size:14px;line-height:1.65;letter-spacing:0.02em;color:var(--text);
@@ -614,7 +623,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.55';
+const APP_VERSION = '2.56';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -3221,7 +3230,9 @@ function applyContent(){
 }
 
 function applyAll(){
+  const sbsChanged = document.body.dataset.sbs !== (state.sbs ? '1' : '0');
   document.body.dataset.sbs = state.sbs ? '1' : '0';
+  if (sbsChanged) MIRROR_DLGS.forEach(mirrorDialog);   // only ever called after startup
   document.body.dataset.mirror = state.mirrorUI ? '1' : '0';
   applyEyeDistance();
   updateQuad();
@@ -5714,6 +5725,59 @@ document.querySelectorAll('.dialog').forEach(dlg=>{
 });
 const DLG_WASD = { w:'ArrowUp', a:'ArrowLeft', s:'ArrowDown', d:'ArrowRight' };
 
+/* ---- Single-pane dialogs in SBS (the URL dialog, the iOS gyroscope
+   prompt): their one pane would straddle the divider, whole in neither
+   eye. While SBS is on, a copy goes in for the right eye -- no ids, out of
+   the keyboard order -- kept showing the same text, field values and focus
+   as the real (left) pane. A tap on the copy acts on the matching element
+   of the real pane. ---- */
+const MIRROR_DLGS = [urlDlg, hint];
+function mirrorParts(pane){ return [...pane.querySelectorAll('button, input')]; }
+function mirrorDialog(dlg){
+  dlg.querySelector('.mirrorPane')?.remove();
+  if (!state.sbs || dlg.hidden) return;
+  const pane = dlg.querySelector('.dlgPane');
+  const copy = pane.cloneNode(true);
+  copy.classList.add('mirrorPane');
+  copy.setAttribute('aria-hidden', 'true');
+  copy.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  mirrorParts(copy).forEach(el => {
+    el.tabIndex = -1;
+    if (el.tagName === 'INPUT') el.readOnly = true;
+  });
+  dlg.appendChild(copy);
+  syncMirror(dlg);
+}
+function syncMirror(dlg){
+  const copy = dlg.querySelector('.mirrorPane');
+  if (!copy) return;
+  const src = mirrorParts(dlg.querySelector('.dlgPane')), dst = mirrorParts(copy);
+  src.forEach((el, i) => {
+    const d = dst[i];
+    if (!d) return;
+    d.className = el.className;
+    d.classList.toggle('mirrorFocus', el === document.activeElement);
+    if (el.tagName === 'INPUT'){ d.value = el.value; d.placeholder = el.placeholder; }
+  });
+}
+MIRROR_DLGS.forEach(dlg => {
+  new MutationObserver(() => mirrorDialog(dlg)).observe(dlg, { attributes: true, attributeFilter: ['hidden'] });
+  ['input', 'focusin', 'focusout', 'keyup'].forEach(ev => dlg.addEventListener(ev, () => syncMirror(dlg)));
+  document.addEventListener('keydown', () => setTimeout(() => syncMirror(dlg), 0));
+  // A tap on the copy: the same element in the real pane takes it.
+  dlg.addEventListener('click', e => {
+    const copy = e.target.closest('.mirrorPane');
+    if (!copy) return;
+    const el = e.target.closest('button, input');
+    if (!el || el.matches('[data-dlgclose]')) return;   // close/outside taps: as usual
+    e.stopPropagation();
+    const real = mirrorParts(dlg.querySelector('.dlgPane'))[mirrorParts(copy).indexOf(el)];
+    if (!real) return;
+    if (real.tagName === 'INPUT') real.focus(); else real.click();
+    syncMirror(dlg);
+  }, { capture: true });
+});
+
 /* =========================================================================
    Menu keyboard navigation (list mode)
    ========================================================================= */
@@ -6090,8 +6154,10 @@ document.addEventListener('keydown', e=>{
 
   // Keyboard aliases shown in the Bluetooth command list. Keep capture mode
   // above this block so learning X/Z/[ ] records the real incoming key.
-  if (e.key === 'x' || e.key === 'X') Object.defineProperty(e, 'key', { value:'Escape' });
-  else if (e.key === 'z' || e.key === 'Z') Object.defineProperty(e, 'key', { value:'Tab' });
+  // Not while typing in a field: an X in a URL would close the dialog.
+  const typing = document.activeElement && document.activeElement.tagName === 'INPUT';
+  if (!typing && (e.key === 'x' || e.key === 'X')) Object.defineProperty(e, 'key', { value:'Escape' });
+  else if (!typing && (e.key === 'z' || e.key === 'Z')) Object.defineProperty(e, 'key', { value:'Tab' });
 
   if (!loadTypeDlg.hidden){
     handleLoadTypeDlgKeydown(e);
@@ -6102,7 +6168,7 @@ document.addEventListener('keydown', e=>{
      order; on a button, ←/→ or A/D fire it (Enter/Space do natively).
      Typing in a field is left alone. ---- */
   if (!urlDlg.hidden && e.key !== 'Escape'){
-    const order = [...urlDlg.querySelectorAll('.dlgInput, .textbtn')].filter(el => !el.closest('[hidden]'));
+    const order = [...urlDlg.querySelectorAll('.dlgPane:not(.mirrorPane) :is(.dlgInput, .textbtn)')].filter(el => !el.closest('[hidden]'));
     const at = order.indexOf(document.activeElement);
     const onButton = at >= 0 && order[at].tagName === 'BUTTON';
     const key = onButton ? (DLG_WASD[e.key.toLowerCase()] || e.key) : e.key;
