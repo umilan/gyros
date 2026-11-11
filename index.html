@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.53</title>
+<title>GYROS v2.54</title>
 <style>
   :root{
     --bg:#000000;
@@ -562,11 +562,11 @@
 <div class="toast toastR"></div>
 <div class="chromaPick chromaPickL" aria-hidden="true">
   <svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="32" cy="32" r="14"/><path d="M32 2v20M32 42v20M2 32h20M42 32h20"/></g></svg>
-  <div class="chromaPickHint">AIM AT THE KEY COLOUR<br>TAP OR ENTER TO PICK · ESC CANCELS</div>
+  <div class="chromaPickHint">AIM AT THE KEY COLOUR<br>TAP, ENTER OR ←/→ TO PICK · ESC CANCELS</div>
 </div>
 <div class="chromaPick chromaPickR" aria-hidden="true">
   <svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="32" cy="32" r="14"/><path d="M32 2v20M32 42v20M2 32h20M42 32h20"/></g></svg>
-  <div class="chromaPickHint">AIM AT THE KEY COLOUR<br>TAP OR ENTER TO PICK · ESC CANCELS</div>
+  <div class="chromaPickHint">AIM AT THE KEY COLOUR<br>TAP, ENTER OR ←/→ TO PICK · ESC CANCELS</div>
 </div>
 
 <!-- Content navigator: the arrow points back toward the loaded content
@@ -609,7 +609,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.53';
+const APP_VERSION = '2.54';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -5960,13 +5960,14 @@ btKeysDlg.addEventListener('dblclick', e=>{
    Keyboard: arrows drive the OSD (and the list when open)
    ========================================================================= */
 document.addEventListener('keydown', e=>{
-  /* ---- Chroma key crosshair waiting (startChromaPick()): Enter, Space or
-     the left/right arrow picks, Esc (or its X alias) cancels; every other
-     key is held back so nothing changes underneath while aiming. ---- */
+  /* ---- Chroma key crosshair waiting (startChromaPick()): Enter, Space,
+     the left/right arrow or A/D (the WASD aliases, applied further down,
+     so checked here by hand) picks, Esc (or its X alias) cancels; every
+     other key is held back so nothing changes underneath while aiming. ---- */
   if (chromaPick){
     e.preventDefault();
     if (e.repeat) return;
-    if (['Enter', ' ', 'ArrowLeft', 'ArrowRight'].includes(e.key)) endChromaPick(true);
+    if (['Enter', ' ', 'ArrowLeft', 'ArrowRight', 'a', 'A', 'd', 'D'].includes(e.key)) endChromaPick(true);
     else if (['Escape', 'x', 'X'].includes(e.key)) endChromaPick(false);
     return;
   }
