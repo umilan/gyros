@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.65</title>
+<title>GYROS v2.66</title>
 <style>
   :root{
     --bg:#000000;
@@ -288,9 +288,9 @@
   .row.sub1 .label{padding-left:var(--pad-lg);}
   .row.sub2 .label{padding-left:calc(2 * var(--pad-lg));}
   .row.actionRow .label{color:var(--accent);}
-  /* INTENSITY n: a swatch of the key colour it belongs to */
+  /* INTENSITY n / REMOVE COLOUR n: a swatch of the key colour, before the name */
   .row .label .swatch{
-    display:inline-block;width:0.8em;height:0.8em;margin-left:0.6em;vertical-align:-0.05em;
+    display:inline-block;width:0.8em;height:0.8em;margin-right:0.6em;vertical-align:-0.05em;
     border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,0.55);
   }
   .row.kbfocus,.textbtn.kbfocus{background:rgba(246,196,28,0.25);outline:0px solid rgba(246,196,28,0.75);outline-offset:0px;}
@@ -626,7 +626,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.65';
+const APP_VERSION = '2.66';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -1299,7 +1299,7 @@ function refreshMenu(){
       const label = el.closest('.row')?.querySelector('.label');
       if (!label) return;
       let sw = label.querySelector('.swatch');
-      if (!sw){ sw = document.createElement('span'); sw.className = 'swatch'; label.appendChild(sw); }
+      if (!sw){ sw = document.createElement('span'); sw.className = 'swatch'; label.prepend(sw); }
       sw.hidden = !rgb;
       if (rgb) sw.style.background = `rgb(${rgb.map(c => Math.round(c * 255)).join(',')})`;
     });
