@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.54</title>
+<title>GYROS v2.55</title>
 <style>
   :root{
     --bg:#000000;
@@ -609,7 +609,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.54';
+const APP_VERSION = '2.55';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -6680,23 +6680,35 @@ async function depthRun(src){
    left/right arrow picks, Esc cancels. The pick reads that spot back from
    the left eye's render target -- so it's the colour as actually rendered,
    before BRIGHTNESS -- and keys everything near it to black in the blit
-   shader (keyMask()). ---- */
+   shader (keyMask()). While aiming, the colour under the crosshair is read
+   every frame and keyed live (applyChromaUniforms()), so you see what will
+   black out before you pick. ---- */
 let chromaPick = null;   // { add, fromList } while the crosshair waits
 
 function applyChromaUniforms(){
   const u = quadMat.uniforms;
-  u.chromaOn.value = state.chromaOn && state.content === 'video' && state.chromaIntensity > 0 ? 1 : 0;
+  let keys = state.chromaKeys, on = state.chromaOn;
+  // Live preview while aiming: key with whatever is under the crosshair
+  // this frame (rtL is already drawn, unkeyed -- keying happens in the
+  // blit), on top of the colours kept so far for ADD KEY COLOUR.
+  if (chromaPick){
+    const live = readChromaKeyColor();
+    const kept = chromaPick.add ? state.chromaKeys : [];
+    keys = live ? [...kept, live].slice(0, CHROMA_MAX_KEYS) : kept;
+    on = true;
+  }
+  u.chromaOn.value = on && state.content === 'video' && state.chromaIntensity > 0 ? 1 : 0;
   u.chromaT.value = state.chromaIntensity / 100;
   u.chromaF.value = state.chromaSmooth / 100;
   u.chromaR.value = state.chromaRefine;
   u.chromaS.value = state.chromaSpill / 100;
   u.chromaMatte.value = state.chromaMatte ? 1 : 0;
-  u.keyCount.value = state.chromaKeys.length;
-  state.chromaKeys.forEach((rgb, i) => u.keyCols.value[i].set(...rgb));
+  u.keyCount.value = keys.length;
+  keys.forEach((rgb, i) => u.keyCols.value[i].set(...rgb));
   // The keys' tint for SPILL: their CbCr directions (same maths as the
   // shader's toYCbCr), averaged. A grey key has none.
   let cb = 0, cr = 0;
-  for (const [r, g, b] of state.chromaKeys){
+  for (const [r, g, b] of keys){
     const y = 0.299 * r + 0.587 * g + 0.114 * b;
     const kb = (b - y) * 0.564, kr = (r - y) * 0.713, len = Math.hypot(kb, kr);
     if (len > 0.02){ cb += kb / len; cr += kr / len; }
