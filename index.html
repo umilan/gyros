@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.63</title>
+<title>GYROS v2.64</title>
 <style>
   :root{
     --bg:#000000;
@@ -622,7 +622,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.63';
+const APP_VERSION = '2.64';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -998,9 +998,13 @@ const MENU = [
     { type:'action', act:'chromaKey', label:'SET CHROMA KEY', textbtn:true, when:'video' },
     { type:'action', act:'chromaAdd', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaCanAdd' },
     // One INTENSITY per picked colour, with a swatch of it (refreshMenu()).
+    // Each followed by REMOVE COLOUR n (removeChromaColour()).
     { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey1' },
+    { type:'action', act:'chromaDel1', label:'REMOVE COLOUR 1', when:'video', whenTrue:'chromaKey1' },
     { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey2' },
+    { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', when:'video', whenTrue:'chromaKey2' },
     { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey3' },
+    { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'chromaKey3' },
     { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' }
@@ -1046,8 +1050,11 @@ const REDUCED_MENU = [
     { type:'action', act:'chromaClear', label:'REMOVE COLOURS', when:'video', whenTrue:'rmChromaRows', sub:2 },
     { type:'action', act:'chromaAdd',   label:'ADD COLOUR', when:'video', whenTrue:'rmChromaAdd', sub:2 },
     { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey1', sub:2 },
+    { type:'action', act:'chromaDel1', label:'REMOVE COLOUR 1', when:'video', whenTrue:'rmChromaKey1', sub:2 },
     { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey2', sub:2 },
+    { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', when:'video', whenTrue:'rmChromaKey2', sub:2 },
     { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey3', sub:2 },
+    { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'rmChromaKey3', sub:2 },
     { type:'step',  key:'chromaSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
     { type:'step',  key:'chromaRefine', label:'EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
     { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 }
@@ -1280,10 +1287,11 @@ function refreshMenu(){
     el.hidden = (!!when && !when.split(',').includes(state.content)) || (!!whenTrue && !state[whenTrue]);
   });
   CHROMA_ITEM.label = state.chromaOn ? 'REMOVE CHROMA KEY' : 'SET CHROMA KEY';
-  // Each INTENSITY row carries a swatch of its colour, so you can tell them apart.
+  // Each INTENSITY / REMOVE COLOUR row carries a swatch of its colour, so
+  // you can tell them apart.
   CHROMA_INT_KEYS.forEach((key, i)=>{
     const rgb = state.chromaKeys[i];
-    menuPanes.querySelectorAll(`[data-val="${key}"]`).forEach(el=>{
+    menuPanes.querySelectorAll(`[data-val="${key}"],[data-act="chromaDel${i + 1}"]`).forEach(el=>{
       const label = el.closest('.row')?.querySelector('.label');
       if (!label) return;
       let sw = label.querySelector('.swatch');
@@ -7012,6 +7020,20 @@ function setCheck(key, v){
   saveState();
 }
 
+// REMOVE COLOUR n: drop that one colour; later ones move up a place and
+// keep their INTENSITY. The last one going turns chroma key off, like
+// REMOVE CHROMA KEY.
+function removeChromaColour(i){
+  if (i >= state.chromaKeys.length) return;
+  if (state.chromaKeys.length === 1){ removeChromaKey(); return; }
+  state.chromaKeys = state.chromaKeys.filter((_, j) => j !== i);
+  for (let j = i; j < CHROMA_INT_KEYS.length - 1; j++) state[CHROMA_INT_KEYS[j]] = state[CHROMA_INT_KEYS[j + 1]];
+  state[CHROMA_INT_KEYS[CHROMA_INT_KEYS.length - 1]] = DEFAULTS[CHROMA_INT_KEYS[CHROMA_INT_KEYS.length - 1]];
+  refreshMenu();
+  saveState();
+  toast(`KEY COLOUR ${i + 1} REMOVED`);
+}
+
 // REMOVE COLOURS (reduced menu): forget the picked colours, keying stays on
 // so ADD COLOUR picks afresh.
 function clearChromaKeys(){
@@ -7054,6 +7076,9 @@ function handleAct(act, el){
       resetToDefaults();
       break;
     case 'chromaClear':  clearChromaKeys(); break;
+    case 'chromaDel1':   removeChromaColour(0); break;
+    case 'chromaDel2':   removeChromaColour(1); break;
+    case 'chromaDel3':   removeChromaColour(2); break;
     case 'chromaKey':    if (state.chromaOn) removeChromaKey(); else startChromaPick(); break;
     case 'chromaAdd':    startChromaPick(true); break;
   }
