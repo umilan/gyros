@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.58</title>
+<title>GYROS v2.59</title>
 <style>
   :root{
     --bg:#000000;
@@ -288,6 +288,11 @@
   .row.sub1 .label{padding-left:var(--pad-lg);}
   .row.sub2 .label{padding-left:calc(2 * var(--pad-lg));}
   .row.actionRow .label{color:var(--accent);}
+  /* INTENSITY n: a swatch of the key colour it belongs to */
+  .row .label .swatch{
+    display:inline-block;width:0.8em;height:0.8em;margin-left:0.6em;vertical-align:-0.05em;
+    border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,0.55);
+  }
   .row.kbfocus,.textbtn.kbfocus{background:rgba(246,196,28,0.25);outline:0px solid rgba(246,196,28,0.75);outline-offset:0px;}
 
   /* stepper */
@@ -614,7 +619,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.58';
+const APP_VERSION = '2.59';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -646,6 +651,9 @@ const DEFAULTS = {
   chromaIntensity: 40,    // INTENSITY (chroma key), 0..100: how far from the
                             // picked colour still gets keyed to black. 0 = no
                             // keying, 100 = the whole picture black. See keyMask().
+                            // One per key colour (CHROMA_INT_KEYS): this is the
+                            // first's, so a value saved before stays with it.
+  chromaIntensity2: 40, chromaIntensity3: 40,
   chromaSmooth: 20,       // SMOOTHING (chroma key), 0..100: how soft the
                             // keyed edges are. See keyMask().
   chromaRefine: 0,        // REFINE EDGE (chroma key), -1..1: shifts the edge
@@ -984,7 +992,10 @@ const MENU = [
     // REMOVE CHROMA KEY once a colour is picked (refreshMenu()).
     { type:'action', act:'chromaKey', label:'SET CHROMA KEY', textbtn:true, when:'video' },
     { type:'action', act:'chromaAdd', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaCanAdd' },
-    { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
+    // One INTENSITY per picked colour, with a swatch of it (refreshMenu()).
+    { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey1' },
+    { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey2' },
+    { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey3' },
     { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' }
@@ -1029,7 +1040,9 @@ const REDUCED_MENU = [
     { type:'check', key:'chromaOn', label:'CHROMA', when:'video', whenTrue:'rmBgOpen', sub:1 },
     { type:'action', act:'chromaClear', label:'REMOVE COLOURS', when:'video', whenTrue:'rmChromaRows', sub:2 },
     { type:'action', act:'chromaAdd',   label:'ADD COLOUR', when:'video', whenTrue:'rmChromaAdd', sub:2 },
-    { type:'step',  key:'chromaIntensity', label:'INTENSITY', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey1', sub:2 },
+    { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey2', sub:2 },
+    { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey3', sub:2 },
     { type:'step',  key:'chromaSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
     { type:'step',  key:'chromaRefine', label:'EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
     { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 }
@@ -1044,6 +1057,7 @@ function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
 const CHROMA_ITEM = menuItem('chromaKey');
 const CHROMA_MAX_KEYS = 3;   // key colours ADD KEY COLOUR allows; must match the shader's keyCols[3]
+const CHROMA_INT_KEYS = ['chromaIntensity', 'chromaIntensity2', 'chromaIntensity3'];   // INTENSITY per key colour
 
 const SPEC = {}; // key -> item spec, for step bounds
 const ENUM_SPEC = {}; // key -> item spec, for enum options
@@ -1218,7 +1232,7 @@ function fmt(key, v){
   if (ENUM_SPEC[key]) return ENUM_SPEC[key].options[v];
   if (key === 'menuTimeout') return v <= 0 ? 'OFF' : `${Math.round(v)}S`;
   if (key === 'predictMs') return `${Math.round(v)}MS`;
-  if (key === 'chromaIntensity' || key === 'chromaSmooth' || key === 'chromaSpill' || key === 'cutoutSmooth') return `${Math.round(v)}%`;
+  if (CHROMA_INT_KEYS.includes(key) || key === 'chromaSmooth' || key === 'chromaSpill' || key === 'cutoutSmooth') return `${Math.round(v)}%`;
   const dec = SPEC[key] && SPEC[key].dec ? SPEC[key].dec : 0;
   return dec ? v.toFixed(dec) : String(Math.round(v));
 }
@@ -1232,6 +1246,12 @@ function refreshMenu(){
   // row it was on when rows above it get shown or hidden below.
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
   state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length < CHROMA_MAX_KEYS;
+  // A colour's INTENSITY row shows once that colour is picked.
+  CHROMA_INT_KEYS.forEach((_, i)=>{
+    const has = !!state.chromaOn && state.chromaKeys.length > i;
+    state['chromaKey' + (i + 1)] = has;
+    state['rmChromaKey' + (i + 1)] = has && !!state.rmBgOpen;
+  });
   state.rotView = VIEW_SBS[state.view];   // IN PORTRAIT applies (applyAppRotation())
   state.cutoutOn = state.cutout > 0;
   state.monoSource = !state.sourceSbs && state.projection === 0;   // 2D TO 3D: flat mono only
@@ -1254,6 +1274,18 @@ function refreshMenu(){
     el.hidden = (!!when && !when.split(',').includes(state.content)) || (!!whenTrue && !state[whenTrue]);
   });
   CHROMA_ITEM.label = state.chromaOn ? 'REMOVE CHROMA KEY' : 'SET CHROMA KEY';
+  // Each INTENSITY row carries a swatch of its colour, so you can tell them apart.
+  CHROMA_INT_KEYS.forEach((key, i)=>{
+    const rgb = state.chromaKeys[i];
+    menuPanes.querySelectorAll(`[data-val="${key}"]`).forEach(el=>{
+      const label = el.closest('.row')?.querySelector('.label');
+      if (!label) return;
+      let sw = label.querySelector('.swatch');
+      if (!sw){ sw = document.createElement('span'); sw.className = 'swatch'; label.appendChild(sw); }
+      sw.hidden = !rgb;
+      if (rgb) sw.style.background = `rgb(${rgb.map(c => Math.round(c * 255)).join(',')})`;
+    });
+  });
   menuPanes.querySelectorAll('[data-act="chromaKey"]').forEach(el => el.textContent = CHROMA_ITEM.label);
   if (focusedRow){
     const idx = navItems().indexOf(focusedRow);
@@ -1649,7 +1681,7 @@ function initBlit(){
       spillDir: { value: new THREE.Vector2() },
       chromaS: { value: 0 },
       chromaMatte: { value: 0 },
-      chromaT: { value: 0 },
+      keyT: { value: [0, 0, 0] },
       chromaF: { value: 0 },
       chromaR: { value: 0 },
       texel: { value: new THREE.Vector2() }
@@ -1676,7 +1708,7 @@ function initBlit(){
       uniform vec2 spillDir;      // the keys' average tint direction in CbCr, unit length (0 = none)
       uniform float chromaS;      // SPILL 0..1
       uniform float chromaMatte;  // SHOW MATTE: 1 = draw the mask itself, white kept / black cut
-      uniform float chromaT;      // INTENSITY 0..1
+      uniform float keyT[3];      // each key colour's INTENSITY, 0..1
       uniform float chromaF;      // SMOOTHING 0..1
       uniform float chromaR;      // REFINE EDGE -1..1
       uniform vec2 texel;         // one eye-target pixel in uv
@@ -1696,11 +1728,13 @@ function initBlit(){
       // key is compared with the key dimmed to its brightness, so shadows on
       // the backdrop -- and the picture's edge pixels, blended with the
       // black around it -- key out too.
-      float keyMaskFor(vec3 a, vec3 key){
+      float keyMaskFor(vec3 a, vec3 key, float t){
+        if (t <= 0.0) return 1.0;   // INTENSITY 0: this colour keys nothing
+        if (t >= 1.0) return 0.0;   // 100: everything
         vec3 k = toYCbCr(key);
         k *= clamp(a.x / max(k.x, 0.001), 0.0, 1.0);
         float d = clamp(length(a.yz - k.yz) * 2.5 + abs(a.x - k.x) * 0.35, 0.0, 1.0);
-        return smoothstep(chromaT * (1.0 - chromaF), chromaT * (1.0 + chromaF) + 0.0001, d);
+        return smoothstep(t * (1.0 - chromaF), t * (1.0 + chromaF) + 0.0001, d);
       }
       // Against every picked colour: close to any of them keys out.
       float keyMask(vec3 c){
@@ -1708,7 +1742,7 @@ function initBlit(){
         float m = 1.0;
         for (int i = 0; i < 3; i++){
           if (float(i) >= keyCount) break;
-          m = min(m, keyMaskFor(a, keyCols[i]));
+          m = min(m, keyMaskFor(a, keyCols[i], keyT[i]));
         }
         return m;
       }
@@ -1761,7 +1795,7 @@ function initBlit(){
         bool matte = chromaOn > 0.5 && chromaMatte > 0.5;
         if (chromaOn > 0.5){
           float m = 0.0;
-          if (chromaT < 1.0){
+          {
             m = keyMask(col.rgb);
             // SMOOTHING also softens the edge spatially: average the mask
             // with a ring of eight neighbours, further out the higher it is
@@ -6767,8 +6801,10 @@ function applyChromaUniforms(){
     keys = live ? [...kept, live].slice(0, CHROMA_MAX_KEYS) : kept;
     on = true;
   }
-  u.chromaOn.value = on && state.content === 'video' && state.chromaIntensity > 0 ? 1 : 0;
-  u.chromaT.value = state.chromaIntensity / 100;
+  // Key colour i keys with its own INTENSITY (CHROMA_INT_KEYS[i]); with
+  // every one at 0 nothing is keyed and SPILL stays off too.
+  keys.forEach((_, i)=>{ u.keyT.value[i] = state[CHROMA_INT_KEYS[i]] / 100; });
+  u.chromaOn.value = on && state.content === 'video' && keys.some((_, i) => u.keyT.value[i] > 0) ? 1 : 0;
   u.chromaF.value = state.chromaSmooth / 100;
   u.chromaR.value = state.chromaRefine;
   u.chromaS.value = state.chromaSpill / 100;
@@ -6833,7 +6869,7 @@ function endChromaPick(picked){
   }
   // Back where SET CHROMA KEY / ADD KEY COLOUR was hit, on INTENSITY if a
   // key got picked.
-  const focusKey = rgb ? 'chromaIntensity' : null;
+  const focusKey = rgb ? CHROMA_INT_KEYS[state.chromaKeys.length - 1] : null;   // the new colour's INTENSITY
   const focusAct = add ? 'chromaAdd' : 'chromaKey';
   document.body.dataset.chrome = '1';
   lastActivityAt = performance.now();   // the wait isn't idle time for MENU TIMEOUT
