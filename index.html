@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.55</title>
+<title>GYROS v2.56</title>
 <style>
   :root{
     --bg:#000000;
@@ -497,6 +497,7 @@
       <div class="hr"></div>
       <p class="helpText">This app uses your device's gyroscope for head tracking. Tap the button below to grant access.</p>
       <button class="textbtn" id="hintBtn">ENABLE HEAD TRACKING</button>
+      <button class="textbtn" id="hintRefresh">REFRESH</button>
     </div>
   </div>
 </div>
@@ -609,7 +610,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.55';
+const APP_VERSION = '2.56';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -5972,14 +5973,23 @@ document.addEventListener('keydown', e=>{
     return;
   }
 
-  /* ---- Gyroscope prompt (iOS): Enter or Space confirms ENABLE HEAD
-     TRACKING -- a key press counts as the user gesture iOS wants. Handled
-     here rather than left to the focused button so nothing below (key
-     mapping, the OSD) takes the key first. ---- */
-  if (!hint.hidden && (e.key === 'Enter' || e.key === ' ')){
-    e.preventDefault();
-    enableMotion();
-    return;
+  /* ---- Gyroscope prompt (iOS): up/down (W/S) move between ENABLE HEAD
+     TRACKING and REFRESH; Enter, Space, left/right or A/D press the focused
+     one -- a key press counts as the user gesture iOS wants. Handled here
+     rather than left to the focused button so nothing below (key mapping,
+     the OSD) takes the key first. ---- */
+  if (!hint.hidden){
+    const k = DLG_WASD[e.key.toLowerCase()] || e.key;
+    if (k === 'ArrowUp' || k === 'ArrowDown'){
+      e.preventDefault();
+      setHintFocus(hintFocus === 0 ? 1 : 0);
+      return;
+    }
+    if (k === 'Enter' || k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight'){
+      e.preventDefault();
+      if (hintFocus === 1) location.reload(); else enableMotion();
+      return;
+    }
   }
 
   /* ---- Learn BT Keys capture mode: swallow every keystroke here instead
@@ -7003,8 +7013,19 @@ function handleTap(){
 ['touchstart', 'click', 'pointerdown'].forEach(ev=>{
   document.addEventListener(ev, ()=>{ if (!motionGranted) enableMotion(); }, { passive: true });
 });
-/* The modal button is the clearest entry point on iOS. */
+/* The modal button is the clearest entry point on iOS. REFRESH under it
+   reloads the app, e.g. after allowing motion access in Settings. */
 document.getElementById('hintBtn').addEventListener('click', ()=>{ enableMotion(); });
+document.getElementById('hintRefresh').addEventListener('click', ()=>{ location.reload(); });
+let hintFocus = 0;   // 0 ENABLE HEAD TRACKING, 1 REFRESH -- the keyboard's button
+function setHintFocus(i){
+  hintFocus = i;
+  ['hintBtn', 'hintRefresh'].forEach((id, n)=>{
+    const el = document.getElementById(id);
+    el.classList.toggle('kbfocus', n === i);
+    if (n === i) el.focus();
+  });
+}
 document.getElementById('hintBtn').addEventListener('touchstart', e=>{
   e.stopPropagation();
   enableMotion();
@@ -7155,10 +7176,9 @@ requestWakeLock();
 if (typeof DeviceOrientationEvent !== 'undefined' &&
     typeof DeviceOrientationEvent.requestPermission === 'function'){
   hint.hidden = false;          // iOS: needs a tap before motion is allowed
-  // Keyboard focus on the button, so Enter / Space confirms it (see keydown).
-  const hintBtn = document.getElementById('hintBtn');
-  hintBtn.classList.add('kbfocus');
-  hintBtn.focus();
+  // Keyboard focus on ENABLE HEAD TRACKING, so Enter / Space confirms it
+  // straight away (see keydown).
+  setHintFocus(0);
 } else {
   enableMotion();
 }
