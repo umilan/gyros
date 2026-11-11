@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.64</title>
+<title>GYROS v2.65</title>
 <style>
   :root{
     --bg:#000000;
@@ -450,10 +450,13 @@
      display:flex above on specificity, so no !important needed. */
   body:has(.overlay:not([hidden])) .navArrow{display:none;}
 
-  /* SET CHROMA KEY's aiming crosshair -- one per eye, on the exact centre of
-     the picture (where endChromaPick() samples), with how to pick under
-     it. Not shifted by SBS EYE DIST: that moves the UI chrome, not the
-     picture. */
+  /* SET CHROMA KEY's aiming crosshair, on the exact centre of the picture
+     (where endChromaPick() samples), with how to pick under it. Not shifted
+     by SBS EYE DIST: that moves the UI chrome, not the picture. In a split
+     view the two eyes' pictures differ (EYE DISTANCE, a stereo source,
+     180/FISHEYE), so a crosshair in each would fuse onto two different
+     spots: it's drawn only in the left eye, the one sampled, and the right
+     keeps just the hint. */
   .chromaPick{
     position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
     z-index:45;pointer-events:none;
@@ -471,6 +474,7 @@
   body[data-chroma-pick="1"] .chromaPickL{display:flex;}
   body[data-chroma-pick="1"][data-sbs="1"] .chromaPickL{left:25%;}
   body[data-chroma-pick="1"][data-sbs="1"] .chromaPickR{display:flex;left:75%;}
+  body[data-chroma-pick="1"][data-sbs="1"] .chromaPickR svg{visibility:hidden;}
 
   /* diagnostic overlay, opt-in via ?debug=1 -- see kbDebugLog() below.
      pointer-events:none so it can never intercept a tap/click even while
@@ -622,7 +626,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.64';
+const APP_VERSION = '2.65';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
