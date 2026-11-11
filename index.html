@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.61</title>
+<title>GYROS v2.62</title>
 <style>
   :root{
     --bg:#000000;
@@ -622,7 +622,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.61';
+const APP_VERSION = '2.62';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -651,12 +651,14 @@ const DEFAULTS = {
   playSpeed: 1,           // PLAY SPEED (video only), -5..5: 1 = normal, 0 = held
                             // on the current frame, negative = backward. See
                             // runTransport().
-  chromaIntensity: 40,    // INTENSITY (chroma key), 0..100: how far from the
+  chromaIntensity: 5,     // INTENSITY (chroma key), 0..100: how far from the
                             // picked colour still gets keyed to black. 0 = no
                             // keying, 100 = the whole picture black. See keyMask().
                             // One per key colour (CHROMA_INT_KEYS): this is the
                             // first's, so a value saved before stays with it.
-  chromaIntensity2: 40, chromaIntensity3: 40,
+                            // Every new pick starts its colour here again
+                            // (startChromaPick()), live preview included.
+  chromaIntensity2: 5, chromaIntensity3: 5,
   chromaSmooth: 20,       // SMOOTHING (chroma key), 0..100: how soft the
                             // keyed edges are. See keyMask().
   chromaRefine: 0,        // REFINE EDGE (chroma key), -1..1: shifts the edge
@@ -6903,16 +6905,23 @@ function startChromaPick(add = false){
   if (fromList) closeList();
   document.body.dataset.chrome = '0';
   document.body.dataset.chromaPick = '1';
-  chromaPick = { add, fromList };
+  // The colour being picked starts at the default INTENSITY -- the live
+  // preview too -- whatever that slot was set to before; a cancel puts the
+  // old value back.
+  const intKey = CHROMA_INT_KEYS[add ? state.chromaKeys.length : 0];
+  chromaPick = { add, fromList, intKey, prevInt: state[intKey] };
+  state[intKey] = DEFAULTS[intKey];
 }
 
 // picked: false = cancelled.
 function endChromaPick(picked){
   if (!chromaPick) return;
-  const { add, fromList } = chromaPick;
+  const { add, fromList, intKey, prevInt } = chromaPick;
   chromaPick = null;
   document.body.dataset.chromaPick = '0';
   const rgb = picked ? readChromaKeyColor() : null;
+  if (!rgb) state[intKey] = prevInt;   // nothing picked: that colour's INTENSITY as it was
+  saveState();
   if (rgb){
     state.chromaKeys = add ? [...state.chromaKeys, rgb] : [rgb];
     state.chromaOn = true;
