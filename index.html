@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.62</title>
+<title>GYROS v2.63</title>
 <style>
   :root{
     --bg:#000000;
@@ -622,7 +622,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.62';
+const APP_VERSION = '2.63';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -1063,6 +1063,7 @@ function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 const CHROMA_ITEM = menuItem('chromaKey');
 const CHROMA_MAX_KEYS = 3;   // key colours ADD KEY COLOUR allows; must match the shader's keyCols[3]
 const CHROMA_INT_KEYS = ['chromaIntensity', 'chromaIntensity2', 'chromaIntensity3'];   // INTENSITY per key colour
+const CHROMA_PICK_FILL = 0.25;   // while aiming, cut areas show 75% grey (not black), so preview reads as preview
 
 const SPEC = {}; // key -> item spec, for step bounds
 const ENUM_SPEC = {}; // key -> item spec, for enum options
@@ -1686,6 +1687,7 @@ function initBlit(){
       spillDir: { value: new THREE.Vector2() },
       chromaS: { value: 0 },
       chromaMatte: { value: 0 },
+      keyFill: { value: 0 },
       keyT: { value: [0, 0, 0] },
       chromaF: { value: 0 },
       chromaR: { value: 0 },
@@ -1713,6 +1715,7 @@ function initBlit(){
       uniform vec2 spillDir;      // the keys' average tint direction in CbCr, unit length (0 = none)
       uniform float chromaS;      // SPILL 0..1
       uniform float chromaMatte;  // SHOW MATTE: 1 = draw the mask itself, white kept / black cut
+      uniform float keyFill;      // what keyed-out areas show: 0 black; grey while aiming (CHROMA_PICK_FILL)
       uniform float keyT[3];      // each key colour's INTENSITY, 0..1
       uniform float chromaF;      // SMOOTHING 0..1
       uniform float chromaR;      // REFINE EDGE -1..1
@@ -1798,6 +1801,7 @@ function initBlit(){
         uv = c / vec2(aspect, 1.0) + 0.5;
         vec4 col = texture2D(map, uv);
         bool matte = chromaOn > 0.5 && chromaMatte > 0.5;
+        float keyM = 1.0;   // 0 where chroma key cuts, for keyFill below
         if (chromaOn > 0.5){
           float m = 0.0;
           {
@@ -1825,10 +1829,18 @@ function initBlit(){
           if (matte) col.rgb = vec3(m);
           else {
             if (chromaS > 0.0 && m > 0.0) col.rgb = despill(col.rgb);
+            // The empty black around the picture also reads as keyed
+            // (keyMask() dims the key to a pixel's brightness); it gets no
+            // fill -- only the picture itself does.
+            keyM = max(col.r, max(col.g, col.b)) < 0.004 ? 1.0 : m;
             col.rgb *= m;
           }
         }
-        if (!matte) col.rgb *= brightness;
+        if (!matte){
+          col.rgb *= brightness;
+          // Cut areas show keyFill, after BRIGHTNESS so its shade is exact.
+          col.rgb += keyFill * (1.0 - keyM);
+        }
         // MEASURE FOV's two marks, drawn in the picture's own coordinates so
         // they sit at a known place in the cameras' view whatever the
         // trapezoid, zoom or flip: a cross on the centre and a line to one side.
@@ -6860,6 +6872,7 @@ function applyChromaUniforms(){
   // every one at 0 nothing is keyed and SPILL stays off too.
   keys.forEach((_, i)=>{ u.keyT.value[i] = state[CHROMA_INT_KEYS[i]] / 100; });
   u.chromaOn.value = on && state.content === 'video' && keys.some((_, i) => u.keyT.value[i] > 0) ? 1 : 0;
+  u.keyFill.value = chromaPick ? CHROMA_PICK_FILL : 0;
   u.chromaF.value = state.chromaSmooth / 100;
   u.chromaR.value = state.chromaRefine;
   u.chromaS.value = state.chromaSpill / 100;
