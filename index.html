@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.60</title>
+<title>GYROS v2.61</title>
 <style>
   :root{
     --bg:#000000;
@@ -622,7 +622,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.60';
+const APP_VERSION = '2.61';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -3633,7 +3633,10 @@ async function resolveSbsHint(label, file){
         aren't black (projectionVerdict()): black corners around a bright
         disc -> FISHEYE; else a stereo pair whose eyes are square (a 2:1
         SBS frame, VR180's standard shape) -> 180; else FLAT. A mono square
-        picture stays FLAT -- plenty of ordinary photos are square. ---- */
+        picture stays FLAT -- plenty of ordinary photos are square.
+   A video file picked from the phone (one, or a gallery of them) has 180
+   in place of that last FLAT: it starts as 180 and only the steps above
+   can make it FISHEYE. Videos from a URL and photos keep FLAT. ---- */
 const DOME_R = 20;                  // m
 const DOME_SEG = 96;
 const FISHEYE_FOV = Math.PI;        // the disc's rim is this far across, rad (180 degrees)
@@ -3801,12 +3804,14 @@ function projectionVerdict(source, w, h, sbs){
     return null;   // cross-origin pixels can't be read
   }
 }
-// Final call from the frames' verdicts (an empty list: shape alone).
-function decideProjection(verdicts, w, h, sbs){
+// Final call from the frames' verdicts (an empty list: shape alone);
+// `fallback` is the answer when nothing points anywhere (FLAT, or 180 for
+// a picked video file).
+function decideProjection(verdicts, w, h, sbs, fallback = 0){
   const fish = verdicts.filter(v => v === 'fish').length;
   if (verdicts.length && fish * 2 > verdicts.length) return 2;
   const eyeAspect = (sbs ? w / 2 : w) / h;
-  return sbs && eyeAspect > 0.94 && eyeAspect < 1.08 ? 1 : 0;
+  return sbs && eyeAspect > 0.94 && eyeAspect < 1.08 ? 1 : fallback;
 }
 function imageProjection(img, w, h, sbs){
   const v = projectionVerdict(img, w, h, sbs);
@@ -3820,11 +3825,11 @@ function imageProjection(img, w, h, sbs){
 const PROJ_PROBE_FRAMES = 3, PROJ_PROBE_TRIES = 12, PROJ_PROBE_INTERVAL = 700, PROJ_PROBE_DELAY = 1200;
 let projProbeToken = 0;
 function cancelProjectionProbe(){ projProbeToken++; }
-function probeVideoProjection(onVerdict){
+function probeVideoProjection(onVerdict, fallback = 0){
   const token = ++projProbeToken;
   const verdicts = [];
   let tries = 0;
-  const finish = ()=> onVerdict(decideProjection(verdicts, video.videoWidth, video.videoHeight, state.sourceSbs));
+  const finish = ()=> onVerdict(decideProjection(verdicts, video.videoWidth, video.videoHeight, state.sourceSbs, fallback));
   const attempt = ()=>{
     if (token !== projProbeToken) return;
     if (video.readyState >= 2){
@@ -4121,7 +4126,8 @@ async function playVideo(src, label, file, hintOverride){
   cancelSbsProbe();
   cancelProjectionProbe();
   const projHint = await resolveProjectionHint(label, file);
-  setProjection(projHint ?? 0);
+  const projDefault = file ? 1 : 0;   // a picked video file defaults to 180, a URL to FLAT
+  setProjection(projHint ?? projDefault);
   stopReverse();
   restoreVideoMaterials();
   const sbsHint = hintOverride || await resolveSbsHint(label, file);
@@ -4141,7 +4147,7 @@ async function playVideo(src, label, file, hintOverride){
   };
   if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
   if (!sbsHint.authoritative) probeVideoSbs(setSourceSbs);
-  if (projHint === null) probeVideoProjection(setProjection);
+  if (projHint === null) probeVideoProjection(setProjection, projDefault);
   state.content = 'video';
   state.mode = 1;
   applyAll();
@@ -4449,8 +4455,8 @@ async function showGalleryVideo(item){
     if (galleryItems[galleryIdx] !== item) return;
     if (hint !== null) item.projection = hint;
     else{
-      setProjection(0);
-      probeVideoProjection(p => { item.projection = p; setProjection(p); });
+      setProjection(1);   // a picked video defaults to 180 -- see the PROJECTION notes
+      probeVideoProjection(p => { item.projection = p; setProjection(p); }, 1);
     }
   }
   if (item.projection !== undefined) setProjection(item.projection);
