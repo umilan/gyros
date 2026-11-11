@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.56</title>
+<title>GYROS v2.57</title>
 <style>
   :root{
     --bg:#000000;
@@ -325,7 +325,7 @@
   .dialog .textbtn:focus{opacity:1;color:var(--accent);}
   .dialog .textbtn.keyboardFocus{opacity:1;color:var(--accent);}
   .dialog .paneCloseBtn:focus{color:var(--accent);border-radius:50%;}
-  #loadTypeDlg .row{justify-content:center;text-align:center;}
+  #loadTypeDlg .row,#quickDlg .row{justify-content:center;text-align:center;}
   #loadTypeDlg .textbtn{display:flex;align-items:center;justify-content:center;text-align:center;}
 
   /* -- all dialogs share the same panel bg as the settings list, via .overlay above ---- */
@@ -540,6 +540,10 @@
      built in JS, same treatment as the settings list; see buildLoadTypeDlg(). -->
 <div class="overlay dialog" id="loadTypeDlg" hidden></div>
 
+<!-- Quick menu: long-press the picture. Built per eye in JS like LOAD; see
+     openQuickDlg(). -->
+<div class="overlay dialog" id="quickDlg" hidden></div>
+
 <div class="overlay dialog" id="urlDlg" hidden>
   <div class="dlgPane">
     <div class="paneInner">
@@ -610,7 +614,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.56';
+const APP_VERSION = '2.57';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -4727,33 +4731,38 @@ function buildLoadTypeDlg(){
   }
 }
 
-function loadTypeButtons(){
-  return [...loadTypeDlg.querySelectorAll('.dlgPane:first-child button:not(.paneCloseBtn)')];
+/* Keyboard for the list dialogs (LOAD, QUICK MENU): every pane is the same,
+   so the first one holds the order and the highlight is mirrored to the
+   rest. Up/down or W/S (and Tab) move, wrapping; Enter, Space, left/right
+   or A/D press the highlighted button; Esc closes. The header x is left
+   out (tap-only). */
+function listDlgButtons(dlg){
+  return [...dlg.querySelectorAll('.dlgPane:first-child button:not(.paneCloseBtn)')];
 }
 
-function markLoadTypeFocus(index){
-  loadTypeDlg.querySelectorAll('.dlgPane').forEach(pane=>{
+function markListDlgFocus(dlg, index){
+  dlg.querySelectorAll('.dlgPane').forEach(pane=>{
     [...pane.querySelectorAll('button:not(.paneCloseBtn)')].forEach((button, buttonIndex)=>{
       button.classList.toggle('keyboardFocus', buttonIndex === index);
     });
   });
 }
 
-function focusLoadTypeButton(index = 0){
-  const buttons = loadTypeButtons();
+function focusListDlgButton(dlg, index = 0){
+  const buttons = listDlgButtons(dlg);
   if (buttons.length){
     const nextIndex = (index + buttons.length) % buttons.length;
-    markLoadTypeFocus(nextIndex);
+    markListDlgFocus(dlg, nextIndex);
     buttons[nextIndex].focus();
   }
 }
 
-function handleLoadTypeDlgKeydown(e){
-  const buttons = loadTypeButtons();
+function handleListDlgKeydown(dlg, e){
+  const buttons = listDlgButtons(dlg);
   if (!buttons.length) return;
   if (e.key === 'Escape'){
     e.preventDefault();
-    loadTypeDlg.hidden = true;
+    dlg.hidden = true;
     return;
   }
   const key = DLG_WASD[e.key.toLowerCase()] || e.key;
@@ -4768,16 +4777,60 @@ function handleLoadTypeDlgKeydown(e){
     return;
   }
   const direction = key === 'ArrowUp' || (key === 'Tab' && e.shiftKey) ? -1 : 1;
-  focusLoadTypeButton(current < 0 ? 0 : current + direction);
+  focusListDlgButton(dlg, current < 0 ? 0 : current + direction);
 }
 
-loadTypeDlg.addEventListener('focusin', e=>{
+const quickDlg = document.getElementById('quickDlg');
+[loadTypeDlg, quickDlg].forEach(dlg => dlg.addEventListener('focusin', e=>{
   const button = e.target.closest('button');
   if (!button) return;
   const pane = button.closest('.dlgPane');
   if (!pane) return;
   const index = [...pane.querySelectorAll('button:not(.paneCloseBtn)')].indexOf(button);
-  if (index >= 0) markLoadTypeFocus(index);
+  if (index >= 0) markListDlgFocus(dlg, index);
+}));
+
+/* ---- QUICK MENU -- long-press the picture (see the stage gestures):
+   app-level actions that are otherwise buried in the full list. Same
+   one-pane-per-eye treatment as LOAD, rebuilt on every open so the REDUCED
+   MENU row says what it will do. ---- */
+function quickPaneHTML(){
+  const reduced = reducedMenuOn();
+  return `<div class="paneInner">
+      <div class="paneTitle">QUICK MENU<button class="paneCloseBtn" data-dlgclose tabindex="-1" aria-label="Close">&#215;</button></div>
+      <button class="row" data-quick="reload"><span class="label">RELOAD THE APP</span></button>
+      <button class="row" data-quick="reset"><span class="label">RESET TO DEFAULTS</span></button>
+      <button class="row" data-quick="recenter"><span class="label">RECENTER</span></button>
+      <button class="row" data-quick="reduced"><span class="label">${reduced ? 'HIDE' : 'SHOW'} REDUCED MENU</span></button>
+      <button class="textbtn" data-dlgclose>CLOSE</button>
+    </div>`;
+}
+function openQuickDlg(){
+  quickDlg.innerHTML = '';
+  for (let i = 0; i < (state.sbs ? 2 : 1); i++){
+    const pane = document.createElement('div');
+    pane.className = 'dlgPane';
+    pane.innerHTML = quickPaneHTML();
+    quickDlg.appendChild(pane);
+  }
+  quickDlg.hidden = false;
+  focusListDlgButton(quickDlg);
+}
+quickDlg.addEventListener('click', e=>{
+  const row = e.target.closest('[data-quick]');
+  if (!row) return;
+  quickDlg.hidden = true;
+  switch (row.dataset.quick){
+    case 'reload':   location.reload(); break;
+    case 'reset':    resetToDefaults(); break;
+    case 'recenter': recenter(); toast('RECENTERED'); break;
+    case 'reduced':
+      // The reduced menu exists only with a photo/video loaded.
+      if (!state.mediaLoaded){ toast('LOAD A PHOTO OR VIDEO FIRST', 2000); break; }
+      setReducedMenu(!reducedMenuOn());
+      toast('REDUCED MENU ' + (reducedMenuOn() ? 'ON' : 'OFF'));
+      break;
+  }
 });
 
 // Switches back to the rotating demo solid -- the only way back once a
@@ -4815,7 +4868,7 @@ topbar.addEventListener('click', e=>{
   if (e.target.closest('.btnLoad')){
     buildLoadTypeDlg();
     loadTypeDlg.hidden = false;
-    focusLoadTypeButton();
+    focusListDlgButton(loadTypeDlg);
   }
 });
 loadTypeDlg.addEventListener('click', e=>{
@@ -6012,10 +6065,10 @@ document.addEventListener('keydown', e=>{
     if (uiState === 'osd' && document.body.dataset.chrome === '1'){ keyMapCapture(e); return; }
     keyMapStop();   // the strip went away underneath it
   }
-  if (loadTypeDlg.hidden && urlDlg.hidden &&
+  if (loadTypeDlg.hidden && urlDlg.hidden && quickDlg.hidden &&
       !(document.activeElement && document.activeElement.tagName === 'INPUT') &&
       keyMapApply(e)) return;
-  if (loadTypeDlg.hidden && urlDlg.hidden &&
+  if (loadTypeDlg.hidden && urlDlg.hidden && quickDlg.hidden &&
       !(document.activeElement && document.activeElement.tagName === 'INPUT') &&
       defaultKeyApply(e)) return;
 
@@ -6025,7 +6078,11 @@ document.addEventListener('keydown', e=>{
   else if (e.key === 'z' || e.key === 'Z') Object.defineProperty(e, 'key', { value:'Tab' });
 
   if (!loadTypeDlg.hidden){
-    handleLoadTypeDlgKeydown(e);
+    handleListDlgKeydown(loadTypeDlg, e);
+    return;
+  }
+  if (!quickDlg.hidden){
+    handleListDlgKeydown(quickDlg, e);
     return;
   }
 
@@ -6119,7 +6176,7 @@ document.addEventListener('keydown', e=>{
     e.preventDefault();
     buildLoadTypeDlg();
     loadTypeDlg.hidden = false;
-    focusLoadTypeButton();
+    focusListDlgButton(loadTypeDlg);
     return;
   }
 
@@ -6973,11 +7030,13 @@ document.addEventListener('visibilitychange', ()=>{ if (document.hidden) stopHol
      double tap           recenter
    ========================================================================= */
 const TAP_SLOP = 10;      // px of movement still counted as a tap
+const LONG_PRESS_MS = 600; // one still finger this long opens the QUICK MENU
 const TAP_MS = 320;       // also the double-tap window
 const MM_PER_PX = 0.5;    // two-finger vertical travel -> eye distance
 
 const pointers = new Map();
 let gesture = null;
+let longPressTimer = null;
 let tapTimer = null, lastTapAt = 0;
 
 function setValue(key, v){
@@ -7038,8 +7097,18 @@ stage.addEventListener('pointerdown', e=>{
   if (e.isPrimary){ pointers.clear(); gesture = null; }
   const pt = appPoint(e);
   pointers.set(e.pointerId, { x:pt.x, y:pt.y, x0:pt.x, y0:pt.y, t:performance.now() });
+  clearTimeout(longPressTimer);
   if (pointers.size === 1){
     gesture = { mode:'pan', moved:false, lastX:pt.x, lastY:pt.y };
+    // Long press: one finger held still -- not moved past TAP_SLOP (that
+    // makes it a drag), no second finger, not lifted -- opens QUICK MENU.
+    const g = gesture;
+    longPressTimer = setTimeout(()=>{
+      if (gesture !== g || g.moved || pointers.size !== 1) return;
+      g.longPress = true;
+      if (navigator.vibrate) navigator.vibrate(15);
+      openQuickDlg();
+    }, LONG_PRESS_MS);
   } else if (pointers.size === 2){
     gesture = Object.assign({ mode:'two' }, twoFingerMetrics());
   }
@@ -7047,7 +7116,7 @@ stage.addEventListener('pointerdown', e=>{
 
 stage.addEventListener('pointermove', e=>{
   const p = pointers.get(e.pointerId);
-  if (!p || !gesture) return;
+  if (!p || !gesture || gesture.longPress) return;   // a long press opened QUICK MENU: the finger is done
   const pt = appPoint(e);
   p.x = pt.x; p.y = pt.y;
   const { ew, eh } = eyeSize();
@@ -7085,7 +7154,8 @@ function endPointer(e){
   const p = pointers.get(e.pointerId);
   pointers.delete(e.pointerId);
 
-  if (gesture && gesture.mode === 'pan' && !gesture.moved &&
+  if (pointers.size === 0) clearTimeout(longPressTimer);
+  if (gesture && gesture.mode === 'pan' && !gesture.moved && !gesture.longPress &&
       p && performance.now() - p.t < 500){
     handleTap();
   }
