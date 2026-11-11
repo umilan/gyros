@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.57</title>
+<title>GYROS v2.58</title>
 <style>
   :root{
     --bg:#000000;
@@ -614,7 +614,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.57';
+const APP_VERSION = '2.58';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -905,8 +905,8 @@ const MENU = [
   { title:'GENERAL', items:[
     { type:'enum',  key:'view', label:'VIEW', options:VIEWS },
     // What to do when the screen reports portrait (iPhone rotation lock)
-    // -- see applyAppRotation().
-    { type:'enum',  key:'portraitRot', label:'IN PORTRAIT', options:PORTRAIT_ROTS },
+    // -- see applyAppRotation(). Not in PLAIN, which never turns.
+    { type:'enum',  key:'portraitRot', label:'IN PORTRAIT', options:PORTRAIT_ROTS, whenTrue:'rotView' },
     // How the phone is mounted relative to the head -- see DEFAULTS.
     // mountAuto/mountTilt/mountRoll and v28BuildMount().
     { type:'check', key:'mountAuto', label:'AUTO TILT',  whenTrue:'mountRows' },
@@ -1232,6 +1232,7 @@ function refreshMenu(){
   // row it was on when rows above it get shown or hidden below.
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
   state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length < CHROMA_MAX_KEYS;
+  state.rotView = VIEW_SBS[state.view];   // IN PORTRAIT applies (applyAppRotation())
   state.cutoutOn = state.cutout > 0;
   state.monoSource = !state.sourceSbs && state.projection === 0;   // 2D TO 3D: flat mono only
   state.depthRows = state.monoSource && state.depth3d > 0;
@@ -1985,7 +1986,9 @@ function applyEyeProjection(){
                            reading comes in, and again at every RECENTER --
                            never in between, so it can't flip mid-use the
                            way iOS's own rotation would
-     OFF                   show portrait as portrait ---- */
+     OFF                   show portrait as portrait
+   Only in the headset views (SBS and the HOLOs, VIEW_SBS): PLAIN is for
+   holding the phone in your hand, so there portrait stays portrait. ---- */
 let appRot = 0;           // 0 | 90 (phone top to the left) | -90 (top to the right)
 let autoRotSide = null;   // AUTO's last gravity reading: 90 | -90, null = none yet
 let lastOriBeta = null, lastOriGamma = null;
@@ -2002,7 +2005,7 @@ function applyAppRotation(){
   const sw = window.innerWidth, sh = window.innerHeight;
   const mode = state.portraitRot;
   let rot = 0;
-  if (sh > sw && mode !== 3) rot = mode === 1 ? 90 : mode === 2 ? -90 : (autoRotSide || 90);
+  if (sh > sw && mode !== 3 && VIEW_SBS[state.view]) rot = mode === 1 ? 90 : mode === 2 ? -90 : (autoRotSide || 90);
   const b = document.body;
   b.style.setProperty('--scr-w', sw + 'px');
   b.style.setProperty('--scr-h', sh + 'px');
