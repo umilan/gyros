@@ -614,7 +614,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.72';
+const APP_VERSION = '2.73';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -925,9 +925,9 @@ const MENU_TYPES = ['REDUCED', 'BASIC', 'EXPERT'];
 // are all hidden loses its heading too (refreshMenu()).
 const MENU = [
   { title:'GENERAL', items:[
+    { type:'enum',  key:'menuType', label:'MENU TYPE', options:MENU_TYPES },
     // HOLO and HOLO2 are stepped over -- VIEW_HIDDEN, stepEnumValue().
     { type:'enum',  key:'view', label:'VIEW', options:VIEWS },
-    { type:'enum',  key:'menuType', label:'MENU TYPE', options:MENU_TYPES },
     // What to do when the screen reports portrait (iPhone rotation lock)
     // -- see applyAppRotation(). Not in PLAIN, which never turns.
     { type:'enum',  key:'portraitRot', label:'IN PORTRAIT', options:PORTRAIT_ROTS, whenTrue:'rotView', x:1 },
@@ -1040,6 +1040,9 @@ const MENU = [
 const menuItem = key => MENU.flatMap(s => s.items).find(i => i.key === key || i.act === key);
 const REDUCED_MENU = [
   { title:'MEDIA', noTitle:true, items:[
+    // The same MENU TYPE row as in GENERAL, on top: BASIC / EXPERT leave
+    // the reduced menu.
+    menuItem('menuType'),
     // GALLERY under its own label; the options follow whatever is loaded.
     { type:'enum', key:'shape', label:'MEDIA', get options(){ return ENUM_SPEC.shape.options; } },
     menuItem('playSpeed'),
@@ -1065,8 +1068,6 @@ const REDUCED_MENU = [
     { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:1 }
   ]},
   { title:'ACTIONS', items:[
-    // The same MENU TYPE row as in GENERAL: BASIC / EXPERT leave the reduced menu.
-    menuItem('menuType'),
     { type:'action', act:'closeMenu', label:'CLOSE', textbtn:true }
   ]}
 ];
@@ -4970,8 +4971,7 @@ function openShortcutsDlg(){
     ['load', 'LOAD…'],
     ['chromaAdd', 'ADD CHROMA KEY'],
     ['chromaRemove', 'REMOVE CHROMA KEY'],
-    ['btKeys', 'LEARN BT KEYS'],
-    ['reduced', reducedMenuLabel()]
+    ['btKeys', 'LEARN BT KEYS']
   ]);
 }
 onMenuDlgClick(shortcutsDlg, item=>{
@@ -4988,7 +4988,6 @@ onMenuDlgClick(shortcutsDlg, item=>{
       break;
     case 'btKeys':  openBtKeysDlg(); break;
     case 'load':    openLoadDlg(); break;
-    case 'reduced': toggleReducedMenu(); break;
   }
 });
 
