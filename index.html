@@ -626,7 +626,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.67';
+const APP_VERSION = '2.68';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -665,22 +665,23 @@ const DEFAULTS = {
   chromaIntensity2: 5, chromaIntensity3: 5,
   chromaSmooth: 20,       // SMOOTHING (chroma key), 0..100: how soft the
                             // keyed edges are. See keyMask().
-  chromaRefine: 0,        // REFINE EDGE (chroma key), -1..1: shifts the edge
-                            // inside the SMOOTHING band, like shifting a
+  chromaRefine: 0,        // REFINE EDGE (chroma key), -5..5: -1..1 shifts the
+                            // edge inside the SMOOTHING band, like shifting a
                             // feathered selection -- positive cuts out more,
-                            // negative less. No effect at SMOOTHING 0.
+                            // negative less; past +-1 the cut also shrinks /
+                            // grows the kept area by up to 8 pixels.
   cutout: 0,              // CUT-OUT: 0 OFF | 1 ON (background removed) -- see updateCutout()
   depth3d: 0,             // 2D TO 3D: 0 OFF | 1 ON -- a flat photo/video gets depth from an
                           // AI depth model and is shown in stereo, see updateDepth()
   depthAmount: 100,       // 3D DEPTH, percent of DEPTH_RANGE
-  projection: 0,          // PROJECTION: 0 FLAT | 1 180 (equirectangular half
+  projection: 1,          // PROJECTION: 0 FLAT | 1 180 (equirectangular half
                           // sphere, VR180) | 2 FISHEYE (circular 180-degree
                           // fisheye) -- set per photo/video by detectProjection...()
   cutoutModel: 0,         // MODEL: 0 FAST | 1 ACCURATE (CUTOUT_MODEL_URLS)
   cutoutSmooth: 20,       // SMOOTHING (people), 0..100: how soft the cut edge is
   cutoutRefine: 0,        // REFINE EDGE (people), -1..1: shifts the edge inside the
                             // SMOOTHING band -- positive cuts out more, negative less
-  chromaSpill: 50,        // SPILL (chroma key), 0..100: how much of the key
+  chromaSpill: 10,        // SPILL (chroma key), 0..100: how much of the key
                             // colour's tint is taken out of what's kept, e.g.
                             // green light bounced onto hair and edges.
   contentAngle: 0,        // ANGLE (photo/video only): straightens content shot at a
@@ -741,16 +742,19 @@ const DEFAULTS = {
   // HOLO3 only (see "HOLO3" above v28Step()): a see-through visor shows the
   // room behind the picture, so the picture has to turn exactly as far and
   // as soon as the head does. Shared values, read in no other view.
-  lensFov: 60,             // FIELD OF VIEW, degrees: the cameras' vertical field
+  lensFov: 20,             // FIELD OF VIEW, degrees: the cameras' vertical field
                             // of view -- CAMERA_FOV everywhere else. Right when it
                             // equals the angle the picture really spans in the
                             // visor; MEASURE FOV finds that.
-  predictMs: 40,           // PREDICTION, ms: how far ahead of the newest sensor
+  predictMs: 20,           // PREDICTION, ms: how far ahead of the newest sensor
                             // sample the head pose is extrapolated -- the time
                             // from sample to light leaving the screen.
-  smoothing: 25,           // SMOOTHING, percent of the noise allowances V2.8
+  smoothing: 50,           // SMOOTHING, percent of the noise allowances V2.8
                             // (6DOF) is built with: 100 = the same as HOLO2,
                             // 0 = follow the sensor exactly.
+  menuType: 1,             // MENU TYPE: 0 REDUCED | 1 BASIC | 2 EXPERT -- MENU_TYPES.
+                            // EXPERT adds the rows marked x:1 in MENU; REDUCED
+                            // is REDUCED_MENU, once a photo/video is loaded.
   menuTimeout: 3           // seconds the bottom OSD strip sits idle before
                             // auto-hiding, see checkBotMenuIdle(). 0 = OFF
                             // disables auto-hide.
@@ -792,6 +796,12 @@ function loadState(){
     if (state.content !== 'demo') state.content = 'demo';
     // CUT-OUT once had a third REMOVE PEOPLE mode (2); that's just off now.
     if (state.cutout > 1) state.cutout = 0;
+    // HOLO / HOLO2 are gone from VIEW: carry on in HOLO3.
+    if (VIEW_HIDDEN.includes(state.view)){
+      Object.assign(state, viewProfiles[VIEW_HOLO3] || viewDefaults(VIEW_HOLO3));
+      viewProfiles[VIEW_HOLO3] = null;
+      state.view = VIEW_HOLO3;
+    }
     state.mode = 0;
   }catch(e){ /* ignore corrupt settings */ }
 }
@@ -837,6 +847,9 @@ const VIEW_SBS    = [false, true,  true,  true,  true];
 const VIEW_MIRROR = [false, false, true,  true,  true];
 const VIEW_ABOVE  = [false, false, false, true,  true];   // phone above the eyes, tracked through its mount
 const VIEW_HOLO = 2, VIEW_HOLO2 = 3, VIEW_HOLO3 = 4;
+// HOLO and HOLO2 are no longer offered: VIEW steps over them, and a saved
+// setting on either opens in HOLO3 (loadState()).
+const VIEW_HIDDEN = [VIEW_HOLO, VIEW_HOLO2];
 function applyView(){
   state.sbs = VIEW_SBS[state.view];
   state.mirrorUI = VIEW_MIRROR[state.view];
@@ -859,7 +872,7 @@ function syncMountRows(){
 // behaviour and MENU TIMEOUT are left out on purpose: they're not about how
 // the image looks, so they stay one shared value across views.
 const PER_VIEW_KEYS = [
-  'fov', 'brightness', 'uiEyeDist', 'eyeDist',
+  'uiEyeDist', 'eyeDist',
   'posX', 'posY',
   'contentZoom', 'zoom', 'scaleX', 'scaleY',
   'trapezoid',
@@ -880,7 +893,7 @@ function viewDefaults(idx){
   for (const k of PER_VIEW_KEYS) d[k] = DEFAULTS[k];
   // The reflector rigs HOLO, HOLO2 and HOLO3 are for want the UI panes
   // pulled in toward the divider and the stereo cameras set wider apart.
-  if (idx === VIEW_HOLO || VIEW_ABOVE[idx]){ d.uiEyeDist = -15; d.eyeDist = 400; d.freezeX = true; }
+  if (idx === VIEW_HOLO || VIEW_ABOVE[idx]){ d.uiEyeDist = -15; d.eyeDist = 400; }
   return Object.assign(d, mountDefaults(idx));
 }
 // One saved snapshot per VIEW index, for whichever views AREN'T currently
@@ -918,61 +931,66 @@ const CUTOUT_MODEL_NAMES = ['FAST', 'ACCURATE'];
 const DEPTH_MODES = ['OFF', 'ON'];
 const PROJECTIONS = ['FLAT', '180', 'FISHEYE'];
 
+// MENU TYPE (GENERAL): REDUCED is REDUCED_MENU below; BASIC is MENU without
+// the rows marked x:1; EXPERT is all of MENU. See menuIsExpert().
+const MENU_TYPES = ['REDUCED', 'BASIC', 'EXPERT'];
+
+// Rows marked x:1 only show with MENU TYPE on EXPERT; a section whose rows
+// are all hidden loses its heading too (refreshMenu()).
 const MENU = [
   { title:'GENERAL', items:[
+    // HOLO and HOLO2 are stepped over -- VIEW_HIDDEN, stepEnumValue().
     { type:'enum',  key:'view', label:'VIEW', options:VIEWS },
+    { type:'enum',  key:'menuType', label:'MENU TYPE', options:MENU_TYPES },
     // What to do when the screen reports portrait (iPhone rotation lock)
     // -- see applyAppRotation(). Not in PLAIN, which never turns.
-    { type:'enum',  key:'portraitRot', label:'IN PORTRAIT', options:PORTRAIT_ROTS, whenTrue:'rotView' },
-    // How the phone is mounted relative to the head -- see DEFAULTS.
-    // mountAuto/mountTilt/mountRoll and v28BuildMount().
-    { type:'check', key:'mountAuto', label:'AUTO TILT',  whenTrue:'mountRows' },
-    { type:'step',  key:'mountTilt', label:'PHONE TILT', min:-90, max:180, step:1, whenTrue:'mountRows' },
-    { type:'step',  key:'mountRoll', label:'PHONE ROLL', min:-180, max:180, step:1, whenTrue:'mountRows' },
-    { type:'step',  key:'mountYaw',  label:'PHONE YAW',  min:-90, max:90, step:1, whenTrue:'mountRows' },
-    // Measures all three angles above from two head sweeps -- headCalStep().
-    { type:'action', act:'calibrateHead', label:'CALIBRATE HEAD', textbtn:true, whenTrue:'mountRows' },
-    // HOLO3's see-through tuning -- see DEFAULTS.predictMs/smoothing/lensFov
-    // and fovMeasureStep().
-    { type:'step',  key:'predictMs', label:'PREDICTION', min:0, max:150, step:5, whenTrue:'holo3' },
-    { type:'step',  key:'smoothing', label:'SMOOTHING',  min:0, max:200, step:5, whenTrue:'holo3' },
-    { type:'step',  key:'lensFov',   label:'FIELD OF VIEW', min:20, max:110, step:1, whenTrue:'holo3' },
-    { type:'action', act:'measureFov', label:'MEASURE FOV', textbtn:true, whenTrue:'holo3' }
-  ]},
-  { title:'OPTICS', items:[
-    { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
-    { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
-    { type:'step',  key:'fov', label:'PERSPECTIVE', min:-100, max:100, step:1 },
-    { type:'step',  key:'brightness', label:'BRIGHTNESS', min:-100, max:100, step:1 },
+    { type:'enum',  key:'portraitRot', label:'IN PORTRAIT', options:PORTRAIT_ROTS, whenTrue:'rotView', x:1 },
     // Seconds the bottom OSD strip sits idle before auto-hiding, in 1s
     // increments -- see checkBotMenuIdle() near "Bottom-menu auto-hide"
     // below. 0 displays as OFF and disables the auto-hide entirely
     // (fmt() special-cases this key: "OFF" at 0, "<n>S" otherwise).
     { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1 }
   ]},
+  { title:'HEAD TRACKING', items:[
+    // How the phone is mounted relative to the head -- see DEFAULTS.
+    // mountAuto/mountTilt/mountRoll and v28BuildMount().
+    { type:'check', key:'mountAuto', label:'AUTO TILT',  whenTrue:'mountRows', x:1 },
+    { type:'step',  key:'mountTilt', label:'PHONE TILT', min:-90, max:180, step:1, whenTrue:'mountRows', x:1 },
+    { type:'step',  key:'mountRoll', label:'PHONE ROLL', min:-180, max:180, step:1, whenTrue:'mountRows', x:1 },
+    { type:'step',  key:'mountYaw',  label:'PHONE YAW',  min:-90, max:90, step:1, whenTrue:'mountRows', x:1 },
+    // Measures all three angles above from two head sweeps -- headCalStep().
+    { type:'action', act:'calibrateHead', label:'CALIBRATE HEAD', textbtn:true, whenTrue:'mountRows', x:1 },
+    // HOLO3's see-through tuning -- see DEFAULTS.predictMs/smoothing.
+    { type:'step',  key:'predictMs', label:'PREDICTION', min:0, max:150, step:5, whenTrue:'holo3', x:1 },
+    { type:'step',  key:'smoothing', label:'SMOOTHING',  min:0, max:200, step:5, whenTrue:'holo3', x:1 }
+  ]},
+  { title:'OPTICS', items:[
+    { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
+    { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
+    // HOLO3 only -- DEFAULTS.lensFov and fovMeasureStep().
+    { type:'step',  key:'lensFov',   label:'FIELD OF VIEW', min:5, max:110, step:1, whenTrue:'holo3' },
+    { type:'action', act:'measureFov', label:'MEASURE FOV', textbtn:true, whenTrue:'holo3', x:1 },
+    // A flat (non-SBS) source made stereo from an AI depth map -- updateDepth().
+    { type:'enum',  key:'depth3d', label:'2D TO 3D', options:DEPTH_MODES, when:'video', whenTrue:'monoSource', x:1 },
+    { type:'step',  key:'depthAmount', label:'3D DEPTH', min:0, max:300, step:10, when:'video', whenTrue:'depthRows', x:1 },
+    // How the picture is mapped: a flat screen, or a half sphere around you
+    // -- see applyProjection(). Detected on load, can be set by hand.
+    { type:'enum',  key:'projection', label:'PROJECTION', options:PROJECTIONS, when:'video' }
+  ]},
   { title:'CONTENT', items:[
     { type:'enum',  key:'mode',    label:'MODE', options:MODES },
     { type:'enum',  key:'shape',   label:'DEMO', options:SHAPES },
-    // Only once a photo/video (or several) is loaded -- see REDUCED_MENU below.
-    // Reads OFF here; ON swaps to the reduced menu (setCheck()).
-    { type:'check', key:'reducedMenu', label:'REDUCED MENU', whenTrue:'mediaLoaded' },
     { type:'check',  key:'sourceSbs', label:'SBS SOURCE', when:'video' },
-    // A flat (non-SBS) source made stereo from an AI depth map -- updateDepth().
-    { type:'enum',  key:'depth3d', label:'2D TO 3D', options:DEPTH_MODES, when:'video', whenTrue:'monoSource' },
-    { type:'step',  key:'depthAmount', label:'3D DEPTH', min:0, max:300, step:10, when:'video', whenTrue:'depthRows' },
-    // How the picture is mapped: a flat screen, or a half sphere around you
-    // -- see applyProjection(). Detected on load, can be set by hand.
-    { type:'enum',  key:'projection', label:'PROJECTION', options:PROJECTIONS, when:'video' },
-    { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.25, dec:2, when:'video' },
-    { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' }
+    { type:'step',  key:'playSpeed', label:'PLAY SPEED', min:-5, max:5, step:0.25, dec:2, when:'video' }
   ]},
   { title:'POSITIONING', items:[
+    { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' },
     { type:'step', key:'posX',    label:'POS X',        min:-200, max:200, step:1 },
     { type:'step', key:'posY',    label:'POS Y',        min:-200, max:200, step:1 }
   ]},
   { title:'ZOOM', items:[
     { type:'step', key:'contentZoom', label:'CONTENT ZOOM', min:-90, max:300, step:1 },
-    { type:'step', key:'zoom',     label:'ZOOM (XY)', min:-90, max:300, step:1 },
+    { type:'step', key:'zoom',     label:'ZOOM (XY)', min:-90, max:300, step:1, x:1 },
     { type:'step', key:'scaleX',   label:'SCALE X',   min:-90, max:300, step:1 },
     { type:'step', key:'scaleY',   label:'SCALE Y',   min:-90, max:300, step:1 }
   ]},
@@ -980,26 +998,26 @@ const MENU = [
     { type:'step', key:'trapezoid', label:'TRAPEZOID', min:-100, max:100, step:1 }
   ]},
   { title:'FLIP', items:[
-    { type:'check', key:'flipX', label:'FLIP X' },
-    { type:'check', key:'flipY', label:'FLIP Y' }
+    { type:'check', key:'flipX', label:'FLIP X', x:1 },
+    { type:'check', key:'flipY', label:'FLIP Y', x:1 }
   ]},
   { title:'GYRO', items:[
-    { type:'enum',  key:'trackingAlgo', label:'TRACKING', options:TRACKING_ALGOS },
-    { type:'step',  key:'neckDepth', label:'6DOF DEPTH', min:0, max:5, step:0.1, dec:1 },
+    { type:'enum',  key:'trackingAlgo', label:'TRACKING', options:TRACKING_ALGOS, x:1 },
+    { type:'step',  key:'neckDepth', label:'6DOF DEPTH', min:0, max:5, step:0.1, dec:1, x:1 },
     { type:'step',  key:'gyroMulX', label:'X MULTIPLY', min:0, max:5, step:0.1, dec:1 },
     { type:'step',  key:'gyroMulY', label:'Y MULTIPLY', min:0, max:5, step:0.1, dec:1 },
-    { type:'check', key:'freezeX',  label:'FREEZE X' },
-    { type:'check', key:'freezeY',  label:'FREEZE Y' },
-    { type:'check', key:'gyroFlipX',label:'GYRO INVERT X' },
-    { type:'check', key:'gyroFlipY',label:'GYRO INVERT Y' },
-    { type:'action', act:'recenter', label:'RECENTER', textbtn:true }
+    { type:'check', key:'freezeX',  label:'FREEZE X', x:1 },
+    { type:'check', key:'freezeY',  label:'FREEZE Y', x:1 },
+    { type:'check', key:'gyroFlipX',label:'GYRO INVERT X', x:1 },
+    { type:'check', key:'gyroFlipY',label:'GYRO INVERT Y', x:1 }
   ]},
   // Last before ACTIONS; the whole section, heading too, only with a photo
   // or video on screen.
   { title:'CHROMA KEY', when:'video', items:[
-    // See startChromaPick(). The action's label flips to
-    // REMOVE CHROMA KEY once a colour is picked (refreshMenu()).
-    { type:'action', act:'chromaKey', label:'SET CHROMA KEY', textbtn:true, when:'video' },
+    // See startChromaPick(). With no colour picked this one row reads
+    // ADD KEY COLOUR; once one is, REMOVE CHROMA KEY (refreshMenu()), and
+    // ADD KEY COLOUR below adds the next.
+    { type:'action', act:'chromaKey', label:'ADD KEY COLOUR', textbtn:true, when:'video' },
     { type:'action', act:'chromaAdd', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaCanAdd' },
     // One INTENSITY per picked colour, with a swatch of it (refreshMenu()).
     // Each followed by REMOVE COLOUR n (removeChromaColour()).
@@ -1010,20 +1028,21 @@ const MENU = [
     { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey3' },
     { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'chromaKey3' },
     { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' }
+    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
+    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn', x:1 }
     // SHOW MATTE (state.chromaMatte, the shader's chromaMatte) has no row:
     // hidden from the settings, it stays off.
   ]},
   // People cut-out with an on-device model -- see updateCutout().
   { title:'PEOPLE', when:'video', items:[
-    { type:'enum', key:'cutout',      label:'CUT-OUT', options:CUTOUT_MODES, when:'video' },
-    { type:'enum', key:'cutoutModel', label:'MODEL',   options:CUTOUT_MODEL_NAMES, when:'video', whenTrue:'cutoutOn' },
-    { type:'step', key:'cutoutSmooth', label:'SMOOTHING',   min:0, max:100, step:1, when:'video', whenTrue:'cutoutOn' },
-    { type:'step', key:'cutoutRefine', label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'cutoutOn' }
+    { type:'enum', key:'cutout',      label:'CUT-OUT', options:CUTOUT_MODES, when:'video', x:1 },
+    { type:'enum', key:'cutoutModel', label:'MODEL',   options:CUTOUT_MODEL_NAMES, when:'video', whenTrue:'cutoutOn', x:1 },
+    { type:'step', key:'cutoutSmooth', label:'SMOOTHING',   min:0, max:100, step:1, when:'video', whenTrue:'cutoutOn', x:1 },
+    { type:'step', key:'cutoutRefine', label:'REFINE EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'cutoutOn', x:1 }
   ]},
   { title:'ACTIONS', items:[
     { type:'action', act:'reset',     label:'RESET TO DEFAULTS', textbtn:true },
+    { type:'action', act:'recenter',  label:'RECENTER',          textbtn:true },
     { type:'action', act:'closeMenu', label:'CLOSE',             textbtn:true }
   ]}
 ];
@@ -1060,7 +1079,7 @@ const REDUCED_MENU = [
     { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey3', sub:2 },
     { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'rmChromaKey3', sub:2 },
     { type:'step',  key:'chromaSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
-    { type:'step',  key:'chromaRefine', label:'EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'step',  key:'chromaRefine', label:'EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
     { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 }
   ]},
   { title:'ACTIONS', items:[
@@ -1068,7 +1087,14 @@ const REDUCED_MENU = [
     { type:'action', act:'closeMenu', label:'CLOSE', textbtn:true }
   ]}
 ];
-function reducedMenuOn(){ return !!(state.reducedMenu && state.mediaLoaded); }
+function reducedMenuOn(){ return state.menuType === 0 && !!state.mediaLoaded; }
+// The EXPERT rows (x:1) show only with MENU TYPE on EXPERT.
+function menuIsExpert(){ return state.menuType === 2; }
+function itemVisible(item){
+  return !(item.when && !item.when.split(',').includes(state.content))
+    && !(item.whenTrue && !state[item.whenTrue])
+    && !(item.x && !menuIsExpert());
+}
 function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
 const CHROMA_ITEM = menuItem('chromaKey');
@@ -1086,7 +1112,8 @@ ENUM_SPEC.shape.options = SHAPES;
 
 function itemHTML(item){
   const when = (item.when ? ` data-when="${item.when}"` : '')
-    + (item.whenTrue ? ` data-when-true="${item.whenTrue}"` : '');
+    + (item.whenTrue ? ` data-when-true="${item.whenTrue}"` : '')
+    + (item.x ? ' data-x="1"' : '');
   const sub = item.sub ? ` sub${item.sub}` : '';
   switch(item.type){
     case 'hr':
@@ -1242,7 +1269,7 @@ function buildBotPanes(){
 // What a yes/no row shows, where YES/NO isn't the right word.
 const BOOL_TEXT = {
   rmBgOpen: ['HIDE', 'SHOW'], allControls: ['HIDE', 'SHOW'],
-  cutoutAccurate: ['OFF', 'ON'], chromaOn: ['OFF', 'ON'], reducedMenu: ['OFF', 'ON']
+  cutoutAccurate: ['OFF', 'ON'], chromaOn: ['OFF', 'ON']
 };
 function fmt(key, v){
   if (typeof v === 'boolean' || BOOL_TEXT[key]) return (BOOL_TEXT[key] || ['NO', 'YES'])[v ? 1 : 0];
@@ -1262,7 +1289,7 @@ function refreshMenu(){
   // Same reason as in buildOsdItems(): keep the full list's focus on the
   // row it was on when rows above it get shown or hidden below.
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
-  state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length < CHROMA_MAX_KEYS;
+  state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length > 0 && state.chromaKeys.length < CHROMA_MAX_KEYS;
   // A colour's INTENSITY row shows once that colour is picked.
   CHROMA_INT_KEYS.forEach((_, i)=>{
     const has = !!state.chromaOn && state.chromaKeys.length > i;
@@ -1286,11 +1313,22 @@ function refreshMenu(){
   // Rows gated on content type (data-when) and/or a boolean setting
   // (data-when-true, e.g. the mount rows, shown only where the mount is
   // tracked -- see syncMountRows()). A row can carry both.
-  menuPanes.querySelectorAll('[data-when],[data-when-true]').forEach(el=>{
-    const { when, whenTrue } = el.dataset;
-    el.hidden = (!!when && !when.split(',').includes(state.content)) || (!!whenTrue && !state[whenTrue]);
+  // EXPERT rows (data-x) only with MENU TYPE on EXPERT.
+  const expert = menuIsExpert();
+  menuPanes.querySelectorAll('[data-when],[data-when-true],[data-x]').forEach(el=>{
+    const { when, whenTrue, x } = el.dataset;
+    el.hidden = (!!when && !when.split(',').includes(state.content)) || (!!whenTrue && !state[whenTrue])
+      || (!!x && !expert);
   });
-  CHROMA_ITEM.label = state.chromaOn ? 'REMOVE CHROMA KEY' : 'SET CHROMA KEY';
+  // A section heading goes with its rows: hidden when none of them shows.
+  menuPanes.querySelectorAll('.section').forEach(head=>{
+    let any = false;
+    for (let el = head.nextElementSibling; el && !el.matches('.section,.hr'); el = el.nextElementSibling)
+      if (!el.hidden){ any = true; break; }
+    const { when } = head.dataset;
+    head.hidden = !any || (!!when && !when.split(',').includes(state.content));
+  });
+  CHROMA_ITEM.label = chromaHasKey() ? 'REMOVE CHROMA KEY' : 'ADD KEY COLOUR';
   // Each INTENSITY / REMOVE COLOUR row carries a swatch of its colour, so
   // you can tell them apart.
   CHROMA_INT_KEYS.forEach((key, i)=>{
@@ -1730,7 +1768,7 @@ function initBlit(){
       uniform float keyFill;      // what keyed-out areas show: 0 black; grey while aiming (CHROMA_PICK_FILL)
       uniform float keyT[3];      // each key colour's INTENSITY, 0..1
       uniform float chromaF;      // SMOOTHING 0..1
-      uniform float chromaR;      // REFINE EDGE -1..1
+      uniform float chromaR;      // REFINE EDGE -5..5
       uniform vec2 texel;         // one eye-target pixel in uv
       varying vec2 vPos;
       vec3 toYCbCr(vec3 c){
@@ -1835,8 +1873,22 @@ function initBlit(){
             // more), negative firms up the faintest part (cuts out less).
             // At +-1 the cut sits halfway through the edge, so a solid
             // subject or backdrop is never lost entirely.
-            if (chromaR > 0.0) m = clamp((m - 0.5 * chromaR) / (1.0 - 0.5 * chromaR), 0.0, 1.0);
-            else if (chromaR < 0.0) m = clamp(m / (1.0 + 0.5 * chromaR), 0.0, 1.0);
+            // Past +-1 the kept area also shrinks (+) or grows (-) by up to
+            // 8 pixels at +-5: the mask's minimum / maximum over a ring
+            // that far out.
+            if (abs(chromaR) > 1.0){
+              vec2 o = texel * 2.0 * (abs(chromaR) - 1.0);
+              vec2 d = o * 0.7071;
+              float a0 = keyMaskAt(uv + vec2(o.x, 0.0)), a1 = keyMaskAt(uv - vec2(o.x, 0.0));
+              float a2 = keyMaskAt(uv + vec2(0.0, o.y)), a3 = keyMaskAt(uv - vec2(0.0, o.y));
+              float a4 = keyMaskAt(uv + d), a5 = keyMaskAt(uv - d);
+              float a6 = keyMaskAt(uv + vec2(d.x, -d.y)), a7 = keyMaskAt(uv + vec2(-d.x, d.y));
+              if (chromaR > 0.0) m = min(m, min(min(min(a0, a1), min(a2, a3)), min(min(a4, a5), min(a6, a7))));
+              else m = max(m, max(max(max(a0, a1), max(a2, a3)), max(max(a4, a5), max(a6, a7))));
+            }
+            float rr = clamp(chromaR, -1.0, 1.0);
+            if (rr > 0.0) m = clamp((m - 0.5 * rr) / (1.0 - 0.5 * rr), 0.0, 1.0);
+            else if (rr < 0.0) m = clamp(m / (1.0 + 0.5 * rr), 0.0, 1.0);
           }
           if (matte) col.rgb = vec3(m);
           else {
@@ -1952,7 +2004,7 @@ function updateQuad(){
   computeQuadInverse(TL, TR, BL, BR, quadMat.uniforms.quadXform.value);
   quadMat.uniforms.flipX.value = state.flipX ? 1 : 0;
   quadMat.uniforms.flipY.value = state.flipY ? 1 : 0;
-  quadMat.uniforms.brightness.value = 1 + state.brightness / 100;
+  quadMat.uniforms.brightness.value = 1 + DEFAULTS.brightness / 100;   // BRIGHTNESS has no row any more: always full
 }
 
 function applyEyeDistance(){
@@ -1996,7 +2048,7 @@ function applyEyeProjection(){
   const { ew, eh } = eyeSize();
   const aspect = ew / eh;
   if (quadMat){
-    quadMat.uniforms.distort.value = fisheyeAmount(state.fov);
+    quadMat.uniforms.distort.value = 0;   // PERSPECTIVE has no row any more: undistorted
     quadMat.uniforms.aspect.value = aspect;
   }
   const dx = (state.posX / 100) * (ew / 2);
@@ -3629,7 +3681,10 @@ async function resolveSbsHint(label, file){
       if (mode === 'mono' || mode === 'top-bottom') return { value: false, authoritative: true };
     }
   }
-  return { value: filenameHint, authoritative: filenameHint };
+  // In the stereo views (SBS, HOLO3) a video is taken as SBS unless its
+  // own metadata says otherwise -- no guessing from the picture.
+  const sbsView = !!VIEW_SBS[state.view];
+  return { value: filenameHint || sbsView, authoritative: filenameHint || sbsView };
 }
 
 /* ---- PROJECTION: how the picture maps onto your view.
@@ -3831,9 +3886,9 @@ function projectionVerdict(source, w, h, sbs){
   }
 }
 // Final call from the frames' verdicts (an empty list: shape alone);
-// `fallback` is the answer when nothing points anywhere (FLAT, or 180 for
-// a picked video file).
-function decideProjection(verdicts, w, h, sbs, fallback = 0){
+// `fallback` is the answer when nothing points anywhere: 180, the default
+// PROJECTION.
+function decideProjection(verdicts, w, h, sbs, fallback = 1){
   const fish = verdicts.filter(v => v === 'fish').length;
   if (verdicts.length && fish * 2 > verdicts.length) return 2;
   const eyeAspect = (sbs ? w / 2 : w) / h;
@@ -3851,7 +3906,7 @@ function imageProjection(img, w, h, sbs){
 const PROJ_PROBE_FRAMES = 3, PROJ_PROBE_TRIES = 12, PROJ_PROBE_INTERVAL = 700, PROJ_PROBE_DELAY = 1200;
 let projProbeToken = 0;
 function cancelProjectionProbe(){ projProbeToken++; }
-function probeVideoProjection(onVerdict, fallback = 0){
+function probeVideoProjection(onVerdict, fallback = 1){
   const token = ++projProbeToken;
   const verdicts = [];
   let tries = 0;
@@ -4152,7 +4207,7 @@ async function playVideo(src, label, file, hintOverride){
   cancelSbsProbe();
   cancelProjectionProbe();
   const projHint = await resolveProjectionHint(label, file);
-  const projDefault = file ? 1 : 0;   // a picked video file defaults to 180, a URL to FLAT
+  const projDefault = 1;   // PROJECTION defaults to 180
   setProjection(projHint ?? projDefault);
   stopReverse();
   restoreVideoMaterials();
@@ -4596,8 +4651,7 @@ function buildOsdItems(){
   activeMenu().forEach(section=>{
     section.items.forEach(item=>{
       if (item.type === 'hr') return;
-      if (item.when && !item.when.split(',').includes(state.content)) return;
-      if (item.whenTrue && !state[item.whenTrue]) return;
+      if (!itemVisible(item)) return;
       osdItems.push({ ...item, sectionLabel: section.title });
     });
   });
@@ -4686,9 +4740,16 @@ function stepEnumValue(node, dir){
     saveState();
     return;
   }
+  if (node.key === 'menuType'){
+    const n = node.options.length;
+    setMenuType((state.menuType + dir + n) % n);
+    return;
+  }
   if (node.key === 'view'){
     const n = node.options.length;
-    switchView((state.view + dir + n) % n);   // snapshots the old view's settings, restores the new one's
+    let v = state.view;
+    do v = (v + dir + n) % n; while (VIEW_HIDDEN.includes(v));
+    switchView(v);   // snapshots the old view's settings, restores the new one's
     v28RecenterPending = true;   // each view has its own mount -- see v28MeasureMount()
     buildPanes();
     buildTopPanes();
@@ -4895,7 +4956,7 @@ function reducedMenuLabel(){ return (reducedMenuOn() ? 'HIDE' : 'SHOW') + ' REDU
 function toggleReducedMenu(){
   // The reduced menu exists only with a photo/video loaded.
   if (!state.mediaLoaded){ toast('LOAD A PHOTO OR VIDEO FIRST', 2000); return; }
-  setReducedMenu(!reducedMenuOn());
+  setMenuType(reducedMenuOn() ? fullMenuType : 0);
   toast('REDUCED MENU ' + (reducedMenuOn() ? 'ON' : 'OFF'));
 }
 
@@ -5588,14 +5649,12 @@ function keyMapApply(e){
      8  2   POS Y up / down
      6  4   CONTENT ZOOM up / down
      3  1   next / previous item -- gallery photo/video, or DEMO shape
-     9  7   PERSPECTIVE + / -
      /  *   EYE DISTANCE + / -   ---- */
 const DEFAULT_KEYS = {
   '-': { key:'playSpeed', dir:-1, mult:1 }, '+': { key:'playSpeed', dir:1, mult:1 },
   '8': { key:'posY', dir:1, mult:5 },        '2': { key:'posY', dir:-1, mult:5 },
   '6': { key:'contentZoom', dir:1, mult:5 }, '4': { key:'contentZoom', dir:-1, mult:5 },
   '3': { item:1 },                           '1': { item:-1 },
-  '9': { key:'fov', dir:1, mult:5 },         '7': { key:'fov', dir:-1, mult:5 },
   '/': { key:'eyeDist', dir:1, mult:5 },     '*': { key:'eyeDist', dir:-1, mult:5 }
 };
 function defaultKeyApply(e){
@@ -7040,6 +7099,10 @@ window.addEventListener('click', e=>{
   chromaPickTap = false;
 }, { capture: true });
 
+// A colour is picked and keying is on (REMOVE COLOURS in the reduced menu
+// can leave keying on with none).
+function chromaHasKey(){ return !!state.chromaOn && state.chromaKeys.length > 0; }
+
 function removeChromaKey(){
   state.chromaOn = false;
   state.chromaKeys = [];
@@ -7054,8 +7117,7 @@ function removeChromaKey(){
 function setCheck(key, v){
   switch (key){
     case 'rmBgOpen': state.rmBgOpen = v; break;
-    case 'allControls': if (v) setReducedMenu(false); return;
-    case 'reducedMenu': setReducedMenu(v); return;
+    case 'allControls': if (v) setMenuType(fullMenuType); return;
     case 'cutoutAccurate': state.cutoutModel = v ? 1 : 0; break;
     case 'chromaOn':
       // Keying back on reuses the picked colours; with none yet, pick one.
@@ -7093,14 +7155,21 @@ function clearChromaKeys(){
   toast('KEY COLOURS REMOVED');
 }
 
-// REDUCED MENU / ALL CONTROLS: swap menus and land on the GALLERY
-// row in whichever of the list or OSD strip is open.
-function setReducedMenu(on){
-  state.reducedMenu = on;
+// MENU TYPE. Going in or out of the reduced menu (also ALL CONTROLS and
+// SHOW / HIDE REDUCED MENU) lands on the GALLERY row in whichever of the
+// list or OSD strip is open; BASIC <-> EXPERT stays on MENU TYPE.
+// fullMenuType: what ALL CONTROLS goes back to.
+let fullMenuType = 1;
+function setMenuType(t){
+  const wasReduced = reducedMenuOn();
+  state.menuType = t;
+  if (t) fullMenuType = t;
+  else if (!state.mediaLoaded) toast('REDUCED MENU SHOWS ONCE A PHOTO OR VIDEO IS LOADED', 2500);
   buildOsdItems();
-  osdFocusIdx = Math.max(0, osdItems.findIndex(i => i.key === 'shape'));
+  if (wasReduced !== reducedMenuOn()) osdFocusIdx = Math.max(0, osdItems.findIndex(i => i.key === 'shape'));
   refreshMenu();
-  if (uiState === 'list') setMenuFocus(Math.max(0, menuRowIndexForKey('shape')));
+  if (uiState === 'list' && wasReduced !== reducedMenuOn()) setMenuFocus(Math.max(0, menuRowIndexForKey('shape')));
+  saveState();
 }
 
 function handleAct(act, el){
@@ -7130,7 +7199,7 @@ function handleAct(act, el){
     case 'chromaDel1':   removeChromaColour(0); break;
     case 'chromaDel2':   removeChromaColour(1); break;
     case 'chromaDel3':   removeChromaColour(2); break;
-    case 'chromaKey':    if (state.chromaOn) removeChromaKey(); else startChromaPick(); break;
+    case 'chromaKey':    if (chromaHasKey()) removeChromaKey(); else startChromaPick(); break;
     case 'chromaAdd':    startChromaPick(true); break;
   }
 }
@@ -7418,6 +7487,7 @@ document.addEventListener('visibilitychange', ()=>{
    Boot
    ========================================================================= */
 loadState();
+if (state.menuType) fullMenuType = state.menuType;
 applyView();
 document.body.dataset.sbs = state.sbs ? '1' : '0';
 document.body.dataset.chrome = '0';   // idle screen starts with UI hidden; tap to reveal
