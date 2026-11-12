@@ -289,7 +289,7 @@
   .row.sub2 .label{padding-left:calc(2 * var(--pad-lg));}
   .row.actionRow .label{color:var(--accent);}
   /* INTENSITY n / REMOVE COLOUR n: a swatch of the key colour, before the name */
-  .row .label .swatch{
+  .row .label .swatch,.textbtn .swatch{
     display:inline-block;width:0.8em;height:0.8em;margin-right:0.6em;vertical-align:-0.05em;
     border-radius:2px;box-shadow:0 0 0 1px rgba(255,255,255,0.55);
   }
@@ -499,18 +499,6 @@
   <div class="topPanes" id="topPanes"></div>
 </header>
 
-<div class="overlay dialog" id="hint" hidden>
-  <div class="dlgPane">
-    <div class="paneInner">
-      <div class="paneTitle" id="hintTitle">GYROSCOPE</div>
-      <div class="hr"></div>
-      <p class="helpText">This app uses your device's gyroscope for head tracking. Tap the button below to grant access.</p>
-      <button class="textbtn" id="hintBtn">ENABLE HEAD TRACKING</button>
-      <button class="textbtn" id="hintRefresh">REFRESH</button>
-    </div>
-  </div>
-</div>
-
 <footer class="bar" id="botbar">
   <div class="botPanes" id="botPanes"></div>
 </footer>
@@ -626,9 +614,8 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.68';
+const APP_VERSION = '2.69';
 document.title = `GYROS v${APP_VERSION}`;
-document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
 /* =========================================================================
    State
@@ -655,14 +642,14 @@ const DEFAULTS = {
   playSpeed: 1,           // PLAY SPEED (video only), -5..5: 1 = normal, 0 = held
                             // on the current frame, negative = backward. See
                             // runTransport().
-  chromaIntensity: 5,     // INTENSITY (chroma key), 0..100: how far from the
+  chromaIntensity: 8,     // INTENSITY (chroma key), 0..100: how far from the
                             // picked colour still gets keyed to black. 0 = no
                             // keying, 100 = the whole picture black. See keyMask().
                             // One per key colour (CHROMA_INT_KEYS): this is the
                             // first's, so a value saved before stays with it.
                             // Every new pick starts its colour here again
                             // (startChromaPick()), live preview included.
-  chromaIntensity2: 5, chromaIntensity3: 5,
+  chromaIntensity2: 8, chromaIntensity3: 8,
   chromaSmooth: 20,       // SMOOTHING (chroma key), 0..100: how soft the
                             // keyed edges are. See keyMask().
   chromaRefine: 0,        // REFINE EDGE (chroma key), -5..5: -1..1 shifts the
@@ -1022,11 +1009,11 @@ const MENU = [
     // One INTENSITY per picked colour, with a swatch of it (refreshMenu()).
     // Each followed by REMOVE COLOUR n (removeChromaColour()).
     { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey1' },
-    { type:'action', act:'chromaDel1', label:'REMOVE COLOUR 1', when:'video', whenTrue:'chromaKey1' },
+    { type:'action', act:'chromaDel1', label:'REMOVE COLOUR 1', textbtn:true, when:'video', whenTrue:'chromaKey1' },
     { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey2' },
-    { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', when:'video', whenTrue:'chromaKey2' },
+    { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', textbtn:true, when:'video', whenTrue:'chromaKey2' },
     { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey3' },
-    { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'chromaKey3' },
+    { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', textbtn:true, when:'video', whenTrue:'chromaKey3' },
     { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
     { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn', x:1 }
@@ -1334,7 +1321,8 @@ function refreshMenu(){
   CHROMA_INT_KEYS.forEach((key, i)=>{
     const rgb = state.chromaKeys[i];
     menuPanes.querySelectorAll(`[data-val="${key}"],[data-act="chromaDel${i + 1}"]`).forEach(el=>{
-      const label = el.closest('.row')?.querySelector('.label');
+      // A centred action button (full list) takes the swatch itself.
+      const label = el.classList.contains('textbtn') ? el : el.closest('.row')?.querySelector('.label');
       if (!label) return;
       let sw = label.querySelector('.swatch');
       if (!sw){ sw = document.createElement('span'); sw.className = 'swatch'; label.prepend(sw); }
@@ -2343,7 +2331,8 @@ function recenter(){
   toast('RECENTERED');
 }
 
-async function enableMotion(){
+// quiet: the try on load, which iOS refuses without a tap -- no toast then.
+async function enableMotion(quiet = false){
   if (motionGranted) return true;
   try{
     if (typeof DeviceOrientationEvent !== 'undefined' &&
@@ -2367,7 +2356,7 @@ async function enableMotion(){
   }catch(e){
     console.error('[GYROS] motion permission error:', e);
     if (kbDebugOn) kbDebugLog('MOTION PERMISSION ERROR ' + e.message);
-    toast('MOTION ERROR');
+    if (!quiet) toast('MOTION ERROR');
     return false;
   }
   motionGranted = true;
@@ -2380,7 +2369,6 @@ async function enableMotion(){
   // V2.8 (6DOF) always reads the relative event, never the absolute one.
   window.addEventListener('deviceorientation', onDeviceOrientationV28);
   window.addEventListener('devicemotion', onDeviceMotion);
-  hint.hidden = true;
   setTimeout(recenter, 250);
   scheduleGyroAvailabilityCheck();   // covers GYRO (BETA)/GYRO (STABLE) already being the saved setting
   return true;
@@ -4557,7 +4545,6 @@ const btKeysList = btKeysDlg.querySelector('.btKeysList');
 const loadTypeDlg = document.getElementById('loadTypeDlg');
 const urlDlg = document.getElementById('urlDlg');
 const urlInput = document.getElementById('urlInput');
-const hint = document.getElementById('hint');
 const toastEls = document.querySelectorAll('.toast');
 
 const topbar = document.getElementById('topbar');
@@ -6244,25 +6231,6 @@ document.addEventListener('keydown', e=>{
     return;
   }
 
-  /* ---- Gyroscope prompt (iOS): up/down (W/S) move between ENABLE HEAD
-     TRACKING and REFRESH; Enter, Space, left/right or A/D press the focused
-     one -- a key press counts as the user gesture iOS wants. Handled here
-     rather than left to the focused button so nothing below (key mapping,
-     the OSD) takes the key first. ---- */
-  if (!hint.hidden){
-    const k = DLG_WASD[e.key.toLowerCase()] || e.key;
-    if (k === 'ArrowUp' || k === 'ArrowDown'){
-      e.preventDefault();
-      setHintFocus(hintFocus === 0 ? 1 : 0);
-      return;
-    }
-    if (k === 'Enter' || k === ' ' || k === 'ArrowLeft' || k === 'ArrowRight'){
-      e.preventDefault();
-      if (hintFocus === 1) location.reload(); else enableMotion();
-      return;
-    }
-  }
-
   /* ---- Learn BT Keys capture mode: swallow every keystroke here instead
      of letting it reach anything below, so testing a remote's buttons never
      also drives the OSD/list underneath. Must be the very first check. ---- */
@@ -7328,26 +7296,10 @@ function handleTap(){
 /* Enable motion on any first user interaction.
    touchstart and click are the most reliable user-activation events on
    iOS Chrome (WKWebView) for DeviceOrientationEvent.requestPermission. */
-['touchstart', 'click', 'pointerdown'].forEach(ev=>{
+['touchstart', 'click', 'pointerdown', 'keydown'].forEach(ev=>{
   document.addEventListener(ev, ()=>{ if (!motionGranted) enableMotion(); }, { passive: true });
 });
-/* The modal button is the clearest entry point on iOS. REFRESH under it
-   reloads the app, e.g. after allowing motion access in Settings. */
-document.getElementById('hintBtn').addEventListener('click', ()=>{ enableMotion(); });
-document.getElementById('hintRefresh').addEventListener('click', ()=>{ location.reload(); });
-let hintFocus = 0;   // 0 ENABLE HEAD TRACKING, 1 REFRESH -- the keyboard's button
-function setHintFocus(i){
-  hintFocus = i;
-  ['hintBtn', 'hintRefresh'].forEach((id, n)=>{
-    const el = document.getElementById(id);
-    el.classList.toggle('kbfocus', n === i);
-    if (n === i) el.focus();
-  });
-}
-document.getElementById('hintBtn').addEventListener('touchstart', e=>{
-  e.stopPropagation();
-  enableMotion();
-}, { passive: true });
+
 
 stage.addEventListener('pointerdown', e=>{
   // A new first finger: whatever is still listed is a finger whose lift was
@@ -7503,15 +7455,12 @@ applyAll();
 animate();
 requestWakeLock();
 
-if (typeof DeviceOrientationEvent !== 'undefined' &&
-    typeof DeviceOrientationEvent.requestPermission === 'function'){
-  hint.hidden = false;          // iOS: needs a tap before motion is allowed
-  // Keyboard focus on ENABLE HEAD TRACKING, so Enter / Space confirms it
-  // straight away (see keydown).
-  setHintFocus(0);
-} else {
-  enableMotion();
-}
+// Head tracking is asked for straight away -- no prompt screen. iOS only
+// shows its own permission dialog from a tap or key press: where it refuses
+// this first try (a fresh visit), the first tap or key press anywhere asks
+// again (the listeners above); where access was already allowed, it starts
+// right here.
+enableMotion(true);
 restoreMedia();
 </script>
 </body>
