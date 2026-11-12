@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.77';
+const APP_VERSION = '2.78';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -818,7 +818,8 @@ const SHAPES = [
   'OFF'
 ];
 const CHOOSE_SOURCE = ['CHOOSE'];
-const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER'];
+const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER', 'FRONT CAMERA', 'BACK CAMERA'];
+const MODE_FRONT_CAM = 4, MODE_BACK_CAM = 5;   // live camera -- startCamera()
 
 // TRACKING (GYRO section): which head-orientation pipeline animate() uses --
 // see onDeviceOrientation()/onDeviceMotion()/applyStableTuning() near "Head
@@ -3948,6 +3949,7 @@ function openMediaFiles(list, startIdx = 0){
    a photo, a video, and a folder of either all land on screen the same way. ---- */
 function applyImageTexture(url, onDone, onError){
   cancelSbsProbe();
+  stopCamera();
   const loader = new THREE.TextureLoader();
   loader.load(url, tex=>{
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -3992,6 +3994,7 @@ function restoreVideoMaterials(){
 }
 
 async function startVideoPlayback(src){
+  stopCamera();
   video.src = src;
   video.load();   // required on some browsers (mobile Safari) to pick up the new source
   video.loop = true;
@@ -4195,6 +4198,82 @@ function loadSBSImage(file){
 // `hintOverride` ({ value, authoritative }) replaces the filename/metadata
 // guess -- used by URL loads, where a resolved page/API says (or a pasted
 // VR link implies) what the layout is.
+/* ---- Live camera (MODE FRONT / BACK CAMERA, or LOAD): the camera feed
+   plays in the video element like any flat, non-SBS video, so in SBS and
+   HOLO3 the same picture goes to both eyes, as with 2D content. Nothing is
+   recorded or stored; a loaded photo/video set stays remembered for later.
+   Anything else loaded stops the camera (stopCamera()). ---- */
+let cameraStream = null, cameraFront = true;
+function stopCamera(){
+  if (!cameraStream) return;
+  cameraStream.getTracks().forEach(t => t.stop());
+  cameraStream = null;
+  if (video.srcObject) video.srcObject = null;
+  // The CAMERA row goes back to what it was for other sources.
+  if (ENUM_SPEC.shape.label === 'CAMERA'){
+    ENUM_SPEC.shape.label = 'DEMO';
+    ENUM_SPEC.shape.options = CHOOSE_SOURCE;
+    menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
+      const labelEl = el.closest('.row')?.querySelector('.label');
+      if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'DEMO';
+    });
+  }
+}
+// prevMode: MODE before it was stepped onto a camera, put back if the
+// camera can't be opened.
+async function startCamera(front, prevMode){
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    toast('NO CAMERA ACCESS HERE', 2000);
+    if (prevMode !== undefined){ state.mode = prevMode; refreshMenu(); }
+    return;
+  }
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+      video: { facingMode: front ? 'user' : 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } });
+  }catch(e){
+    toast(e && e.name === 'NotAllowedError' ? 'CAMERA DENIED' : 'NO CAMERA', 2000);
+    if (prevMode !== undefined) state.mode = prevMode;
+    refreshMenu();
+    return;
+  }
+  stopCamera();
+  cameraStream = stream;
+  cameraFront = front;
+  usingImage = false;
+  cancelSbsProbe();
+  cancelProjectionProbe();
+  stopReverse();
+  restoreVideoMaterials();
+  // Leave a loaded set where it is (still remembered), just not on screen.
+  galleryItems = [];
+  galleryIdx = -1;
+  state.mediaLoaded = false;
+  document.body.dataset.gallery = '0';
+  state.sourceSbs = false;   // one picture, shown to both eyes
+  setProjection(0);          // a camera is a flat picture
+  video.removeAttribute('src');
+  video.srcObject = stream;
+  video.muted = true;
+  video.playbackRate = 1;
+  try{ await video.play(); }catch(e){}
+  const label = front ? 'FRONT CAMERA' : 'BACK CAMERA';
+  ENUM_SPEC.shape.label = 'CAMERA';
+  ENUM_SPEC.shape.options = [label];
+  state.shape = 0;
+  menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
+    const labelEl = el.closest('.row')?.querySelector('.label');
+    if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'CAMERA';
+  });
+  const onMeta = ()=>{ applyVideoLayout(); video.removeEventListener('loadedmetadata', onMeta); };
+  if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
+  state.content = 'video';
+  state.mode = front ? MODE_FRONT_CAM : MODE_BACK_CAM;
+  applyAll();
+  refreshMenu();
+  toast(label);
+}
+
 async function playVideo(src, label, file, hintOverride){
   usingImage = false;
   cancelSbsProbe();
@@ -4723,6 +4802,10 @@ function osdDown(){
 }
 
 function stepEnumValue(node, dir){
+  if (node.key === 'shape' && cameraStream){
+    startCamera(!cameraFront);   // the CAMERA row flips between front and back
+    return;
+  }
   if (node.key === 'shape' && !galleryItems.length && ENUM_SPEC.shape.options === CHOOSE_SOURCE){
     openModeChooser();
     return;
@@ -4751,8 +4834,15 @@ function stepEnumValue(node, dir){
     return;
   }
   const n = node.options.length;
+  const prevVal = state[node.key];
   state[node.key] = (state[node.key] + dir + n) % n;
   if (node.key === 'mode'){
+    // A camera starts as soon as it's picked; anything else lets it go.
+    if (state.mode === MODE_FRONT_CAM || state.mode === MODE_BACK_CAM){
+      startCamera(state.mode === MODE_FRONT_CAM, prevVal);
+      return;
+    }
+    stopCamera();
     if (galleryItems.length) clearGallery();
     ENUM_SPEC.shape.options = state.mode === 0 ? SHAPES : CHOOSE_SOURCE;
     state.shape = 0;
@@ -4795,6 +4885,8 @@ function openModeChooser(){
     case 1: videoFile.click(); break;
     case 2: modelFile.click(); break;
     case 3: folderFiles.click(); break;
+    case MODE_FRONT_CAM: startCamera(true); break;
+    case MODE_BACK_CAM:  startCamera(false); break;
   }
 }
 
@@ -4838,6 +4930,8 @@ function loadTypePaneHTML(){
       <button class="row" data-loadtype="video"><span class="label">IMAGE / VIDEO</span></button>
       <button class="row" data-loadtype="folder"><span class="label">FOLDER (PHOTOS + VIDEOS)</span></button>
       <button class="row" data-loadtype="model"><span class="label">3D MODEL (.OBJ / .STL / .USDZ)</span></button>
+      <button class="row" data-loadtype="camFront"><span class="label">FRONT CAMERA</span></button>
+      <button class="row" data-loadtype="camBack"><span class="label">BACK CAMERA</span></button>
       <button class="row" data-loadtype="pasteUrl"><span class="label">PASTE LINK FROM CLIPBOARD</span></button>
       <button class="row" data-loadtype="videoUrl"><span class="label">IMAGE / VIDEO URL</span></button>
       <button class="row" data-loadtype="modelUrl"><span class="label">3D MODEL URL</span></button>
@@ -5024,6 +5118,7 @@ function loadDemo(){
     });
     state.shape = 0;
   }
+  stopCamera();
   state.mode = 0;
   state.content = 'demo';
   if (!video.paused) video.pause();
@@ -5048,6 +5143,8 @@ loadTypeDlg.addEventListener('click', e=>{
     case 'video':    videoFile.click(); break;
     case 'folder':   folderFiles.click(); break;
     case 'model':    modelFile.click(); break;
+    case 'camFront': startCamera(true); break;
+    case 'camBack':  startCamera(false); break;
     case 'pasteUrl': pasteAndLoad(); break;
     case 'videoUrl': openUrlDlg('video'); break;
     case 'modelUrl': openUrlDlg('model'); break;
