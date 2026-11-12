@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.78';
+const APP_VERSION = '2.79';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -818,8 +818,9 @@ const SHAPES = [
   'OFF'
 ];
 const CHOOSE_SOURCE = ['CHOOSE'];
-const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER', 'FRONT CAMERA', 'BACK CAMERA'];
-const MODE_FRONT_CAM = 4, MODE_BACK_CAM = 5;   // live camera -- startCamera()
+const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER', 'CAMERA'];
+const MODE_CAMERA = 4;   // live camera -- startCamera(); the row under MODE picks FRONT / BACK
+const CAMERA_SIDES = ['FRONT', 'BACK'];
 
 // TRACKING (GYRO section): which head-orientation pipeline animate() uses --
 // see onDeviceOrientation()/onDeviceMotion()/applyStableTuning() near "Head
@@ -4203,7 +4204,7 @@ function loadSBSImage(file){
    HOLO3 the same picture goes to both eyes, as with 2D content. Nothing is
    recorded or stored; a loaded photo/video set stays remembered for later.
    Anything else loaded stops the camera (stopCamera()). ---- */
-let cameraStream = null, cameraFront = true;
+let cameraStream = null, cameraFront = false;   // the back camera first
 function stopCamera(){
   if (!cameraStream) return;
   cameraStream.getTracks().forEach(t => t.stop());
@@ -4259,8 +4260,8 @@ async function startCamera(front, prevMode){
   try{ await video.play(); }catch(e){}
   const label = front ? 'FRONT CAMERA' : 'BACK CAMERA';
   ENUM_SPEC.shape.label = 'CAMERA';
-  ENUM_SPEC.shape.options = [label];
-  state.shape = 0;
+  ENUM_SPEC.shape.options = CAMERA_SIDES;
+  state.shape = front ? 0 : 1;
   menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
     const labelEl = el.closest('.row')?.querySelector('.label');
     if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'CAMERA';
@@ -4268,7 +4269,7 @@ async function startCamera(front, prevMode){
   const onMeta = ()=>{ applyVideoLayout(); video.removeEventListener('loadedmetadata', onMeta); };
   if (video.readyState >= 1) onMeta(); else video.addEventListener('loadedmetadata', onMeta);
   state.content = 'video';
-  state.mode = front ? MODE_FRONT_CAM : MODE_BACK_CAM;
+  state.mode = MODE_CAMERA;
   applyAll();
   refreshMenu();
   toast(label);
@@ -4838,8 +4839,8 @@ function stepEnumValue(node, dir){
   state[node.key] = (state[node.key] + dir + n) % n;
   if (node.key === 'mode'){
     // A camera starts as soon as it's picked; anything else lets it go.
-    if (state.mode === MODE_FRONT_CAM || state.mode === MODE_BACK_CAM){
-      startCamera(state.mode === MODE_FRONT_CAM, prevVal);
+    if (state.mode === MODE_CAMERA){
+      startCamera(cameraFront, prevVal);
       return;
     }
     stopCamera();
@@ -4885,8 +4886,7 @@ function openModeChooser(){
     case 1: videoFile.click(); break;
     case 2: modelFile.click(); break;
     case 3: folderFiles.click(); break;
-    case MODE_FRONT_CAM: startCamera(true); break;
-    case MODE_BACK_CAM:  startCamera(false); break;
+    case MODE_CAMERA: startCamera(cameraFront); break;
   }
 }
 
