@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.76';
+const APP_VERSION = '2.77';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1011,10 +1011,10 @@ const MENU = [
   // the rest away, keying or not -- chromaOpen, flags in refreshMenu().
   { title:'CHROMA KEY', noTitle:true, when:'video', items:[
     { type:'check', key:'chromaOpen', label:'CHROMA KEY', when:'video' },
-    // See startChromaPick(). With no colour picked this one row reads
-    // ADD KEY COLOUR; once one is, REMOVE CHROMA KEY (refreshMenu()), and
-    // ADD KEY COLOUR below adds the next.
-    { type:'action', act:'chromaKey', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaOpen' },
+    // See startChromaPick(). With no colour picked, this ADD KEY COLOUR
+    // picks the first; once one is, the second one below adds the next, and
+    // each colour has its own REMOVE COLOUR n (the last one turns keying off).
+    { type:'action', act:'chromaKey', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaNoKey' },
     { type:'action', act:'chromaAdd', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaCanAdd' },
     // One INTENSITY per picked colour, with a swatch of it (refreshMenu()).
     // Each followed by REMOVE COLOUR n (removeChromaColour()).
@@ -1093,7 +1093,6 @@ function itemVisible(item){
 }
 function activeMenu(){ return reducedMenuOn() ? REDUCED_MENU : MENU; }
 
-const CHROMA_ITEM = menuItem('chromaKey');
 const CHROMA_MAX_KEYS = 3;   // key colours ADD KEY COLOUR allows; must match the shader's keyCols[3]
 const CHROMA_INT_KEYS = ['chromaIntensity', 'chromaIntensity2', 'chromaIntensity3'];   // INTENSITY per key colour
 const CHROMA_PICK_FILL = 0.25;   // while aiming, cut areas show 75% grey (not black), so preview reads as preview
@@ -1286,6 +1285,7 @@ function refreshMenu(){
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
   const chromaOpen = !!state.chromaOpen;
   state.chromaRows = chromaOpen && !!state.chromaOn;
+  state.chromaNoKey = chromaOpen && !chromaHasKey();
   state.chromaCanAdd = state.chromaRows && state.chromaKeys.length > 0 && state.chromaKeys.length < CHROMA_MAX_KEYS;
   // A colour's INTENSITY row shows once that colour is picked.
   CHROMA_INT_KEYS.forEach((_, i)=>{
@@ -1322,7 +1322,6 @@ function refreshMenu(){
     const { when } = head.dataset;
     head.hidden = !any || (!!when && !when.split(',').includes(state.content));
   });
-  CHROMA_ITEM.label = chromaHasKey() ? 'REMOVE CHROMA KEY' : 'ADD KEY COLOUR';
   // Each INTENSITY / REMOVE COLOUR row carries a swatch of its colour, so
   // you can tell them apart.
   CHROMA_INT_KEYS.forEach((key, i)=>{
@@ -1337,7 +1336,6 @@ function refreshMenu(){
       if (rgb) sw.style.background = `rgb(${rgb.map(c => Math.round(c * 255)).join(',')})`;
     });
   });
-  menuPanes.querySelectorAll('[data-act="chromaKey"]').forEach(el => el.textContent = CHROMA_ITEM.label);
   if (focusedRow){
     const idx = navItems().indexOf(focusedRow);
     if (idx >= 0 && idx !== menuFocusIdx) setMenuFocus(idx, false);
