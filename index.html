@@ -284,6 +284,12 @@
   @media (hover:hover){button.row:hover{background:rgba(255,255,255,0.07);}}
   button.row:active{background:rgba(255,255,255,0.14);}
   .row .label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  /* GALLERY / MEDIA: a long file name ends in an ellipsis, filling the row
+     between the label and the buttons. */
+  .row.fileRow .label{flex:0 0 auto;}
+  .row.fileRow .stepper{flex:0 1 auto;min-width:0;}
+  .row.fileRow .rnd{flex:0 0 auto;}
+  .row.fileRow .val{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   /* Nested rows (the reduced menu's BG REMOVAL tree): indented per level. */
   .row.sub1 .label{padding-left:var(--pad-lg);}
   .row.sub2 .label{padding-left:calc(2 * var(--pad-lg));}
@@ -614,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.73';
+const APP_VERSION = '2.74';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1124,7 +1130,7 @@ function itemHTML(item){
           <button class="rnd" data-act="step" data-key="${item.key}" data-dir="1" aria-label="Increase ${item.label}">+</button>
         </span></div>`;
     case 'enum':
-      return `<div class="row${sub}"${when}>
+      return `<div class="row${sub}${item.key === 'shape' ? ' fileRow' : ''}"${when}>
         <span class="label">${item.label}</span>
         <span class="stepper">
           <button class="rnd" data-act="enumstep" data-key="${item.key}" data-dir="-1" aria-label="Previous ${item.label}">&#8722;</button>
@@ -4347,7 +4353,7 @@ function setStandaloneMedia(file){
   rememberMedia([file]);
   document.body.dataset.gallery = '0';
   ENUM_SPEC.shape.label = 'GALLERY';
-  ENUM_SPEC.shape.options = [file.name.toUpperCase().slice(0, 28)];
+  ENUM_SPEC.shape.options = [file.name.toUpperCase()];
   menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
     const labelEl = el.closest('.row')?.querySelector('.label');
     if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'GALLERY';
@@ -4390,7 +4396,7 @@ function loadGalleryFiles(fileList, startIdx = 0){
   state.mediaLoaded = true;
   state.mode = 3;
   ENUM_SPEC.shape.label = 'GALLERY';
-  ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase().slice(0, 28));
+  ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase());
   menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
     const labelEl = el.closest('.row')?.querySelector('.label');
     if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'GALLERY';
@@ -4422,7 +4428,7 @@ function loadUrlGallery(items, startIdx = 0){
   state.mediaLoaded = true;
   state.mode = 3;
   ENUM_SPEC.shape.label = 'GALLERY';
-  ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase().slice(0, 28));
+  ENUM_SPEC.shape.options = galleryItems.map(it => it.name.toUpperCase());
   menuPanes.querySelectorAll('[data-val="shape"]').forEach(el=>{
     const labelEl = el.closest('.row')?.querySelector('.label');
     if (labelEl && menuPanes.dataset.menu !== 'reduced') labelEl.textContent = 'GALLERY';
