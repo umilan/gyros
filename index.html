@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.75';
+const APP_VERSION = '2.76';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -745,6 +745,8 @@ const DEFAULTS = {
   smoothing: 50,           // SMOOTHING, percent of the noise allowances V2.8
                             // (6DOF) is built with: 100 = the same as HOLO2,
                             // 0 = follow the sensor exactly.
+  chromaOpen: true,        // CHROMA KEY row, HIDE / SHOW: folds the chroma key
+                            // settings away (keying itself stays as it is).
   menuType: 1,             // MENU TYPE: 0 REDUCED | 1 BASIC | 2 EXPERT -- MENU_TYPES.
                             // EXPERT adds the rows marked x:1 in MENU; REDUCED
                             // is REDUCED_MENU, once a photo/video is loaded.
@@ -1005,11 +1007,14 @@ const MENU = [
   ]},
   // Last before ACTIONS; the whole section, heading too, only with a photo
   // or video on screen.
-  { title:'CHROMA KEY', when:'video', items:[
+  // The CHROMA KEY row (HIDE / SHOW) stands in for the heading and folds
+  // the rest away, keying or not -- chromaOpen, flags in refreshMenu().
+  { title:'CHROMA KEY', noTitle:true, when:'video', items:[
+    { type:'check', key:'chromaOpen', label:'CHROMA KEY', when:'video' },
     // See startChromaPick(). With no colour picked this one row reads
     // ADD KEY COLOUR; once one is, REMOVE CHROMA KEY (refreshMenu()), and
     // ADD KEY COLOUR below adds the next.
-    { type:'action', act:'chromaKey', label:'ADD KEY COLOUR', textbtn:true, when:'video' },
+    { type:'action', act:'chromaKey', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaOpen' },
     { type:'action', act:'chromaAdd', label:'ADD KEY COLOUR', textbtn:true, when:'video', whenTrue:'chromaCanAdd' },
     // One INTENSITY per picked colour, with a swatch of it (refreshMenu()).
     // Each followed by REMOVE COLOUR n (removeChromaColour()).
@@ -1019,9 +1024,9 @@ const MENU = [
     { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', textbtn:true, when:'video', whenTrue:'chromaKey2' },
     { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'chromaKey3' },
     { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', textbtn:true, when:'video', whenTrue:'chromaKey3' },
-    { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'chromaOn' },
-    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaOn', x:1 }
+    { type:'step',  key:'chromaSmooth',    label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'chromaRows' },
+    { type:'step',  key:'chromaRefine',    label:'REFINE EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'chromaRows' },
+    { type:'step',  key:'chromaSpill',     label:'SPILL',     min:0, max:100, step:1, when:'video', whenTrue:'chromaRows', x:1 }
     // SHOW MATTE (state.chromaMatte, the shader's chromaMatte) has no row:
     // hidden from the settings, it stays off.
   ]},
@@ -1056,22 +1061,23 @@ const REDUCED_MENU = [
     menuItem('posY'),
     menuItem('scaleY')
   ]},
-  // CHROMA KEY, always open: CHROMA turns keying on / off, and its own
-  // settings show below it while it's on (sub: indent level). Flags set in
-  // refreshMenu().
+  // CHROMA KEY (HIDE / SHOW) folds the branch away, as in the full menu;
+  // open, CHROMA turns keying on / off and its own settings show below it
+  // while it's on (sub: indent level). Flags set in refreshMenu().
   { title:'CHROMA KEY', noTitle:true, items:[
-    { type:'check', key:'chromaOn', label:'CHROMA', when:'video' },
-    { type:'action', act:'chromaClear', label:'REMOVE COLOURS', when:'video', whenTrue:'rmChromaRows', sub:1 },
-    { type:'action', act:'chromaAdd',   label:'ADD COLOUR', when:'video', whenTrue:'rmChromaAdd', sub:1 },
-    { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey1', sub:1 },
-    { type:'action', act:'chromaDel1', label:'REMOVE COLOUR 1', when:'video', whenTrue:'rmChromaKey1', sub:1 },
-    { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey2', sub:1 },
-    { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', when:'video', whenTrue:'rmChromaKey2', sub:1 },
-    { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey3', sub:1 },
-    { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'rmChromaKey3', sub:1 },
-    { type:'step',  key:'chromaSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:1 },
-    { type:'step',  key:'chromaRefine', label:'EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:1 },
-    { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:1 }
+    { type:'check', key:'chromaOpen', label:'CHROMA KEY', when:'video' },
+    { type:'check', key:'chromaOn', label:'CHROMA', when:'video', whenTrue:'chromaOpen', sub:1 },
+    { type:'action', act:'chromaClear', label:'REMOVE COLOURS', when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'action', act:'chromaAdd',   label:'ADD COLOUR', when:'video', whenTrue:'rmChromaAdd', sub:2 },
+    { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey1', sub:2 },
+    { type:'action', act:'chromaDel1', label:'REMOVE COLOUR 1', when:'video', whenTrue:'rmChromaKey1', sub:2 },
+    { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey2', sub:2 },
+    { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', when:'video', whenTrue:'rmChromaKey2', sub:2 },
+    { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey3', sub:2 },
+    { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'rmChromaKey3', sub:2 },
+    { type:'step',  key:'chromaSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'step',  key:'chromaRefine', label:'EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
+    { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 }
   ]},
   { title:'ACTIONS', items:[
     { type:'action', act:'closeMenu', label:'CLOSE', textbtn:true }
@@ -1258,7 +1264,7 @@ function buildBotPanes(){
 
 // What a yes/no row shows, where YES/NO isn't the right word.
 const BOOL_TEXT = {
-  chromaOn: ['OFF', 'ON']
+  chromaOn: ['OFF', 'ON'], chromaOpen: ['HIDE', 'SHOW']
 };
 function fmt(key, v){
   if (typeof v === 'boolean' || BOOL_TEXT[key]) return (BOOL_TEXT[key] || ['NO', 'YES'])[v ? 1 : 0];
@@ -1278,10 +1284,12 @@ function refreshMenu(){
   // Same reason as in buildOsdItems(): keep the full list's focus on the
   // row it was on when rows above it get shown or hidden below.
   const focusedRow = (uiState === 'list' && menuFocusIdx >= 0) ? navItems()[menuFocusIdx] : null;
-  state.chromaCanAdd = !!state.chromaOn && state.chromaKeys.length > 0 && state.chromaKeys.length < CHROMA_MAX_KEYS;
+  const chromaOpen = !!state.chromaOpen;
+  state.chromaRows = chromaOpen && !!state.chromaOn;
+  state.chromaCanAdd = state.chromaRows && state.chromaKeys.length > 0 && state.chromaKeys.length < CHROMA_MAX_KEYS;
   // A colour's INTENSITY row shows once that colour is picked.
   CHROMA_INT_KEYS.forEach((_, i)=>{
-    const has = !!state.chromaOn && state.chromaKeys.length > i;
+    const has = state.chromaRows && state.chromaKeys.length > i;
     state['chromaKey' + (i + 1)] = has;
     state['rmChromaKey' + (i + 1)] = has;
   });
@@ -1290,7 +1298,7 @@ function refreshMenu(){
   state.monoSource = !state.sourceSbs && state.projection === 0;   // 2D TO 3D: flat mono only
   state.depthRows = state.monoSource && state.depth3d > 0;
   // Reduced menu tree (REDUCED_MENU): which branches are open.
-  state.rmChromaRows = !!state.chromaOn;
+  state.rmChromaRows = state.chromaRows;
   state.rmChromaAdd = state.rmChromaRows && state.chromaKeys.length < CHROMA_MAX_KEYS;
   menuPanes.querySelectorAll('[data-val]').forEach(el=>{
     const k = el.dataset.val;
