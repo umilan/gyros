@@ -614,7 +614,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.71';
+const APP_VERSION = '2.72';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -752,7 +752,6 @@ const state = Object.assign({}, DEFAULTS);
 // up to CHROMA_MAX_KEYS -- see startChromaPick() -- and SHOW MATTE.
 state.chromaKeys = [];
 state.chromaMatte = false;
-state.rmBgOpen = false;   // reduced menu: BG REMOVAL folded open
 
 function loadState(){
   try{
@@ -1048,26 +1047,22 @@ const REDUCED_MENU = [
     menuItem('posY'),
     menuItem('scaleY')
   ]},
-  // BG REMOVAL folds open (rmBgOpen) onto its two methods; each method's own
-  // settings show while it's on. sub: indent level. Flags set in refreshMenu().
-  { title:'BG REMOVAL', noTitle:true, items:[
-    { type:'check', key:'rmBgOpen', label:'BG REMOVAL', when:'video' },
-    { type:'enum',  key:'cutout', label:'AI ALGO', options:CUTOUT_MODES, when:'video', whenTrue:'rmBgOpen', sub:1 },
-    { type:'check', key:'cutoutAccurate', label:'ACCURATE', when:'video', whenTrue:'rmAiRows', sub:2 },
-    { type:'step',  key:'cutoutSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmAiRows', sub:2 },
-    { type:'step',  key:'cutoutRefine', label:'EDGE', min:-1, max:1, step:0.1, dec:1, when:'video', whenTrue:'rmAiRows', sub:2 },
-    { type:'check', key:'chromaOn', label:'CHROMA', when:'video', whenTrue:'rmBgOpen', sub:1 },
-    { type:'action', act:'chromaClear', label:'REMOVE COLOURS', when:'video', whenTrue:'rmChromaRows', sub:2 },
-    { type:'action', act:'chromaAdd',   label:'ADD COLOUR', when:'video', whenTrue:'rmChromaAdd', sub:2 },
-    { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey1', sub:2 },
-    { type:'action', act:'chromaDel1', label:'REMOVE COLOUR 1', when:'video', whenTrue:'rmChromaKey1', sub:2 },
-    { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey2', sub:2 },
-    { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', when:'video', whenTrue:'rmChromaKey2', sub:2 },
-    { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey3', sub:2 },
-    { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'rmChromaKey3', sub:2 },
-    { type:'step',  key:'chromaSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
-    { type:'step',  key:'chromaRefine', label:'EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:2 },
-    { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 }
+  // CHROMA KEY, always open: CHROMA turns keying on / off, and its own
+  // settings show below it while it's on (sub: indent level). Flags set in
+  // refreshMenu().
+  { title:'CHROMA KEY', noTitle:true, items:[
+    { type:'check', key:'chromaOn', label:'CHROMA', when:'video' },
+    { type:'action', act:'chromaClear', label:'REMOVE COLOURS', when:'video', whenTrue:'rmChromaRows', sub:1 },
+    { type:'action', act:'chromaAdd',   label:'ADD COLOUR', when:'video', whenTrue:'rmChromaAdd', sub:1 },
+    { type:'step',  key:'chromaIntensity',  label:'INTENSITY 1', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey1', sub:1 },
+    { type:'action', act:'chromaDel1', label:'REMOVE COLOUR 1', when:'video', whenTrue:'rmChromaKey1', sub:1 },
+    { type:'step',  key:'chromaIntensity2', label:'INTENSITY 2', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey2', sub:1 },
+    { type:'action', act:'chromaDel2', label:'REMOVE COLOUR 2', when:'video', whenTrue:'rmChromaKey2', sub:1 },
+    { type:'step',  key:'chromaIntensity3', label:'INTENSITY 3', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaKey3', sub:1 },
+    { type:'action', act:'chromaDel3', label:'REMOVE COLOUR 3', when:'video', whenTrue:'rmChromaKey3', sub:1 },
+    { type:'step',  key:'chromaSmooth', label:'SMOOTHING', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:1 },
+    { type:'step',  key:'chromaRefine', label:'EDGE', min:-5, max:5, step:0.1, dec:1, when:'video', whenTrue:'rmChromaRows', sub:1 },
+    { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:1 }
   ]},
   { title:'ACTIONS', items:[
     // The same MENU TYPE row as in GENERAL: BASIC / EXPERT leave the reduced menu.
@@ -1256,8 +1251,7 @@ function buildBotPanes(){
 
 // What a yes/no row shows, where YES/NO isn't the right word.
 const BOOL_TEXT = {
-  rmBgOpen: ['HIDE', 'SHOW'],
-  cutoutAccurate: ['OFF', 'ON'], chromaOn: ['OFF', 'ON']
+  chromaOn: ['OFF', 'ON']
 };
 function fmt(key, v){
   if (typeof v === 'boolean' || BOOL_TEXT[key]) return (BOOL_TEXT[key] || ['NO', 'YES'])[v ? 1 : 0];
@@ -1282,16 +1276,14 @@ function refreshMenu(){
   CHROMA_INT_KEYS.forEach((_, i)=>{
     const has = !!state.chromaOn && state.chromaKeys.length > i;
     state['chromaKey' + (i + 1)] = has;
-    state['rmChromaKey' + (i + 1)] = has && !!state.rmBgOpen;
+    state['rmChromaKey' + (i + 1)] = has;
   });
   state.rotView = VIEW_SBS[state.view];   // IN PORTRAIT applies (applyAppRotation())
   state.cutoutOn = state.cutout > 0;
   state.monoSource = !state.sourceSbs && state.projection === 0;   // 2D TO 3D: flat mono only
   state.depthRows = state.monoSource && state.depth3d > 0;
   // Reduced menu tree (REDUCED_MENU): which branches are open.
-  state.cutoutAccurate = state.cutoutModel === 1;
-  state.rmAiRows = !!state.rmBgOpen && state.cutoutOn;
-  state.rmChromaRows = !!state.rmBgOpen && !!state.chromaOn;
+  state.rmChromaRows = !!state.chromaOn;
   state.rmChromaAdd = state.rmChromaRows && state.chromaKeys.length < CHROMA_MAX_KEYS;
   menuPanes.querySelectorAll('[data-val]').forEach(el=>{
     const k = el.dataset.val;
@@ -7089,8 +7081,6 @@ function removeChromaKey(){
 // stand in for another setting.
 function setCheck(key, v){
   switch (key){
-    case 'rmBgOpen': state.rmBgOpen = v; break;
-    case 'cutoutAccurate': state.cutoutModel = v ? 1 : 0; break;
     case 'chromaOn':
       // Keying back on reuses the picked colours; with none yet, pick one.
       if (v && !state.chromaKeys.length){ startChromaPick(); return; }
