@@ -614,7 +614,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.69';
+const APP_VERSION = '2.70';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1187,7 +1187,7 @@ function buildPanes(){
    eye's half. All instances share state and stay in sync via the delegated
    click handlers on #topbar below (no per-instance listeners needed). ---- */
 function topPaneHTML(){
-  return `<button class="iconbtn btnLoad" title="Load…" aria-label="Load a file">
+  return `<button class="iconbtn btnLoad" title="Photos / videos" aria-label="Open photos or videos">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10,4H4C2.89,4,2.01,4.89,2.01,6L2,18c0,1.1,0.89,2,2,2h16c1.1,0,2,-0.9,2,-2V8c0,-1.1,-0.9,-2,-2,-2h-8L10,4z"/></svg>
   </button>
   <div class="title appTitle" role="button" tabindex="0" aria-label="Open settings list">GYROS v${APP_VERSION}</div>
@@ -4968,8 +4968,14 @@ onMenuDlgClick(quickDlg, item=>{
 
 /* ---- SHORTCUTS -- the top bar's three-dot icon. ADD CHROMA KEY sets the
    first key colour, or adds another while there's room (startChromaPick()). ---- */
+function openLoadDlg(){
+  buildLoadTypeDlg();
+  loadTypeDlg.hidden = false;
+  focusListDlgButton(loadTypeDlg);
+}
 function openShortcutsDlg(){
   openMenuDlg(shortcutsDlg, 'SHORTCUTS', [
+    ['load', 'LOAD…'],
     ['chromaAdd', 'ADD CHROMA KEY'],
     ['chromaRemove', 'REMOVE CHROMA KEY'],
     ['btKeys', 'LEARN BT KEYS'],
@@ -4989,6 +4995,7 @@ onMenuDlgClick(shortcutsDlg, item=>{
       removeChromaKey();
       break;
     case 'btKeys':  openBtKeysDlg(); break;
+    case 'load':    openLoadDlg(); break;
     case 'reduced': toggleReducedMenu(); break;
   }
 });
@@ -5025,11 +5032,9 @@ function loadDemo(){
 }
 
 topbar.addEventListener('click', e=>{
-  if (e.target.closest('.btnLoad')){
-    buildLoadTypeDlg();
-    loadTypeDlg.hidden = false;
-    focusListDlgButton(loadTypeDlg);
-  }
+  // The folder icon goes straight to the photo / video picker (on an
+  // iPhone, the photo library); the other sources are under SHORTCUTS > LOAD.
+  if (e.target.closest('.btnLoad')) videoFile.click();
 });
 loadTypeDlg.addEventListener('click', e=>{
   const row = e.target.closest('[data-loadtype]');
