@@ -10,7 +10,7 @@
 <!-- Static fallback for the instant before the module script runs and sets
      this from APP_VERSION below -- keep this in sync with that constant by
      hand; there's no build step to do it automatically. -->
-<title>GYROS v2.66</title>
+<title>GYROS v2.67</title>
 <style>
   :root{
     --bg:#000000;
@@ -626,7 +626,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.66';
+const APP_VERSION = '2.67';
 document.title = `GYROS v${APP_VERSION}`;
 document.getElementById('hintTitle').textContent = `GYROSCOPE · GYROS v${APP_VERSION}`;
 
@@ -5557,6 +5557,9 @@ function keyMapApply(e){
   // the key is still spoken for, it just does nothing.
   if (!keyMapItemLive(item)) return true;
   if (e.repeat && item.type !== 'step') return true;   // only steps auto-repeat on a held key
+  // A real key on PLAY SPEED: tap steps the speed, hold skips (speedKeyDown()).
+  // MIDI has no release to tell the two apart, so it keeps plain steps.
+  if (item.key === 'playSpeed' && !code.startsWith('MIDI:') && speedKeyDown(e, code, dir)) return true;
   switch (item.type){
     case 'step':
       stepValue(item.key, dir);
@@ -5580,7 +5583,8 @@ function keyMapApply(e){
    digits and symbols work the same). Keys you map yourself win over these
    (keyMapApply() runs first). Steps are the setting's own step times
    `mult`, so a press visibly moves things; holding a key repeats.
-     -  +   PLAY SPEED down / up (0.25 a press)
+     -  +   PLAY SPEED down / up (0.25 a tap); held, skip back / ahead
+            2 s at a time instead (speedKeyDown())
      8  2   POS Y up / down
      6  4   CONTENT ZOOM up / down
      3  1   next / previous item -- gallery photo/video, or DEMO shape
@@ -5611,11 +5615,54 @@ function defaultKeyApply(e){
     return true;
   }
   if (d.key === 'playSpeed' && (state.content !== 'video' || usingImage)) return true;   // video only
+  if (d.key === 'playSpeed' && speedKeyDown(e, e.key, d.dir)) return true;   // tap steps, hold skips
   const spec = SPEC[d.key];
   setStepValue(d.key, state[d.key] + d.dir * spec.step * d.mult);
   renderOsd();
   toast(spec.label + ' ' + fmt(d.key, state[d.key]));
   return true;
+}
+
+/* ---- PLAY SPEED keys (keyboard / BT keyboard; default - + or mapped):
+   a tap steps the speed by its step when the key comes up; holding it
+   SPEED_HOLD_MS skips the video SPEED_SKIP_S back or ahead every
+   SPEED_SKIP_EVERY ms until it's let go, the speed left alone. The
+   gamepad keeps its own buttons. ---- */
+const SPEED_HOLD_MS = 400, SPEED_SKIP_S = 2, SPEED_SKIP_EVERY = 250;
+let speedHold = null;   // { code, dir, timer, active } while a speed key is down
+// True if the key was taken (a video is on: a photo/demo has no speed).
+function speedKeyDown(e, code, dir){
+  if (state.content !== 'video' || usingImage || !video.src) return false;
+  if (e.repeat || speedHold) return true;   // our own timer drives a held key
+  const hold = { code, dir, active: false };
+  hold.timer = setTimeout(function skip(){
+    if (speedHold !== hold) return;
+    hold.active = true;
+    skipVideo(dir * SPEED_SKIP_S);
+    hold.timer = setTimeout(skip, SPEED_SKIP_EVERY);
+  }, SPEED_HOLD_MS);
+  speedHold = hold;
+  return true;
+}
+function speedKeyUp(code){
+  if (!speedHold || (code !== null && speedHold.code !== code)) return;
+  const { dir, active, timer } = speedHold;
+  clearTimeout(timer);
+  speedHold = null;
+  if (active || code === null) return;   // a hold (or a lost key): the skips were it
+  setStepValue('playSpeed', state.playSpeed + dir * SPEC.playSpeed.step);
+  renderOsd();
+  toast('PLAY SPEED ' + fmt('playSpeed', state.playSpeed));
+}
+document.addEventListener('keyup', e=>{ if (speedHold) speedKeyUp(speedHold.code === e.key ? e.key : keyMapCode(e)); });
+window.addEventListener('blur', ()=> speedKeyUp(null));
+// Jump the video by `sec`, wrapping when it loops.
+function skipVideo(sec){
+  if (!(video.duration > 0)) return;
+  let t = video.currentTime + sec;
+  t = video.loop ? ((t % video.duration) + video.duration) % video.duration : THREE.MathUtils.clamp(t, 0, video.duration);
+  video.currentTime = t;
+  toast((sec > 0 ? 'FORWARD ' : 'BACK ') + Math.abs(sec) + ' S');
 }
 
 function keyMapItem(id){
