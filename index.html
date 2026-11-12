@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.74';
+const APP_VERSION = '2.75';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -941,7 +941,7 @@ const MENU = [
     // increments -- see checkBotMenuIdle() near "Bottom-menu auto-hide"
     // below. 0 displays as OFF and disables the auto-hide entirely
     // (fmt() special-cases this key: "OFF" at 0, "<n>S" otherwise).
-    { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1 }
+    { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1, x:1 }
   ]},
   { title:'HEAD TRACKING', items:[
     // How the phone is mounted relative to the head -- see DEFAULTS.
