@@ -614,7 +614,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.70';
+const APP_VERSION = '2.71';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1070,7 +1070,8 @@ const REDUCED_MENU = [
     { type:'step',  key:'chromaSpill', label:'SPILL', min:0, max:100, step:1, when:'video', whenTrue:'rmChromaRows', sub:2 }
   ]},
   { title:'ACTIONS', items:[
-    { type:'check', key:'allControls', label:'ALL CONTROLS' },
+    // The same MENU TYPE row as in GENERAL: BASIC / EXPERT leave the reduced menu.
+    menuItem('menuType'),
     { type:'action', act:'closeMenu', label:'CLOSE', textbtn:true }
   ]}
 ];
@@ -1255,7 +1256,7 @@ function buildBotPanes(){
 
 // What a yes/no row shows, where YES/NO isn't the right word.
 const BOOL_TEXT = {
-  rmBgOpen: ['HIDE', 'SHOW'], allControls: ['HIDE', 'SHOW'],
+  rmBgOpen: ['HIDE', 'SHOW'],
   cutoutAccurate: ['OFF', 'ON'], chromaOn: ['OFF', 'ON']
 };
 function fmt(key, v){
@@ -1270,7 +1271,7 @@ function fmt(key, v){
 
 function refreshMenu(){
   syncMountRows();
-  // The gallery came or went, or REDUCED MENU / ALL CONTROLS was
+  // The gallery came or went, or MENU TYPE was
   // hit: re-render the list for the other menu (buildPanes() calls back here).
   if (menuPanes.dataset.menu !== (reducedMenuOn() ? 'reduced' : 'full')){ buildPanes(); return; }
   // Same reason as in buildOsdItems(): keep the full list's focus on the
@@ -1289,7 +1290,6 @@ function refreshMenu(){
   state.depthRows = state.monoSource && state.depth3d > 0;
   // Reduced menu tree (REDUCED_MENU): which branches are open.
   state.cutoutAccurate = state.cutoutModel === 1;
-  state.allControls = !reducedMenuOn();
   state.rmAiRows = !!state.rmBgOpen && state.cutoutOn;
   state.rmChromaRows = !!state.rmBgOpen && !!state.chromaOn;
   state.rmChromaAdd = state.rmChromaRows && state.chromaKeys.length < CHROMA_MAX_KEYS;
@@ -7090,7 +7090,6 @@ function removeChromaKey(){
 function setCheck(key, v){
   switch (key){
     case 'rmBgOpen': state.rmBgOpen = v; break;
-    case 'allControls': if (v) setMenuType(fullMenuType); return;
     case 'cutoutAccurate': state.cutoutModel = v ? 1 : 0; break;
     case 'chromaOn':
       // Keying back on reuses the picked colours; with none yet, pick one.
@@ -7128,10 +7127,10 @@ function clearChromaKeys(){
   toast('KEY COLOURS REMOVED');
 }
 
-// MENU TYPE. Going in or out of the reduced menu (also ALL CONTROLS and
+// MENU TYPE. Going in or out of the reduced menu (also
 // SHOW / HIDE REDUCED MENU) lands on the GALLERY row in whichever of the
 // list or OSD strip is open; BASIC <-> EXPERT stays on MENU TYPE.
-// fullMenuType: what ALL CONTROLS goes back to.
+// fullMenuType: what SHOW / HIDE REDUCED MENU goes back to.
 let fullMenuType = 1;
 function setMenuType(t){
   const wasReduced = reducedMenuOn();
