@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.80';
+const APP_VERSION = '2.81';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -684,7 +684,10 @@ const DEFAULTS = {
                             // concave/pinch warp, positive a convex/bulge warp — a
                             // pure 2D post-process, camera FOV is unaffected. See
                             // fisheyeAmount()
-  brightness: 100,         // content brightness; shader multiplier is 1 + brightness/100
+  brightness: 100,         // BRIGHTNESS (PICTURE, expert), -100..100: shader multiplier
+                            // is 1 + brightness/100, so the default 100 is 2x
+  contrast: 0,             // CONTRAST, -100..100: 0 = unchanged, -100 flat grey, 100 double
+  saturation: 0,           // SATURATION, -100..100: 0 = unchanged, -100 black & white
   posX: 0, posY: 0, eyeDist: 0,
   contentZoom: 0,          // CONTENT ZOOM: zooms the actual content (photo/video/
                             // model/demo) itself, -90..300 same convention as ZOOM
@@ -972,6 +975,12 @@ const MENU = [
     // How the picture is mapped: a flat screen, or a half sphere around you
     // -- see applyProjection(). Detected on load, can be set by hand.
     { type:'enum',  key:'projection', label:'PROJECTION', options:PROJECTIONS, when:'video' }
+  ]},
+  // Picture adjustments, after chroma key / cut-out -- see the blit shader.
+  { title:'PICTURE', items:[
+    { type:'step', key:'brightness', label:'BRIGHTNESS', min:-100, max:100, step:1, x:1 },
+    { type:'step', key:'contrast',   label:'CONTRAST',   min:-100, max:100, step:1, x:1 },
+    { type:'step', key:'saturation', label:'SATURATION', min:-100, max:100, step:1, x:1 }
   ]},
   { title:'CONTENT', items:[
     { type:'enum',  key:'mode',    label:'MODE', options:MODES },
@@ -1721,6 +1730,8 @@ function initBlit(){
       distort: { value: 0 },
       aspect: { value: 1 },
       brightness: { value: 1 },
+      contrast: { value: 1 },
+      saturation: { value: 1 },
       quadXform: { value: new THREE.Matrix3() },
       flipX: { value: 0 },
       flipY: { value: 0 },
@@ -1749,6 +1760,8 @@ function initBlit(){
       uniform float distort;      // -1..1 signed spherize warp; see fisheyeAmount()
       uniform float aspect;       // eye width/height, keeps the warp circular, not elliptical
       uniform float brightness;   // 1 = unchanged; BRIGHTNESS setting is 1 + state.brightness/100
+      uniform float contrast;     // 1 = unchanged; 1 + state.contrast/100
+      uniform float saturation;   // 1 = unchanged; 1 + state.saturation/100
       uniform mat3 quadXform;     // screen NDC (x,y,1) -> homogeneous (u,v) of the trapezoid quad
       uniform float flipX;
       uniform float flipY;
@@ -1896,6 +1909,14 @@ function initBlit(){
           }
         }
         if (!matte){
+          // SATURATION and CONTRAST (around mid grey). The empty black
+          // around the picture is left black, so lower contrast doesn't
+          // turn the whole screen grey.
+          if (max(col.r, max(col.g, col.b)) > 0.004){
+            float luma = dot(col.rgb, vec3(0.2126, 0.7152, 0.0722));
+            col.rgb = max(mix(vec3(luma), col.rgb, saturation), 0.0);
+            col.rgb = max((col.rgb - 0.5) * contrast + 0.5, 0.0);
+          }
           col.rgb *= brightness;
           // Cut areas show keyFill, after BRIGHTNESS so its shade is exact.
           col.rgb += keyFill * (1.0 - keyM);
@@ -1999,7 +2020,9 @@ function updateQuad(){
   computeQuadInverse(TL, TR, BL, BR, quadMat.uniforms.quadXform.value);
   quadMat.uniforms.flipX.value = state.flipX ? 1 : 0;
   quadMat.uniforms.flipY.value = state.flipY ? 1 : 0;
-  quadMat.uniforms.brightness.value = 1 + DEFAULTS.brightness / 100;   // BRIGHTNESS has no row any more: always full
+  quadMat.uniforms.brightness.value = 1 + state.brightness / 100;
+  quadMat.uniforms.contrast.value = 1 + state.contrast / 100;
+  quadMat.uniforms.saturation.value = 1 + state.saturation / 100;
 }
 
 function applyEyeDistance(){
