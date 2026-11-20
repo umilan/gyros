@@ -255,7 +255,7 @@
 
   .paneInner{padding:var(--pad-lg) 0 96px;max-width:420px;margin:0 auto;cursor:default;}
   .paneTitle{
-    position:relative;
+    position:relative;cursor:pointer;
     text-align:center;color:var(--muted);
     font-size:14px;font-weight:600;letter-spacing:0.32em;
     padding:var(--pad) 0 var(--pad-lg);
@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.83';
+const APP_VERSION = '2.84';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -633,6 +633,10 @@ const DEFAULTS = {
                       // state.sbs and state.mirrorUI (see applyView() below),
                       // which the rest of the app still reads directly.
   mode: 0,           // DEMO | IMAGE / VIDEO | 3D OBJECT | MEDIA FOLDER
+  eyeOffsetY: 0,     // EYE HEIGHT (OPTICS, expert), -100..100: moves the left eye's
+                     // picture up and the right eye's down by half of it each
+                     // (percent of half the eye height, as POS Y), for lenses
+                     // or a phone that sit a little crooked. SBS views only.
   uiEyeDist: 0,      // SBS EYE DIST: shifts each eye's UI layer (topbar, OSD strip,
                      // full settings list) toward (-) or away from (+) the divider,
                      // -100..100 = percent of half the eye width, same convention as
@@ -871,7 +875,7 @@ function syncMountRows(){
 // behaviour and MENU TIMEOUT are left out on purpose: they're not about how
 // the image looks, so they stay one shared value across views.
 const PER_VIEW_KEYS = [
-  'uiEyeDist', 'eyeDist',
+  'uiEyeDist', 'eyeDist', 'eyeOffsetY',
   'posX', 'posY',
   'contentZoom', 'zoom', 'scaleX', 'scaleY',
   'trapezoid',
@@ -966,6 +970,7 @@ const MENU = [
   { title:'OPTICS', items:[
     { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
     { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
+    { type:'step', key:'eyeOffsetY', label:'EYE HEIGHT', min:-100, max:100, step:1, whenTrue:'rotView', x:1 },
     // HOLO3 only -- DEFAULTS.lensFov and fovMeasureStep().
     { type:'step',  key:'lensFov',   label:'FIELD OF VIEW', min:5, max:110, step:1, whenTrue:'holo3' },
     { type:'action', act:'measureFov', label:'MEASURE FOV', textbtn:true, whenTrue:'holo3', x:1 },
@@ -2071,10 +2076,13 @@ function applyEyeProjection(){
   }
   const dx = (state.posX / 100) * (ew / 2);
   const dy = (state.posY / 100) * (eh / 2);
+  // EYE HEIGHT: half up in one eye, half down in the other (stereo views).
+  const dyEye = state.sbs ? (state.eyeOffsetY / 200) * (eh / 2) : 0;
 
   [camL, camR].forEach(cam=>{
     cam.aspect = aspect;
-    if (dx !== 0 || dy !== 0) cam.setViewOffset(ew, eh, -dx, dy, ew, eh);
+    const ey = dy + (cam === camL ? dyEye : -dyEye);
+    if (dx !== 0 || ey !== 0) cam.setViewOffset(ew, eh, -dx, ey, ew, eh);
     else cam.clearViewOffset();
     cam.updateProjectionMatrix();
   });
@@ -7295,20 +7303,31 @@ function clearChromaKeys(){
   toast('KEY COLOURS REMOVED');
 }
 
-// MENU TYPE. Going in or out of the reduced menu (also
-// SHOW / HIDE REDUCED MENU) lands on the GALLERY row in whichever of the
-// list or OSD strip is open; BASIC <-> EXPERT stays on MENU TYPE.
+// MENU TYPE (also SHOW / HIDE REDUCED MENU). The focus stays on the MENU
+// TYPE row in whichever of the list or OSD strip is open, reduced or not.
 // fullMenuType: what SHOW / HIDE REDUCED MENU goes back to.
 let fullMenuType = 1;
+// A tap anywhere on a menu's or dialog's header closes it, as its x does.
+document.addEventListener('click', e=>{
+  const head = e.target.closest('.paneTitle');
+  if (!head || e.target.closest('.paneCloseBtn')) return;
+  const x = head.querySelector('.paneCloseBtn');
+  if (!x) return;
+  e.preventDefault();
+  e.stopPropagation();
+  x.click();
+}, true);
+
 function setMenuType(t){
   const wasReduced = reducedMenuOn();
   state.menuType = t;
   if (t) fullMenuType = t;
   else if (!state.mediaLoaded) toast('REDUCED MENU SHOWS ONCE A PHOTO OR VIDEO IS LOADED', 2500);
   buildOsdItems();
-  if (wasReduced !== reducedMenuOn()) osdFocusIdx = Math.max(0, osdItems.findIndex(i => i.key === 'shape'));
+  // Both menus have MENU TYPE on top: stay on it.
+  if (wasReduced !== reducedMenuOn()) osdFocusIdx = Math.max(0, osdItems.findIndex(i => i.key === 'menuType'));
   refreshMenu();
-  if (uiState === 'list' && wasReduced !== reducedMenuOn()) setMenuFocus(Math.max(0, menuRowIndexForKey('shape')));
+  if (uiState === 'list' && wasReduced !== reducedMenuOn()) setMenuFocus(Math.max(0, menuRowIndexForKey('menuType')));
   saveState();
 }
 
