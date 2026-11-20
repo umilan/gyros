@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.88';
+const APP_VERSION = '2.89';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1022,7 +1022,7 @@ const MENU = [
   ]},
   { title:'GYRO', items:[
     { type:'enum',  key:'trackingAlgo', label:'TRACKING', options:TRACKING_ALGOS, x:1 },
-    { type:'step',  key:'neckDepth', label:'6DOF DEPTH', min:0, max:5, step:0.1, dec:1, x:1 },
+    { type:'step',  key:'neckDepth', label:'6DOF DEPTH', min:0, max:100, step:0.1, dec:1, x:1 },
     { type:'step',  key:'gyroMulX', label:'X MULTIPLY', min:0, max:5, step:0.1, dec:1 },
     { type:'step',  key:'gyroMulY', label:'Y MULTIPLY', min:0, max:5, step:0.1, dec:1 },
     { type:'check', key:'freezeX',  label:'FREEZE X', x:1 },
