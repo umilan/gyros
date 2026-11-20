@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.82';
+const APP_VERSION = '2.83';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -5737,9 +5737,12 @@ function keyMapApply(e){
   // MIDI has no release to tell the two apart, so it keeps plain steps.
   if (item.key === 'playSpeed' && !code.startsWith('MIDI:') && speedKeyDown(e, code, dir)) return true;
   switch (item.type){
-    case 'step':
-      stepValue(item.key, dir);
+    case 'step': {
+      const m = code.startsWith('MIDI:') ? 1 : keyHoldMult(e, code);
+      if (!m) return true;
+      stepValue(item.key, dir * m);
       break;
+    }
     case 'enum':
       stepEnumValue(item, dir);
       break;
@@ -5772,6 +5775,28 @@ const DEFAULT_KEYS = {
   '3': { item:1 },                           '1': { item:-1 },
   '/': { key:'eyeDist', dir:1, mult:5 },     '*': { key:'eyeDist', dir:-1, mult:5 }
 };
+/* ---- Holding to change a value -- one rule for every numeric setting,
+   whatever holds it: the list's and the strip's - / + buttons, the arrow
+   keys (and A / D), and keys / gamepad buttons mapped or by default. A press
+   steps once; held HOLD_START_MS, it repeats every HOLD_EVERY_MS by the
+   setting's single step times holdStepMult(): x10 for the first 5 s of the
+   hold, x25 up to 10 s, x50 after that. (PLAY SPEED keys skip instead --
+   speedKeyDown(). Option rows keep stepping one by one.) ---- */
+const HOLD_START_MS = 400, HOLD_EVERY_MS = 250;
+function holdStepMult(heldMs){ return heldMs < 5000 ? 10 : heldMs < 10000 ? 25 : 50; }
+// A held key: its first press steps once (1), the OS's repeats are thinned
+// to HOLD_EVERY_MS and step by holdStepMult(), the rest are dropped (0).
+const keyHolds = {};
+function keyHoldMult(e, code){
+  const now = performance.now();
+  if (!e.repeat || !keyHolds[code]){ keyHolds[code] = { t0: now, last: now }; return e.repeat ? 0 : 1; }
+  const h = keyHolds[code];
+  if (now - h.t0 < HOLD_START_MS || now - h.last < HOLD_EVERY_MS) return 0;
+  h.last = now;
+  return holdStepMult(now - h.t0);
+}
+document.addEventListener('keyup', e=>{ delete keyHolds[keyMapCode(e)]; delete keyHolds['default:' + e.key]; delete keyHolds['default:' + e.code]; });
+
 function defaultKeyApply(e){
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
   // Numpad digits count by the key itself, NumLock on or off.
@@ -5791,7 +5816,9 @@ function defaultKeyApply(e){
   if (d.key === 'playSpeed' && (state.content !== 'video' || usingImage)) return true;   // video only
   if (d.key === 'playSpeed' && speedKeyDown(e, e.key, d.dir)) return true;   // tap steps, hold skips
   const spec = SPEC[d.key];
-  setStepValue(d.key, state[d.key] + d.dir * spec.step * d.mult);
+  const m = keyHoldMult(e, 'default:' + (/^Numpad[0-9]$/.test(e.code) ? e.code : e.key));
+  if (!m) return true;
+  setStepValue(d.key, state[d.key] + d.dir * spec.step * (m === 1 ? d.mult : m));
   renderOsd();
   toast(spec.label + ' ' + fmt(d.key, state[d.key]));
   return true;
@@ -5970,12 +5997,19 @@ botbar.addEventListener('pointerdown', e=>{
   const myHoldToken = osdHoldToken;
   const item = osdItems[osdFocusIdx];
   if (!item || (item.type !== 'step' && item.type !== 'enum')) return;
-  const minMs = item.type === 'enum' ? 80 : 15;
+  const minMs = 80;   // option rows; numeric ones follow holdStepMult()
+  const t0 = performance.now();
   let ticks = 0;
   const go = () => {
     if (myHoldToken !== osdHoldToken) return;   // stopped/restarted since we scheduled this tick
     lastActivityAt = performance.now();   // holding a stepper counts as activity even with no new pointerdown
     osdHoldFired = true;
+    if (item.type === 'step'){
+      osdChangeItem(dir * holdStepMult(performance.now() - t0));
+      if (!btn.isConnected){ stopOsdHold(); return; }
+      osdHoldAccel = setTimeout(go, HOLD_EVERY_MS);
+      return;
+    }
     osdChangeItem(dir);
     // Stepping VIEW to or from PLAIN rebuilds the strip, which removes the
     // very button being held. Its pointerup then never reaches botbar (a
@@ -5985,7 +6019,7 @@ botbar.addEventListener('pointerdown', e=>{
     ticks++;
     osdHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
   };
-  osdHoldTimer = setTimeout(go, 400);
+  osdHoldTimer = setTimeout(go, HOLD_START_MS);
 });
 ['pointerup','pointercancel','pointerleave'].forEach(ev=>{
   botbar.addEventListener(ev, stopOsdHold);
@@ -6564,15 +6598,21 @@ document.addEventListener('keydown', e=>{
         osdChangeItem(dir);
         const osdItem = osdItems[osdFocusIdx];
         if (osdItem && (osdItem.type === 'step' || osdItem.type === 'enum')){
-          const minMs = osdItem.type === 'enum' ? 80 : 15;
+          const minMs = 80;   // option rows; numeric ones follow holdStepMult()
+          const t0 = performance.now();
           let ticks = 0;
           const go = () => {
             if (myHoldToken !== kbHoldToken) return;   // stopped/restarted since we scheduled this tick
+            if (osdItem.type === 'step'){
+              osdChangeItem(dir * holdStepMult(performance.now() - t0));
+              kbHoldAccel = setTimeout(go, HOLD_EVERY_MS);
+              return;
+            }
             osdChangeItem(dir);
             ticks++;
             kbHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
           };
-          kbHoldTimer = setTimeout(go, 400);
+          kbHoldTimer = setTimeout(go, HOLD_START_MS);
         }
         break;
       }
@@ -6620,21 +6660,28 @@ document.addEventListener('keydown', e=>{
           const act = valBtn.dataset.act;
           const key = valBtn.dataset.key;
           // Direct step call — no click event needed, more reliable inside a timer
-          const doStep = () => {
-            if (act === 'step') stepValue(key, dir);
+          const doStep = (m = 1) => {
+            if (act === 'step') stepValue(key, dir * m);
             else stepEnumValue(ENUM_SPEC[key], dir);
           };
           doStep(); // fire once immediately on press
-          // Exponential hold: same 60 ms → 15 ms curve as the +/- pointer hold
-          const minMs = act === 'enumstep' ? 80 : 5;
+          // Held: numeric rows by holdStepMult(); option rows on the old
+          // 60 ms -> 80 ms curve, so they stay readable.
+          const minMs = 80;
+          const t0 = performance.now();
           let ticks = 0;
           const go = () => {
             if (myHoldToken !== kbHoldToken) return;   // stopped/restarted since we scheduled this tick
+            if (act === 'step'){
+              doStep(holdStepMult(performance.now() - t0));
+              kbHoldAccel = setTimeout(go, HOLD_EVERY_MS);
+              return;
+            }
             doStep();
             ticks++;
             kbHoldAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
           };
-          kbHoldTimer = setTimeout(go, 400);
+          kbHoldTimer = setTimeout(go, HOLD_START_MS);
           break;
         }
         // bool — 2-value cycle, no hold (toggle on each press)
@@ -7330,10 +7377,9 @@ menuPanes.addEventListener('scroll', e=>{
   requestAnimationFrame(()=>{ syncingScroll = false; });
 }, true); // capture: scroll events do not bubble
 
-/* press-and-hold on +/- steppers with exponential acceleration
-   Tick-count based: starts at 60 ms/tick (same initial feel as before),
-   each tick is ~12 % faster than the last, flooring at 15 ms for numeric
-   steps (~66 ticks/s) or 80 ms for enum so shapes stay readable. */
+/* press-and-hold on +/- steppers: numeric rows by the holding rule above
+   defaultKeyApply() (holdStepMult()); option rows start at 60 ms/tick,
+   each ~12 % faster, flooring at 80 ms so shapes stay readable. */
 let holdTimer = null, holdAccel = null;
 // Same token guard as kbHoldToken above, and for the same reason: a pointerup
 // firing in the narrow window between a go() tick starting and it calling
@@ -7355,17 +7401,26 @@ menu.addEventListener('pointerdown', e=>{
   stopHold();   // cancel any stale hold before starting a new one
   holdFired = false;
   const myHoldToken = holdToken;
-  const minMs = el.dataset.act === 'enumstep' ? 80 : 5;
+  const minMs = 80;   // option rows; numeric ones follow holdStepMult()
+  const t0 = performance.now();
   let ticks = 0;
   function go(){
     if (myHoldToken !== holdToken) return;   // stopped/restarted since we scheduled this tick
     holdFired = true;
+    if (el.dataset.act === 'step'){
+      stepValue(el.dataset.key, Number(el.dataset.dir) * holdStepMult(performance.now() - t0));
+      applyUiEyeDist();
+      saveState();
+      if (!el.isConnected){ stopHold(); return; }
+      holdAccel = setTimeout(go, HOLD_EVERY_MS);
+      return;
+    }
     handleAct(el.dataset.act, el);
     if (!el.isConnected){ stopHold(); return; }   // the list was rebuilt under the finger (VIEW to/from PLAIN)
     ticks++;
     holdAccel = setTimeout(go, Math.max(minMs, Math.round(60 * Math.pow(0.80, ticks))));
   }
-  holdTimer = setTimeout(go, 400);
+  holdTimer = setTimeout(go, HOLD_START_MS);
 });
 ['pointerup','pointercancel','pointerleave'].forEach(ev=>menu.addEventListener(ev, stopHold));
 // Safety net for the same missed-release scenario as kbHold's blur/visibility
