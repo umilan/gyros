@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.95';
+const APP_VERSION = '2.96';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -2395,7 +2395,9 @@ function onDeviceOrientation(e){
   }
 }
 
-function recenter(){
+// quiet: the automatic one when head tracking starts -- no toast, so the
+// start-up version toast stays readable.
+function recenter(quiet = false){
   // IN PORTRAIT AUTO: RECENTER is also when the side is read again.
   const side = gravityRotSide();
   if (side !== null && side !== autoRotSide){
@@ -2417,7 +2419,7 @@ function recenter(){
   // and TRAPEZOID are kept as set (RESET TO DEFAULTS clears those); this
   // just re-applies POS X/Y's view offset to the cameras.
   applyEyeProjection();
-  toast('RECENTERED');
+  if (!quiet) toast('RECENTERED');
 }
 
 // quiet: the try on load, which iOS refuses without a tap -- no toast then.
@@ -2458,7 +2460,7 @@ async function enableMotion(quiet = false){
   // V2.8 (6DOF) always reads the relative event, never the absolute one.
   window.addEventListener('deviceorientation', onDeviceOrientationV28);
   window.addEventListener('devicemotion', onDeviceMotion);
-  setTimeout(recenter, 250);
+  setTimeout(() => recenter(true), 250);
   scheduleGyroAvailabilityCheck();   // covers GYRO (BETA)/GYRO (STABLE) already being the saved setting
   return true;
 }
