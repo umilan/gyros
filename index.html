@@ -414,6 +414,8 @@
     opacity:0;transition:opacity 0.55s ease;pointer-events:none;
   }
   .toast.show{opacity:1;}
+  .loadWrap{position:relative;display:inline-flex;}
+  .loadPick{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0;z-index:2;}
   .toastR{display:none;}
   /* SBS EYE DIST moves each eye's toast like the rest of that eye's UI, so
      it sits at the same depth as the panes. */
@@ -641,7 +643,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.24';
+const APP_VERSION = '3.25';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1293,9 +1295,12 @@ function buildPanes(){
    eye's half. All instances share state and stay in sync via the delegated
    click handlers on #topbar below (no per-instance listeners needed). ---- */
 function topPaneHTML(){
-  return `<button class="iconbtn btnLoad" title="Photos / videos" aria-label="Open photos or videos">
+  // The folder icon: a real file input lies (invisibly) over it, so the
+  // tap itself opens the picker -- on iOS a picker opened from code can be
+  // refused. The button underneath is for the keyboard (Enter -> click()).
+  return `<span class="loadWrap"><button class="iconbtn btnLoad" title="Photos / videos" aria-label="Open photos or videos">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10,4H4C2.89,4,2.01,4.89,2.01,6L2,18c0,1.1,0.89,2,2,2h16c1.1,0,2,-0.9,2,-2V8c0,-1.1,-0.9,-2,-2,-2h-8L10,4z"/></svg>
-  </button>
+  </button><input type="file" class="loadPick" accept="image/*,video/*" multiple aria-label="Open photos or videos"></span>
   <div class="title appTitle" role="button" tabindex="0" aria-label="Open settings list">GYROS v${APP_VERSION}</div>
   <button class="iconbtn btnShortcuts" title="Shortcuts…" aria-label="Open the shortcuts menu">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12,8c1.1,0,2,-0.9,2,-2s-0.9,-2,-2,-2s-2,0.9,-2,2s0.9,2,2,2z M12,10c-1.1,0,-2,0.9,-2,2s0.9,2,2,2s2,-0.9,2,-2s-0.9,-2,-2,-2z M12,16c-1.1,0,-2,0.9,-2,2s0.9,2,2,2s2,-0.9,2,-2s-0.9,-2,-2,-2z"/></svg>
@@ -1303,6 +1308,14 @@ function topPaneHTML(){
 }
 
 const topPanesEl = document.getElementById('topPanes');
+// A pick made straight on the folder icon's own input (topPaneHTML()).
+topPanesEl.addEventListener('change', e=>{
+  const inp = e.target.closest('.loadPick');
+  if (!inp) return;
+  const list = inp.files;
+  if (list && list.length){ toast(list.length > 1 ? `OPENING ${list.length} FILES…` : 'OPENING…', 3000); openMediaFiles([...list]); }
+  inp.value = '';
+});
 function buildTopPanes(){
   const count = state.sbs ? 2 : 1;
   if (topPanesEl.children.length === count) return;
@@ -4074,6 +4087,14 @@ function classifyMediaFile(file){
    so HEIC opens on a PC too. heicToUrl() -> { url, sbs }. ---- */
 const LIBHEIF_URL = 'https://cdn.jsdelivr.net/npm/libheif-js@1.19.8/libheif-wasm/libheif-bundle.mjs';
 let libheifReady = null;
+// An Apple spatial photo: a HEIC whose header groups two pictures as a
+// stereo pair ('ster'). Read from the start of the file (the header).
+async function isSpatialHeic(file){
+  const b = new Uint8Array(await file.slice(0, 256 * 1024).arrayBuffer());
+  for (let i = 0; i + 4 <= b.length; i++)
+    if (b[i] === 0x73 && b[i + 1] === 0x74 && b[i + 2] === 0x65 && b[i + 3] === 0x72) return true;   // ster
+  return false;
+}
 function isHeicFile(file){
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   return ext === 'heic' || ext === 'heif' || file.type === 'image/heic' || file.type === 'image/heif';
@@ -4908,7 +4929,10 @@ async function loadSBSImage(file){
   let filenameHint = /sbs/i.test(label), spatial = false;
   cancelProjectionProbe();
   // HEIC: both eyes of an Apple spatial photo, side by side (heicToUrl()).
-  if (isHeicFile(file)){
+  // A plain HEIC is left to the browser (Safari shows it; a full-size one
+  // through libheif can run the tab out of memory on a phone) -- libheif
+  // only if the browser can't (heicFallback below).
+  if (isHeicFile(file) && await isSpatialHeic(file)){
     toast('READING HEIC…', 8000);
     try{
       const r = await heicToUrl(file);
@@ -4929,9 +4953,14 @@ async function loadSBSImage(file){
     refreshMenu();
     toast(label.toUpperCase().slice(0, 28));
     URL.revokeObjectURL(url);
-  }, () => {
-    toast('COULD NOT LOAD IMAGE');
+  }, async () => {
     URL.revokeObjectURL(url);
+    // A HEIC the browser can't show (Chrome, Firefox): through libheif.
+    if (isHeicFile(file) && !spatial && !file.__heicTried){
+      file.__heicTried = true;
+      try{ const r = await heicToUrl(file); spatial = r.sbs; filenameHint = filenameHint || r.sbs; url = r.url; return applyImageTexture(url, ()=>{ state.mode = 1; state.content = 'video'; applyAll(); refreshMenu(); }, ()=> toast('COULD NOT LOAD IMAGE')); }catch(e){}
+    }
+    toast('COULD NOT LOAD IMAGE');
   });
 }
 
@@ -5301,7 +5330,7 @@ async function showGalleryImage(item){
   refreshMenu();
   cancelProjectionProbe();
   // HEIC: read once (both eyes of a spatial photo, side by side).
-  if (item.file && isHeicFile(item.file) && !item.heicRead){
+  if (item.file && isHeicFile(item.file) && !item.heicRead && await isSpatialHeic(item.file)){
     toast('READING HEIC…', 8000);
     try{
       const r = await heicToUrl(item.file);
@@ -5320,7 +5349,18 @@ async function showGalleryImage(item){
     setSourceSbs(item.isSbs);
     if (item.projection === undefined) item.projection = projectionFromName(item.name) ?? imageProjection(img, w, h, item.isSbs);
     setProjection(item.projection);
-  }, () => {
+  }, async () => {
+    // A plain HEIC the browser can't show (Chrome): through libheif, once.
+    if (item.file && isHeicFile(item.file) && !item.heicRead){
+      item.heicRead = true;
+      try{
+        const r = await heicToUrl(item.file);
+        item.url = r.url;
+        if (r.sbs){ item.isSbs = true; item.sbsChecked = true; item.projection = 0; }
+        if (galleryItems[galleryIdx] === item) showGalleryImage(item);
+        return;
+      }catch(e){}
+    }
     toast('COULD NOT LOAD ' + item.name.toUpperCase().slice(0, 24));
   });
 }
