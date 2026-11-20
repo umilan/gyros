@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.94';
+const APP_VERSION = '2.95';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -7390,8 +7390,9 @@ let fullMenuType = 1;
    imgCalMap(), a radial bulge / pinch then a perspective warp, screen ->
    as seen, in eye units (x right, y up, half the eye height = 1), and the
    blit shader shows at every screen point what belongs where that point is
-   seen. The correction already set is off while measuring. OK: tap, Enter,
-   Space; back a step: Backspace; Esc cancels. Marks in the left eye only.
+   seen. The correction already set is off while measuring. Next step: D,
+   tap, Enter, Space; back a step: A, Backspace; the dot: arrows, W / S up
+   and down; Esc cancels. Marks in the left eye only.
    Remembered per VIEW; REMOVE IMAGE CORRECTION clears it. ---- */
 const IMGCAL_SIZES = [0.25, 0.55];   // half-sides of the two squares, in half eye heights
 const IMGCAL_CORNERS = [[-1, 1], [1, 1], [1, -1], [-1, -1]];
@@ -7611,20 +7612,22 @@ function drawImgCal(){
   g.textAlign = 'center';
   g.shadowColor = '#000'; g.shadowBlur = 4;
   const lines = n < 0
-    ? ['STEP 1 / 9', 'PUT THE CROSS ON A SMALL OBJECT FAR AWAY IN THE ROOM', 'PRESS OK']
+    ? ['STEP 1 / 9', 'PUT THE CROSS ON A SMALL OBJECT FAR AWAY IN THE ROOM', 'PRESS D']
     : [`STEP ${n + 2} / 9 · ${n < 4 ? 'SMALL' : 'LARGE'} SQUARE`, 'POINT THE CROSS AT THE YELLOW NODE',
-       'MOVE THE WHITE DOT ONTO YOUR OBJECT (◀ ▶ ▲ ▼) · PRESS OK'];
+       'MOVE THE WHITE DOT ONTO YOUR OBJECT (◀ ▶ ▲ ▼) · PRESS D'];
   lines.forEach((t, i) => g.fillText(t, ew / 2, 24 + i * 18));
-  g.fillText('OK: TAP / ENTER · BACK: BACKSPACE · CANCEL: ESC', ew / 2, eh - 16);
+  g.fillText('NEXT: D / ENTER / TAP · BACK: A · CANCEL: ESC', ew / 2, eh - 16);
   g.shadowBlur = 0;
 }
 document.addEventListener('keydown', e=>{
   if (!imgCal) return;
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  const mv = { ArrowLeft: [-1, 0], a: [-1, 0], ArrowRight: [1, 0], d: [1, 0], ArrowUp: [0, 1], w: [0, 1], ArrowDown: [0, -1], s: [0, -1] }[k];
+  // D next step, A back a step (a remote's WASD); the arrows (and W / S
+  // up / down) move the dot.
+  const mv = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], w: [0, 1], ArrowDown: [0, -1], s: [0, -1] }[k];
   if (mv){ if (imgCal.ref){ imgCal.nudge[0] += mv[0] * IMGCAL_NUDGE; imgCal.nudge[1] += mv[1] * IMGCAL_NUDGE; } }
-  else if (k === 'Enter' || k === ' '){ if (!e.repeat) imgCalConfirm(); }
-  else if (k === 'Backspace'){ if (!e.repeat) imgCalBack(); }
+  else if (k === 'd' || k === 'Enter' || k === ' '){ if (!e.repeat) imgCalConfirm(); }
+  else if (k === 'a' || k === 'Backspace'){ if (!e.repeat) imgCalBack(); }
   else if (k === 'Escape') endImgCal();
   else return;
   e.preventDefault();
