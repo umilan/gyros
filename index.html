@@ -414,6 +414,18 @@
     opacity:0;transition:opacity 0.55s ease;pointer-events:none;
   }
   .toast.show{opacity:1;}
+  /* NAVIGATE: the direction HUD, one copy per eye like the toasts. */
+  #navHud{position:fixed;inset:0;z-index:55;pointer-events:none;}
+  .navPane{position:absolute;top:56px;left:50%;transform:translateX(-50%);width:min(320px,44%);
+    display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:rgba(0,0,0,0.55);color:#fff;}
+  .navPane svg{flex:0 0 auto;width:48px;height:48px;transition:transform .25s linear;}
+  .navTxt{min-width:0;}
+  .navMain{font-size:15px;font-weight:700;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .navDist{font-size:22px;font-weight:700;color:var(--accent);letter-spacing:.04em;}
+  .navSub{font-size:10px;letter-spacing:.16em;color:var(--muted);}
+  .navPane.R{display:none;}
+  body[data-sbs="1"] .navPane.L{left:25%;transform:translateX(-50%) translateX(calc(-1 * var(--ui-eye-shift)));}
+  body[data-sbs="1"] .navPane.R{display:flex;left:75%;transform:translateX(-50%) translateX(var(--ui-eye-shift));}
   .toastR{display:none;}
   /* SBS EYE DIST moves each eye's toast like the rest of that eye's UI, so
      it sits at the same depth as the panes. */
@@ -550,6 +562,22 @@
 <!-- Shortcuts menu: the top bar's three-dot icon; see openShortcutsDlg(). -->
 <div class="overlay dialog" id="shortcutsDlg" hidden></div>
 
+<div class="overlay dialog" id="navDlg" hidden>
+  <div class="dlgPane">
+    <div class="paneInner">
+      <div class="paneTitle">NAVIGATE<button class="paneCloseBtn" data-dlgclose tabindex="-1" aria-label="Close">&#215;</button></div>
+      <div class="hr"></div>
+      <p class="helpText">An address or place, a Google Maps or Apple Maps link, or "lat, lng". Walking and cycling directions from OpenStreetMap, shown over the picture. Never use while driving; keep an eye on traffic.</p>
+      <div class="section">WHERE TO</div>
+      <input class="dlgInput" type="text" id="navInput" placeholder="Address, place or Maps link" autocomplete="off" spellcheck="false">
+      <button class="textbtn" id="navPaste">PASTE LINK</button>
+      <button class="textbtn" id="navWalk">WALK THERE</button>
+      <button class="textbtn" id="navBike">CYCLE THERE</button>
+      <button class="textbtn" data-dlgclose>CLOSE</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay dialog" id="urlDlg" hidden>
   <div class="dlgPane">
     <div class="paneInner">
@@ -620,7 +648,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.05';
+const APP_VERSION = '3.06';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -5405,7 +5433,8 @@ function openShortcutsDlg(){
     ['load', 'LOAD…'],
     ['chromaAdd', 'ADD CHROMA KEY'],
     ['chromaRemove', 'REMOVE CHROMA KEY'],
-    ['btKeys', 'LEARN BT KEYS']
+    ['btKeys', 'LEARN BT KEYS'],
+    ['nav', nav ? 'STOP NAVIGATION' : 'NAVIGATE…']
   ]);
 }
 onMenuDlgClick(shortcutsDlg, item=>{
@@ -5422,6 +5451,7 @@ onMenuDlgClick(shortcutsDlg, item=>{
       break;
     case 'btKeys':  openBtKeysDlg(); break;
     case 'load':    openLoadDlg(); break;
+    case 'nav':     if (nav) stopNav(); else openNavDlg(); break;
   }
 });
 
@@ -7655,6 +7685,270 @@ function clearChromaKeys(){
 // TYPE row in whichever of the list or OSD strip is open, reduced or not.
 // fullMenuType: what SHOW / HIDE REDUCED MENU goes back to.
 let fullMenuType = 1;
+/* =========================================================================
+   NAVIGATE (SHORTCUTS): walking / cycling directions over the picture.
+   The destination is an address or place (looked up with OpenStreetMap's
+   Nominatim), a Google Maps or Apple Maps link (its coordinates, or the
+   place it names), or "lat, lng". The route comes from OpenStreetMap's
+   public OSRM servers (routing.openstreetmap.de, foot and bike). Then:
+   the phone's GPS (watchPosition) finds where you are on it, the compass
+   (or, without one, the GPS's direction of travel) which way you face,
+   and the HUD in each eye shows an arrow toward the next turn, what to do
+   there and how far it is, plus what's left. Off the route for a while ->
+   a new route from where you are. Within NAV_ARRIVE of the end: arrived.
+   Map apps keep their own directions to themselves, so this is GYROS's
+   own routing, not theirs.
+   ========================================================================= */
+const NAV_ROUTERS = {
+  foot: 'https://routing.openstreetmap.de/routed-foot/route/v1/driving/',
+  bike: 'https://routing.openstreetmap.de/routed-bike/route/v1/driving/'
+};
+const NAV_GEOCODE = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=';
+const NAV_SPEED = { foot: 1.35, bike: 4.2 };     // m/s, for the time left
+const NAV_STEP_DONE = { foot: 12, bike: 20 };    // m from a turn that counts as at it
+const NAV_OFF_ROUTE = { foot: 35, bike: 45 };    // m off the line before re-routing
+const NAV_ARRIVE = 15;                           // m
+let nav = null;   // { mode, dest:{lat,lng,name}, route, idx, pos, heading, gpsHeading, watch, offCount, lastRoute, arrivedAt }
+const navDlg = document.getElementById('navDlg');
+const navInput = document.getElementById('navInput');
+
+function openNavDlg(){
+  if (uiState === 'list') closeList();
+  navDlg.hidden = false;
+  navInput.focus();
+}
+navDlg.addEventListener('click', e=>{ if (e.target.closest('[data-dlgclose]')) navDlg.hidden = true; });
+document.getElementById('navWalk').addEventListener('click', ()=> startNav('foot'));
+document.getElementById('navBike').addEventListener('click', ()=> startNav('bike'));
+document.getElementById('navPaste').addEventListener('click', async ()=>{
+  const t = await readClipboardText();
+  if (t) navInput.value = t.trim();
+  else toast('PASTE THE LINK INTO THE FIELD', 2200);
+  navInput.focus();
+});
+// Typing in the field: its keys are the field's, not shortcuts. Enter walks.
+window.addEventListener('keydown', e=>{
+  if (navDlg.hidden) return;
+  if (e.key === 'Escape'){ navDlg.hidden = true; e.preventDefault(); e.stopImmediatePropagation(); return; }
+  if (document.activeElement !== navInput) return;
+  if (e.key === 'Enter'){ e.preventDefault(); startNav('foot'); }
+  e.stopImmediatePropagation();
+}, true);
+
+// What a link or text points at: { lat, lng } or { query } (or null).
+function navParseDest(text){
+  const t = (text || '').trim();
+  if (!t) return null;
+  const num = '(-?\\d{1,3}(?:\\.\\d+)?)';
+  const pair = new RegExp('^' + num + '\\s*,\\s*' + num + '$');
+  const asPair = v=>{
+    const m = pair.exec((v || '').trim());
+    if (!m) return null;
+    const lat = +m[1], lng = +m[2];
+    return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+  };
+  const p0 = asPair(t);
+  if (p0) return p0;
+  const urlText = (t.match(/https?:\/\/\S+/) || [])[0];
+  if (!urlText) return { query: t };
+  let u;
+  try{ u = new URL(urlText); }catch(e){ return { query: t }; }
+  const full = decodeURIComponent(u.href);
+  // Google: the place's own pin (!3d..!4d..) beats the map's centre (@lat,lng).
+  let m = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(full);
+  if (m) return { lat: +m[1], lng: +m[2] };
+  // Coordinates in any of the usual parameters first, then a place name.
+  const keys = ['destination', 'daddr', 'q', 'query', 'll', 'coordinate', 'address', 'sll', 'center'];
+  for (const k of keys){
+    const pp = asPair((u.searchParams.get(k) || '').replace(/^loc:/, ''));
+    if (pp) return pp;
+  }
+  for (const k of ['destination', 'daddr', 'q', 'query', 'address']){
+    const v = u.searchParams.get(k);
+    if (v) return { query: v.replace(/\+/g, ' ') };
+  }
+  m = /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(full);
+  if (m) return { lat: +m[1], lng: +m[2] };
+  m = /\/place\/([^/@]+)/.exec(u.pathname);
+  if (m) return { query: decodeURIComponent(m[1]).replace(/\+/g, ' ') };
+  // Short share links (maps.app.goo.gl, maps.apple...) only say where they
+  // go when opened, which a browser won't let a page do -- unless the page
+  // proxy (IMAGE / VIDEO URL dialog) is set.
+  if (/goo\.gl|maps\.app|maps\.apple|apple\.co/.test(u.hostname)) return { short: u.href };
+  return { query: t };
+}
+async function navResolveDest(text){
+  let d = navParseDest(text);
+  if (!d) throw new Error('TYPE AN ADDRESS OR PASTE A MAPS LINK');
+  if (d.short){
+    const proxy = (urlProxyInput.value || '').trim();
+    if (!proxy) throw new Error('SHORT MAPS LINK: OPEN IT IN THE BROWSER AND COPY THE FULL LINK, OR TYPE THE ADDRESS');
+    const html = await (await fetch(proxy + encodeURIComponent(d.short))).text();
+    const m = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(html) || /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(html)
+      || /[?&](?:ll|q|coordinate)=(-?\d+\.\d+)(?:,|%2C)(-?\d+\.\d+)/.exec(html);
+    if (!m) throw new Error('COULD NOT READ THE SHORT LINK -- TYPE THE ADDRESS');
+    d = { lat: +m[1], lng: +m[2] };
+  }
+  if (d.query){
+    const r = await fetch(NAV_GEOCODE + encodeURIComponent(d.query), { headers: { 'Accept-Language': navigator.language || 'en' } });
+    const j = await r.json();
+    if (!j.length) throw new Error('PLACE NOT FOUND');
+    return { lat: +j[0].lat, lng: +j[0].lon, name: (j[0].name || j[0].display_name || d.query).split(',')[0] };
+  }
+  return { lat: d.lat, lng: d.lng, name: `${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}` };
+}
+function navHere(){
+  return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(
+    p => res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }),
+    e => rej(new Error(e.code === 1 ? 'LOCATION ACCESS DENIED' : 'NO GPS POSITION')),
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }));
+}
+async function navRoute(from, to, mode){
+  const url = NAV_ROUTERS[mode] + `${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=true`;
+  const j = await (await fetch(url)).json();
+  if (j.code !== 'Ok' || !j.routes || !j.routes.length) throw new Error('NO ROUTE FOUND');
+  const r = j.routes[0];
+  const steps = r.legs.flatMap(l => l.steps).map(st => ({
+    lat: st.maneuver.location[1], lng: st.maneuver.location[0],
+    type: st.maneuver.type, modifier: st.maneuver.modifier || '', exit: st.maneuver.exit,
+    name: st.name || '', dist: st.distance
+  }));
+  return { line: r.geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] })), steps, dist: r.distance };
+}
+async function startNav(mode){
+  if (!navigator.geolocation){ toast('NO GPS IN THIS BROWSER', 2500); return; }
+  const text = navInput.value;
+  navDlg.hidden = true;
+  toast('FINDING THE WAY…', 10000);
+  try{
+    const [dest, here] = await Promise.all([navResolveDest(text), navHere()]);
+    const route = await navRoute(here, dest, mode);
+    stopNav(true);
+    nav = { mode, dest, route, idx: 1, pos: here, heading: null, gpsHeading: null, watch: null,
+            offCount: 0, lastRoute: performance.now(), arrivedAt: 0 };
+    nav.watch = navigator.geolocation.watchPosition(navOnPos, ()=>{}, { enableHighAccuracy: true, maximumAge: 1000 });
+    navHud.hidden = false;
+    navUpdate();
+    toast(`TO ${dest.name.toUpperCase().slice(0, 24)} · ${navKm(route.dist)} · NOT WHILE DRIVING`, 4000);
+  }catch(e){
+    toast(String(e.message || 'NAVIGATION FAILED').toUpperCase(), 3500);
+  }
+}
+function stopNav(quiet){
+  if (!nav) return;
+  if (nav.watch !== null) navigator.geolocation.clearWatch(nav.watch);
+  nav = null;
+  navHud.hidden = true;
+  if (!quiet) toast('NAVIGATION STOPPED');
+}
+// Facing: the compass where there is one (iOS gives it as webkitCompassHeading,
+// Android as an absolute alpha); else the GPS's direction of travel.
+window.addEventListener('deviceorientation', e=>{
+  if (nav && typeof e.webkitCompassHeading === 'number') nav.heading = e.webkitCompassHeading;
+});
+window.addEventListener('deviceorientationabsolute', e=>{
+  if (nav && e.alpha !== null && typeof e.webkitCompassHeading !== 'number') nav.heading = (360 - e.alpha) % 360;
+});
+function navOnPos(p){
+  if (!nav) return;
+  nav.pos = { lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy };
+  if (p.coords.heading !== null && !isNaN(p.coords.heading) && p.coords.speed > 0.6) nav.gpsHeading = p.coords.heading;
+  const n = nav, steps = n.route.steps;
+  // At (or past) the next turn: on to the one after.
+  while (n.idx < steps.length - 1){
+    const dHere = navDist(n.pos, steps[n.idx]);
+    const dNext = navDist(n.pos, steps[n.idx + 1]);
+    // There, or already past it (nearer the turn after than that turn is
+    // to this one, and not right at this one).
+    const seg = navDist(steps[n.idx], steps[n.idx + 1]);
+    if (dHere < NAV_STEP_DONE[n.mode] || (dNext < seg - 10 && dHere > 20)) n.idx++;
+    else break;
+  }
+  if (navDist(n.pos, n.dest) < NAV_ARRIVE && !n.arrivedAt){
+    n.arrivedAt = performance.now();
+    setTimeout(()=>{ if (nav === n){ stopNav(true); toast('YOU HAVE ARRIVED', 4000); } }, 8000);
+  }
+  // Off the line for two fixes in a row (and not just re-routed): a new route.
+  const off = navOffRoute(n.pos, n.route.line);
+  n.offCount = off > NAV_OFF_ROUTE[n.mode] + Math.min(30, n.pos.acc || 0) ? n.offCount + 1 : 0;
+  if (n.offCount >= 2 && performance.now() - n.lastRoute > 15000){
+    n.lastRoute = performance.now();
+    n.offCount = 0;
+    navRoute(n.pos, n.dest, n.mode).then(r=>{ if (nav === n){ n.route = r; n.idx = 1; toast('NEW ROUTE', 1500); navUpdate(); } }).catch(()=>{});
+  }
+  navUpdate();
+}
+// Metres between two { lat, lng }.
+function navDist(a, b){
+  const R = 6371000, t = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * t, dLng = (b.lng - a.lng) * t;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * t) * Math.cos(b.lat * t) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+// Compass bearing from a to b, degrees.
+function navBearing(a, b){
+  const t = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * t) * Math.cos(b.lat * t);
+  const x = Math.cos(a.lat * t) * Math.sin(b.lat * t) - Math.sin(a.lat * t) * Math.cos(b.lat * t) * Math.cos((b.lng - a.lng) * t);
+  return (Math.atan2(y, x) / t + 360) % 360;
+}
+// Metres from p to the nearest point of the route's line.
+function navOffRoute(p, line){
+  const kx = 111320 * Math.cos(p.lat * Math.PI / 180), ky = 110540;
+  let best = Infinity;
+  for (let i = 0; i < line.length - 1; i++){
+    const ax = (line[i].lng - p.lng) * kx, ay = (line[i].lat - p.lat) * ky;
+    const bx = (line[i + 1].lng - p.lng) * kx, by = (line[i + 1].lat - p.lat) * ky;
+    const vx = bx - ax, vy = by - ay;
+    const tt = Math.max(0, Math.min(1, -(ax * vx + ay * vy) / (vx * vx + vy * vy || 1)));
+    best = Math.min(best, Math.hypot(ax + vx * tt, ay + vy * tt));
+  }
+  return best;
+}
+function navKm(m){ return m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + ' KM' : Math.round(m / 10) * 10 + ' M'; }
+function navInstruction(st){
+  const mod = (st.modifier || '').toUpperCase();
+  const onto = st.name ? ' · ' + st.name.toUpperCase() : '';
+  switch (st.type){
+    case 'arrive': return 'ARRIVE';
+    case 'depart': return 'HEAD OFF' + onto;
+    case 'roundabout': case 'rotary': case 'roundabout turn': return `ROUNDABOUT · EXIT ${st.exit || 1}` + onto;
+    case 'continue': case 'new name': return (mod.includes('LEFT') || mod.includes('RIGHT') ? 'KEEP ' + mod : 'STRAIGHT ON') + onto;
+    case 'fork': return 'KEEP ' + (mod.includes('LEFT') ? 'LEFT' : 'RIGHT') + onto;
+    case 'end of road': return 'TURN ' + (mod || 'AHEAD') + onto;
+    default: return (mod === 'UTURN' ? 'TURN AROUND' : mod === 'STRAIGHT' ? 'STRAIGHT ON' : 'TURN ' + (mod || 'AHEAD')) + onto;
+  }
+}
+const navHud = document.createElement('div');
+navHud.id = 'navHud';
+navHud.hidden = true;
+navHud.innerHTML = ['L', 'R'].map(side => `<div class="navPane ${side}">
+  <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#f6c41c" stroke="#000" stroke-width="2" d="M24 3 L40 40 L24 31 L8 40 Z"/></svg>
+  <div class="navTxt"><div class="navDist"></div><div class="navMain"></div><div class="navSub"></div></div></div>`).join('');
+document.body.appendChild(navHud);
+function navUpdate(){
+  if (!nav) return;
+  const n = nav, st = n.route.steps[Math.min(n.idx, n.route.steps.length - 1)];
+  const toTurn = navDist(n.pos, st);
+  // Each step's distance runs from its turn to the next one.
+  const rest = toTurn + n.route.steps.slice(n.idx).reduce((a, s) => a + s.dist, 0);
+  const facing = n.heading !== null ? n.heading : n.gpsHeading;
+  // The arrow points at the next turn, from the way you face; with no
+  // facing known yet, as a compass would (up = north).
+  const rot = navBearing(n.pos, st) - (facing === null ? 0 : facing);
+  const mins = Math.max(1, Math.round(rest / NAV_SPEED[n.mode] / 60));
+  const main = n.arrivedAt ? 'YOU HAVE ARRIVED' : navInstruction(st);
+  const dist = n.arrivedAt ? '' : 'IN ' + navKm(toTurn);
+  const sub = `${navKm(rest)} · ${mins} MIN LEFT` + (facing === null ? ' · NO COMPASS: UP = NORTH' : '');
+  navHud.querySelectorAll('.navPane').forEach(pane=>{
+    pane.querySelector('svg').style.transform = `rotate(${Math.round(rot)}deg)`;
+    pane.querySelector('.navMain').textContent = main;
+    pane.querySelector('.navDist').textContent = dist;
+    pane.querySelector('.navSub').textContent = sub;
+  });
+}
+setInterval(()=>{ if (nav) navUpdate(); }, 250);   // the compass turns between GPS fixes
+
 /* ---- CALIBRATE IMAGE, for a see-through visor (HOLO3). Each eye in turn
    (marks only in the eye being measured):
      1. a cross in the middle of that eye: put it on a small object far away
