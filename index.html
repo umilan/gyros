@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.86';
+const APP_VERSION = '2.87';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1748,6 +1748,7 @@ function initBlit(){
       contrast: { value: 1 },
       saturation: { value: 1 },
       quadXform: { value: new THREE.Matrix3() },
+      rtMargin: { value: RT_MARGIN },
       calOn: { value: 0 },
       calK: { value: 0 },
       calH: { value: new THREE.Matrix3() },
@@ -1781,6 +1782,7 @@ function initBlit(){
       uniform float contrast;     // 1 = unchanged; 1 + state.contrast/100
       uniform float saturation;   // 1 = unchanged; 1 + state.saturation/100
       uniform mat3 quadXform;     // screen NDC (x,y,1) -> homogeneous (u,v) of the trapezoid quad
+      uniform float rtMargin;     // RT_MARGIN: the render target reaches this far past the frame
       uniform float calOn;        // IMAGE CORRECTION (CALIBRATE IMAGE): imgCalMap() in GLSL
       uniform float calK;
       uniform mat3 calH;
@@ -1862,9 +1864,9 @@ function initBlit(){
         }
         vec3 pqr = quadXform * vec3(vp, 1.0);
         vec2 uv = pqr.xy / pqr.z;
-        // Outside the 4 corners (or their zoomed/scaled footprint spills
-        // past the eye viewport) -- nothing to draw there.
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
+        // Past even the margin rendered around the frame (RT_MARGIN) --
+        // nothing to draw there.
+        if (uv.x < -rtMargin || uv.x > 1.0 + rtMargin || uv.y < -rtMargin || uv.y > 1.0 + rtMargin) discard;
 
         float texU = mix(uv.x, 1.0 - uv.x, flipX);
         float texV = mix(1.0 - uv.y, uv.y, flipY);
@@ -1888,6 +1890,9 @@ function initBlit(){
           c *= newR / r;
         }
         uv = c / vec2(aspect, 1.0) + 0.5;
+        // The frame's 0..1 is the middle of the bigger render target.
+        vec2 nuv = uv;
+        uv = (uv + rtMargin) / (1.0 + 2.0 * rtMargin);
         vec4 col = texture2D(map, uv);
         bool matte = chromaOn > 0.5 && chromaMatte > 0.5;
         float keyM = 1.0;   // 0 where chroma key cuts, for keyFill below
@@ -1956,15 +1961,15 @@ function initBlit(){
         // they sit at a known place in the cameras' view whatever the
         // trapezoid, zoom or flip: a cross on the centre and a line to one side.
         if (marks > 0.0){
-          vec2 d = abs(uv - 0.5);
+          vec2 d = abs(nuv - 0.5);
           float lw = 0.004;
           bool cross = d.x < lw || (d.y < lw * aspect && d.x < 0.08);
-          bool side = abs(uv.x - 0.5 - marks) < lw && d.y < 0.3;
+          bool side = abs(nuv.x - 0.5 - marks) < lw && d.y < 0.3;
           if (cross || side) col = vec4(0.965, 0.769, 0.110, 1.0);
         }
         // CALIBRATE HEAD's crosshair, same place and colour.
         if (calCross > 0.0){
-          vec2 d = abs(uv - 0.5);
+          vec2 d = abs(nuv - 0.5);
           float lw = 0.004;
           if ((d.x < lw && d.y < 0.05 * aspect) || (d.y < lw * aspect && d.x < 0.05)) col = vec4(0.965, 0.769, 0.110, 1.0);
         }
@@ -2112,8 +2117,8 @@ function applyEyeProjection(){
   [camL, camR].forEach(cam=>{
     cam.aspect = aspect;
     const ey = dy + (cam === camL ? dyEye : -dyEye);
-    if (dx !== 0 || ey !== 0) cam.setViewOffset(ew, eh, -dx, ey, ew, eh);
-    else cam.clearViewOffset();
+    // RT_MARGIN more of the view on every side (see onResize()).
+    cam.setViewOffset(ew, eh, -dx - RT_MARGIN * ew, ey - RT_MARGIN * eh, ew * (1 + 2 * RT_MARGIN), eh * (1 + 2 * RT_MARGIN));
     cam.updateProjectionMatrix();
   });
 
@@ -2218,6 +2223,15 @@ function applyUiEyeDist(){
   document.body.style.setProperty('--ui-eye-shift', shiftPx + 'px');
 }
 
+/* Each eye is rendered RT_MARGIN of its size wider on every side than the
+   frame it nominally fills, so whatever TRAPEZOID, ZOOM, SCALE, POS or the
+   IMAGE CORRECTION squeeze or push the frame inside the eye, the content
+   around it is still there to show -- it runs on to the eye's edge instead
+   of being cut off where the frame (or the cameras' view) ends. The cameras
+   see that much more (applyEyeProjection()), the targets are that much
+   bigger, and the blit shader maps the frame's 0..1 into the middle part
+   (rtMargin). */
+const RT_MARGIN = 0.2;
 function onResize(){
   // The page turning (or un-turning) changes the screen angle the tracking
   // is built on: start it afresh rather than jump. Not before motion is up.
@@ -2226,8 +2240,12 @@ function onResize(){
   const dpr = renderer.getPixelRatio();
   renderer.setSize(w, h, false);
 
-  const rw = Math.max(2, Math.floor(ew * dpr));
-  const rh = Math.max(2, Math.floor(eh * dpr));
+  const grow = 1 + 2 * RT_MARGIN;
+  // Not past what the GPU allows; a smaller target just looks a bit softer.
+  const maxT = Math.min(4096, renderer.capabilities.maxTextureSize || 4096);
+  const fit = Math.min(1, maxT / (ew * dpr * grow), maxT / (eh * dpr * grow));
+  const rw = Math.max(2, Math.floor(ew * dpr * grow * fit));
+  const rh = Math.max(2, Math.floor(eh * dpr * grow * fit));
   [rtL, rtR].forEach(rt=>{ if (rt) rt.dispose(); });
   const opts = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true };
   rtL = new THREE.WebGLRenderTarget(rw, rh, opts);
@@ -7213,6 +7231,8 @@ function readChromaKeyColor(){
   if (!(u >= 0 && u <= 1 && v >= 0 && v <= 1)) return null;
   if (state.flipX) u = 1 - u;
   if (!state.flipY) v = 1 - v;
+  u = (u + RT_MARGIN) / (1 + 2 * RT_MARGIN);   // the frame sits inside the margin
+  v = (v + RT_MARGIN) / (1 + 2 * RT_MARGIN);
   const n = 5;
   const x = THREE.MathUtils.clamp(Math.round(u * (rtL.width - 1)) - 2, 0, rtL.width - n);
   const y = THREE.MathUtils.clamp(Math.round(v * (rtL.height - 1)) - 2, 0, rtL.height - n);
