@@ -593,7 +593,7 @@
 </div>
 
 <input type="file" id="modelFile" accept=".obj,.stl,.usdz" hidden>
-<input type="file" id="videoFile" accept="video/*,image/*" multiple hidden>
+<input type="file" id="videoFile" accept="video/*,image/*,image/heic,image/heif,.heic,.heif" multiple hidden>
 <input type="file" id="folderFiles" accept="image/*,video/*" webkitdirectory multiple hidden>
 <video id="video" playsinline webkit-playsinline crossorigin="anonymous" loop hidden></video>
 
@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.04';
+const APP_VERSION = '3.05';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -3621,6 +3621,71 @@ function classifyMediaFile(file){
   if (mime.startsWith('video/')) return 'video';
   return null;
 }
+/* ---- Apple spatial photos (iPhone 15 Pro / 16, Vision Pro): one HEIC with
+   two pictures, the left eye and the right. Browsers show only the first
+   (Chrome none at all), so every HEIC is read with libheif (WebAssembly,
+   ~1.5 MB, loaded the first time one is opened): two pictures of the same
+   size are put side by side and shown as an SBS photo; one is just shown,
+   so HEIC opens on a PC too. heicToUrl() -> { url, sbs }. ---- */
+const LIBHEIF_URL = 'https://cdn.jsdelivr.net/npm/libheif-js@1.19.8/libheif-wasm/libheif-bundle.mjs';
+let libheifReady = null;
+function isHeicFile(file){
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  return ext === 'heic' || ext === 'heif' || file.type === 'image/heic' || file.type === 'image/heif';
+}
+async function heicToUrl(file){
+  if (!libheifReady) libheifReady = import(LIBHEIF_URL).then(async m=>{ let lib = m.default(); if (lib && lib.then) lib = await lib; return lib; });
+  const lib = await libheifReady;
+  const imgs = new lib.HeifDecoder().decode(new Uint8Array(await file.arrayBuffer()));
+  if (!imgs || !imgs.length) throw new Error('no image');
+  const w = imgs[0].get_width(), h = imgs[0].get_height();
+  const sbs = imgs.length >= 2 && imgs[1].get_width() === w && imgs[1].get_height() === h;
+  const cv = document.createElement('canvas');
+  cv.width = sbs ? w * 2 : w;
+  cv.height = h;
+  const g = cv.getContext('2d');
+  for (let i = 0; i < (sbs ? 2 : 1); i++){
+    const data = g.createImageData(w, h);
+    await new Promise((res, rej) => imgs[i].display(data, d => d ? res() : rej(new Error('decode'))));
+    g.putImageData(data, i * w, 0);
+  }
+  imgs.forEach(im => im.free && im.free());
+  const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.95));
+  return { url: URL.createObjectURL(blob), sbs };
+}
+
+/* ---- Apple spatial videos: the second eye is an extra MV-HEVC layer that
+   no browser decodes -- only the left eye plays. Recognised by the 'vexu'
+   box Apple writes into them (kept even when iOS converts one to plain
+   H.264 on the way, which drops the second eye for good): it opens as a
+   flat 2D video, and says so. 'mvhevc' (the original) | 'converted' | null. ---- */
+const spatialCache = new WeakMap();
+async function detectSpatialVideo(file){
+  if (!file || !/\.(mov|mp4|m4v)$/i.test(file.name)) return null;
+  if (spatialCache.has(file)) return spatialCache.get(file);
+  const N = 4 * 1024 * 1024;
+  const parts = [file.slice(0, N)];
+  if (file.size > N) parts.push(file.slice(Math.max(N, file.size - N)));   // moov can be at the end
+  let found = false, mv = false;
+  for (const part of parts){
+    const b = new Uint8Array(await part.arrayBuffer());
+    for (let i = 0; i + 4 <= b.length; i++){
+      if (b[i] === 0x76 && b[i + 1] === 0x65 && b[i + 2] === 0x78 && b[i + 3] === 0x75) found = true;        // vexu
+      else if (b[i] === 0x6c && b[i + 1] === 0x68 && b[i + 2] === 0x76 && b[i + 3] === 0x43) mv = true;     // lhvC
+    }
+  }
+  const kind = found ? (mv ? 'mvhevc' : 'converted') : null;
+  spatialCache.set(file, kind);
+  return kind;
+}
+function toastSpatialVideo(kind){
+  if (!kind) return;
+  // After the name / resolution toast.
+  setTimeout(()=> toast(kind === 'mvhevc'
+    ? 'SPATIAL VIDEO · A BROWSER PLAYS ONLY THE LEFT EYE · 2D TO 3D (EXPERT) CAN ADD DEPTH'
+    : 'SPATIAL VIDEO SAVED AS 2D (SECOND EYE LOST WHEN IT WAS SHARED)', 4500), 1600);
+}
+
 function mediaObjectURL(file){
   if (file.type.startsWith('image/') || file.type.startsWith('video/')) return URL.createObjectURL(file);
   const mime = mimeFromName(file.name);
@@ -3874,6 +3939,7 @@ function setSourceSbs(isSbs){
    run once the media is decoded -- they should not when metadata or the
    filename already answered the question. */
 async function resolveSbsHint(label, file){
+  if (file && await detectSpatialVideo(file)) return { value: false, authoritative: true };   // one eye only
   const filenameHint = !!(label && /sbs/i.test(label));
   if (file){
     const ext = (file.name.split('.').pop() || '').toLowerCase();
@@ -4035,6 +4101,7 @@ async function detectMp4Projection(file){
   }
 }
 async function resolveProjectionHint(label, file){
+  if (file && await detectSpatialVideo(file)) return 0;   // Apple spatial: a flat picture
   if (file){
     const ext = (file.name.split('.').pop() || '').toLowerCase();
     if (MP4_STEREO_EXTS.has(ext)){
@@ -4383,15 +4450,27 @@ document.addEventListener('keyup', e=>{
 window.addEventListener('blur', stopBracketHold);
 
 /* ---- SBS image loader — reuses the video plane infrastructure ---- */
-function loadSBSImage(file){
-  const url = mediaObjectURL(file);
+async function loadSBSImage(file){
+  let url = mediaObjectURL(file);
   const label = file.name;
-  const filenameHint = /sbs/i.test(label);
+  let filenameHint = /sbs/i.test(label), spatial = false;
   cancelProjectionProbe();
+  // HEIC: both eyes of an Apple spatial photo, side by side (heicToUrl()).
+  if (isHeicFile(file)){
+    toast('READING HEIC…', 8000);
+    try{
+      const r = await heicToUrl(file);
+      URL.revokeObjectURL(url);
+      url = r.url;
+      spatial = r.sbs;
+      filenameHint = filenameHint || r.sbs;
+    }catch(e){ /* not readable here: let the browser try it as it is */ }
+  }
   applyImageTexture(url, async (w, h, img) => {
     const isSbs = filenameHint || imageLooksSbs(img, w, h);
     if (state.sourceSbs !== isSbs){ state.sourceSbs = isSbs; refreshMenu(); }
-    setProjection(projectionFromName(label) ?? imageProjection(img, w, h, isSbs));
+    setProjection(spatial ? 0 : (projectionFromName(label) ?? imageProjection(img, w, h, isSbs)));
+    if (spatial) setTimeout(()=> toast('SPATIAL PHOTO · BOTH EYES', 2500), 1600);
     state.mode = 1;
     state.content = 'video';   // reuse the video display group
     applyAll();
@@ -4527,6 +4606,7 @@ async function playVideo(src, label, file, hintOverride){
   refreshMenu();
   if (video.videoWidth) toastMediaRes(video.videoWidth, video.videoHeight);
   else if (label) toast(label.toUpperCase().slice(0, 28));
+  if (file) toastSpatialVideo(await detectSpatialVideo(file));
 }
 
 /* =========================================================================
@@ -4755,7 +4835,7 @@ function showGalleryItem(idx){
   else showGalleryVideo(item);
 }
 
-function showGalleryImage(item){
+async function showGalleryImage(item){
   // Switch the scene over to the video/image display group immediately,
   // before the new texture has actually loaded -- otherwise, on a slow or
   // failed load, whatever content group was showing before (e.g. a 3D
@@ -4766,6 +4846,18 @@ function showGalleryImage(item){
   applyAll();
   refreshMenu();
   cancelProjectionProbe();
+  // HEIC: read once (both eyes of a spatial photo, side by side).
+  if (item.file && isHeicFile(item.file) && !item.heicRead){
+    toast('READING HEIC…', 8000);
+    try{
+      const r = await heicToUrl(item.file);
+      if (item.url && item.url.startsWith('blob:')) URL.revokeObjectURL(item.url);
+      item.url = r.url;
+      if (r.sbs){ item.isSbs = true; item.sbsChecked = true; item.projection = 0; }
+    }catch(e){ /* left as it is */ }
+    item.heicRead = true;
+    if (galleryItems[galleryIdx] !== item) return;   // moved on meanwhile
+  }
   applyImageTexture(item.url, (w, h, img) => {
     if (!item.sbsChecked){
       item.isSbs = item.isSbs || imageLooksSbs(img, w, h);
@@ -4834,6 +4926,7 @@ async function showGalleryVideo(item){
     }
   }
   if (item.projection !== undefined) setProjection(item.projection);
+  if (item.file) toastSpatialVideo(await detectSpatialVideo(item.file));
 }
 
 folderFiles.addEventListener('change', ()=>{
