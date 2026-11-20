@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.17';
+const APP_VERSION = '3.18';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -864,6 +864,7 @@ const SHAPES = [
   'SPACE TRAVEL',  // flying ahead through stars -- buildSpace()
   'MAGIC SPIRAL',  // a turning rainbow spiral in front -- buildSpiral()
   'BALL IN BOX',   // a box held in front of you, three balls inside rolling with your head -- buildBallBox()
+  'LITTLEST TOKYO', // an animated model (three.js's keyframe example) -- buildTokyo()
   'OFF'
 ];
 const CHOOSE_SOURCE = ['CHOOSE'];
@@ -1769,6 +1770,48 @@ function buildSpiral(group){
   };
 }
 
+/* LITTLEST TOKYO: the animated model from three.js's keyframe animation
+   example -- "Littlest Tokyo" by Glen Fox (glenatron), CC BY 4.0,
+   https://sketchfab.com/models/94b24a60dc1b48248de50bf087c0f042 -- loaded
+   from the CDN the first time it's shown (~4 MB, Draco-compressed glTF).
+   It spins like the other shapes; its own animation runs at ROTATION
+   SPEED (the PLAY SPEED keys), 0 holding it. */
+const TOKYO_URL = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/models/gltf/LittlestTokyo.glb';
+const DRACO_PATH = 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/gltf/';
+let tokyoToken = 0;
+async function buildTokyo(group){
+  const token = ++tokyoToken;
+  toast('LOADING LITTLEST TOKYO…', 8000);
+  try{
+    const [{ GLTFLoader }, { DRACOLoader }] = await Promise.all([
+      import('three/addons/loaders/GLTFLoader.js'), import('three/addons/loaders/DRACOLoader.js')]);
+    const draco = new DRACOLoader();
+    draco.setDecoderPath(DRACO_PATH);
+    const loader = new GLTFLoader();
+    loader.setDRACOLoader(draco);
+    const gltf = await loader.loadAsync(TOKYO_URL);
+    draco.dispose();
+    // Moved on to another shape meanwhile: drop it.
+    if (token !== tokyoToken || SHAPES[state.shape] !== 'LITTLEST TOKYO' || state.content !== 'demo'){ return; }
+    const model = gltf.scene;
+    // About as big as the other shapes, centred.
+    const box = new THREE.Box3().setFromObject(model);
+    const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+    const k = 1.8 / Math.max(size.x, size.y, size.z);
+    model.scale.setScalar(k);
+    model.position.copy(centre).multiplyScalar(-k);
+    const holder = new THREE.Group();
+    holder.add(model);
+    group.add(holder);
+    const mixer = new THREE.AnimationMixer(model);
+    if (gltf.animations[0]) mixer.clipAction(gltf.animations[0]).play();
+    demoAnim = dt => mixer.update(dt);
+    toast('LITTLEST TOKYO · GLEN FOX · CC BY 4.0', 3500);
+  }catch(e){
+    if (token === tokyoToken) toast('COULD NOT LOAD THE MODEL', 2500);
+  }
+}
+
 function buildGridRoom(group){
   const R = GRID_ROOM_R, N = Math.round(R / GRID_STEP);
   const texCache = new Map();
@@ -1909,6 +1952,7 @@ function buildDemo(index){
   disposeGroup(roomGroup);
   if (demoHeadGroup) disposeGroup(demoHeadGroup);
   demoAnim = null;
+  tokyoToken++;   // a model still loading isn't wanted any more
   const name = SHAPES[index] || 'WIRE CUBE';
   if (name === 'OFF') return;   // demo hidden; nothing to build
   if (name === 'GRID ROOM'){ buildGridRoom(roomGroup); return; }
@@ -1918,6 +1962,7 @@ function buildDemo(index){
   if (name === 'SPACE TRAVEL'){ demoAnim = buildSpace(roomGroup); return; }
   if (name === 'MAGIC SPIRAL'){ demoAnim = buildSpiral(roomGroup); return; }
   if (name === 'BALL IN BOX'){ demoAnim = buildBallBox(headGroup()); return; }
+  if (name === 'LITTLEST TOKYO'){ buildTokyo(demoGroup); return; }
 
   switch(name){
     case 'WIRE CUBE': {
