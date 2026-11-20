@@ -647,7 +647,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.27';
+const APP_VERSION = '3.28';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1312,6 +1312,42 @@ function topPaneHTML(){
 }
 
 const topPanesEl = document.getElementById('topPanes');
+/* A photo picker that iOS didn't open: when a file input is clicked, the page
+   normally loses focus or gets hidden as the picker comes up. If neither
+   happens within PICKER_WAIT in the Home Screen app, say so (in a tab the
+   small iOS menu takes no focus, so only the debug log notes it) -- iOS.s Home Screen web apps have
+   been seen to refuse pickers that the same page in Safari opens. */
+const PICKER_WAIT = 1500;
+let pickerTimer = null;
+document.addEventListener('click', e=>{
+  const inp = e.target && e.target.closest && (e.target.closest('input[type=file]') || (e.target.closest('label') && e.target.closest('label').querySelector('input[type=file]')));
+  if (!inp) return;
+  clearTimeout(pickerTimer);
+  pickerTimer = setTimeout(()=>{
+    kbDebugLog('PICKER DID NOT OPEN');
+    const home = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+    if (home) toast('iOS DIDN\'T OPEN THE PICKER IN THE HOME SCREEN APP -- OPEN GYROS IN SAFARI TO LOAD FILES', 5000);
+  }, PICKER_WAIT);
+}, true);
+// A file input's programmatic click() (LOAD) never reaches the document as a
+// tap: watch those too.
+const nativeInputClick = HTMLInputElement.prototype.click;
+HTMLInputElement.prototype.click = function(){
+  if (this.type === 'file'){
+    clearTimeout(pickerTimer);
+    pickerTimer = setTimeout(()=>{
+      kbDebugLog('PICKER DID NOT OPEN (from code)');
+      const home = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+      if (home) toast('iOS DIDN\'T OPEN THE PICKER IN THE HOME SCREEN APP -- OPEN GYROS IN SAFARI TO LOAD FILES', 5000);
+    }, PICKER_WAIT);
+  }
+  return nativeInputClick.call(this);
+};
+const pickerOpened = ()=>{ if (pickerTimer){ clearTimeout(pickerTimer); pickerTimer = null; kbDebugLog('PICKER OPENED'); } };
+window.addEventListener('blur', pickerOpened);
+document.addEventListener('visibilitychange', ()=>{ if (document.hidden) pickerOpened(); });
+window.addEventListener('pagehide', pickerOpened);
+document.addEventListener('change', e=>{ if (e.target && e.target.type === 'file') pickerOpened(); }, true);
 // The folder icon from the keyboard: Enter / Space opens its picker.
 topPanesEl.addEventListener('keydown', e=>{
   const lab = e.target.closest && e.target.closest('.btnLoad');
@@ -2898,12 +2934,20 @@ function recenter(quiet = false){
 }
 
 // quiet: the try on load, which iOS refuses without a tap -- no toast then.
+let motionAsking = false;   // one question at a time, never a pile of them
 async function enableMotion(quiet = false){
-  if (motionGranted) return true;
+  if (motionGranted || motionAsking) return motionGranted;
+  motionAsking = true;
+  try{ return await enableMotionAsk(quiet); }
+  finally{ motionAsking = false; }
+}
+async function enableMotionAsk(quiet){
   try{
     if (typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function'){
-      const resp = await DeviceOrientationEvent.requestPermission();
+      // An answer that never comes (seen in Home Screen apps) counts as none.
+      const resp = await Promise.race([DeviceOrientationEvent.requestPermission(),
+        new Promise(res => setTimeout(()=> res('no answer'), 8000))]);
       if (kbDebugOn) kbDebugLog('MOTION PERMISSION ' + resp);
       if (resp !== 'granted'){ toast('MOTION DENIED'); return false; }
     }
@@ -2916,7 +2960,8 @@ async function enableMotion(quiet = false){
     // a one-time toast.
     if (typeof DeviceMotionEvent !== 'undefined' &&
         typeof DeviceMotionEvent.requestPermission === 'function'){
-      const respM = await DeviceMotionEvent.requestPermission();
+      const respM = await Promise.race([DeviceMotionEvent.requestPermission(),
+        new Promise(res => setTimeout(()=> res('no answer'), 8000))]);
       if (kbDebugOn) kbDebugLog('DEVICEMOTION PERMISSION ' + respM);
     }
   }catch(e){
@@ -5487,7 +5532,8 @@ function toast(msg, ms = 1400){
    outside anything this file can control -- e.g. a Bluetooth link or a USB
    cable that loses connection at certain phone angles). No production
    behaviour changes unless ?debug=1 is present. */
-const kbDebugOn = /(?:^|[?&])debug=1(?:&|$)/.test(location.search);
+const kbDebugOn = /(?:^|[?&])debug=1(?:&|$)/.test(location.search)
+  || (()=>{ try{ return localStorage.getItem('gyrosDebug') === '1'; }catch(e){ return false; } })();   // QUICK MENU -> DEBUG LOG
 const kbDebugEl = document.getElementById('kbdebug');
 const kbDebugLines = [];
 function kbDebugLog(line){
@@ -5499,7 +5545,8 @@ function kbDebugLog(line){
 }
 if (kbDebugOn){
   kbDebugEl.hidden = false;
-  kbDebugLog('DEBUG OVERLAY ON · ' + navigator.userAgent.replace(/^.*?\(/, '(').slice(0, 60));
+  kbDebugLog('DEBUG OVERLAY ON · ' + navigator.userAgent.replace(/^.*?\(/, '(').slice(0, 60)
+    + ' · ' + (navigator.standalone || matchMedia('(display-mode: standalone)').matches ? 'HOME SCREEN APP' : 'BROWSER TAB'));
   // Taps and file pickers: what was under the finger, and whether a picker
   // reported a pick (the photo picker not opening on iOS).
   const tag = el => el ? (el.tagName + (el.id ? '#' + el.id : '') + (typeof el.className === 'string' && el.className ? '.' + el.className.split(' ')[0] : '')) : 'null';
@@ -5908,11 +5955,17 @@ function openQuickDlg(){
     ['reload', 'RELOAD THE APP'],
     ['reset', 'RESET TO DEFAULTS'],
     ['recenter', 'RECENTER'],
-    ['reduced', reducedMenuLabel()]
+    ['reduced', reducedMenuLabel()],
+    ['debug', kbDebugOn ? 'DEBUG LOG OFF' : 'DEBUG LOG ON']
   ]);
 }
 onMenuDlgClick(quickDlg, item=>{
   switch (item){
+    case 'debug':
+      // The ?debug=1 log, for the Home Screen app too (no address bar there).
+      try{ localStorage.setItem('gyrosDebug', kbDebugOn ? '0' : '1'); }catch(e){}
+      location.reload();
+      break;
     case 'reload':   location.reload(); break;
     case 'reset':    resetToDefaults(); break;
     case 'recenter': recenter(); toast('RECENTERED'); break;
@@ -9670,7 +9723,11 @@ requestWakeLock();
 // this first try (a fresh visit), the first tap or key press anywhere asks
 // again (the listeners above); where access was already allowed, it starts
 // right here.
-enableMotion(true);
+// Where motion needs no question (Android, desktop) tracking starts here.
+// iOS asks only from a tap -- a question put without one can be left
+// hanging in a Home Screen app, and block iOS's other dialogs (the photo
+// picker) -- so there the first tap on the picture asks.
+if (!(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')) enableMotion(true);
 toast(`GYROS v${APP_VERSION}`, 2000);   // which version just loaded
 restoreMedia();
 restoreNav();
