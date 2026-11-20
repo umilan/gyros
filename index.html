@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.22';
+const APP_VERSION = '3.23';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -657,6 +657,14 @@ const DEFAULTS = {
   keepDepth: true,   // KEEP DEPTH (OPTICS, expert): EYE DISTANCE follows FIELD OF
                      // VIEW, ZOOM (XY) and SCALE X, so the depth looks the same
                      // after changing them -- keepDepthFactor().
+  // LENS SHAPE (OPTICS): undoing what a curved visor (a Mira Prism-style
+  // reflector) does to straight lines, by eye with the GRID ROOM demo --
+  // see the blit shader's "LENS SHAPE" step. -100..100 each, 0 = none.
+  lensCurve: 0,      // CURVE: horizontal lines bent into a smile / frown
+  lensBow: 0,        // BOW: vertical lines bulging out / pinched in
+  lensFan: 0,        // FAN: vertical lines spreading toward the top / bottom
+  lensBarrel: 0,     // BARREL: bulge / pinch from the middle out
+  lensRows: 0,       // ROWS: rows further apart toward the top / bottom
   eyeOffsetY: 0,     // EYE HEIGHT (OPTICS, expert), -100..100: moves the left eye's
                      // picture up and the right eye's down by half of it each
                      // (percent of half the eye height, as POS Y), for lenses
@@ -923,6 +931,7 @@ function syncMountRows(){
 // the image looks, so they stay one shared value across views.
 const PER_VIEW_KEYS = [
   'uiEyeDist', 'eyeDist', 'eyeOffsetY', 'imgCal', 'imgCalR',
+  'lensCurve', 'lensBow', 'lensFan', 'lensBarrel', 'lensRows',
   'posX', 'posY',
   'contentZoom', 'zoom', 'scaleX', 'scaleY',
   'trapezoid',
@@ -1030,6 +1039,12 @@ const MENU = [
     // Point at two squares' nodes in the grid, nudging a dot back onto a
     // real object at each; the picture is pre-warped to undo what that
     // shows -- startImgCal().
+    // LENS SHAPE: straighten the GRID ROOM's lines by eye (stereo views).
+    { type:'step', key:'lensCurve',  label:'LENS CURVE',  min:-100, max:100, step:1, whenTrue:'rotView' },
+    { type:'step', key:'lensBow',    label:'LENS BOW',    min:-100, max:100, step:1, whenTrue:'rotView' },
+    { type:'step', key:'lensFan',    label:'LENS FAN',    min:-100, max:100, step:1, whenTrue:'rotView' },
+    { type:'step', key:'lensBarrel', label:'LENS BARREL', min:-100, max:100, step:1, whenTrue:'rotView' },
+    { type:'step', key:'lensRows',   label:'LENS ROWS',   min:-100, max:100, step:1, whenTrue:'rotView', x:1 },
     { type:'action', act:'imgCal', label:'CALIBRATE IMAGE', textbtn:true, x:1 },
     { type:'action', act:'imgCalClear', label:'REMOVE IMAGE CORRECTION', textbtn:true, whenTrue:'imgCalOn', x:1 },
     // HOLO3 only -- DEFAULTS.lensFov and fovMeasureStep().
@@ -2164,6 +2179,9 @@ function initBlit(){
       saturation: { value: 1 },
       quadXform: { value: new THREE.Matrix3() },
       rtMargin: { value: RT_MARGIN },
+      lensOn: { value: 0 },
+      lensA: { value: new THREE.Vector4() },   // curve, bow, fan, barrel
+      lensRows: { value: 0 },
       calOn: { value: 0 },
       calK: { value: new THREE.Vector2() },
       calC: { value: new THREE.Vector2() },
@@ -2199,6 +2217,9 @@ function initBlit(){
       uniform float saturation;   // 1 = unchanged; 1 + state.saturation/100
       uniform mat3 quadXform;     // screen NDC (x,y,1) -> homogeneous (u,v) of the trapezoid quad
       uniform float rtMargin;     // RT_MARGIN: the render target reaches this far past the frame
+      uniform float lensOn;       // LENS SHAPE (lensCurve...): see main()
+      uniform vec4 lensA;
+      uniform float lensRows;
       uniform float calOn;        // IMAGE CORRECTION (CALIBRATE IMAGE): imgCalMap() in GLSL, per eye
       uniform vec2 calK;          // radial: r^2 and r^4 terms
       uniform vec2 calC;          // ... around this centre
@@ -2273,6 +2294,16 @@ function initBlit(){
         // optics make it appear (the drawn distortion), so the picture
         // comes out undistorted -- the same map as imgCalMap().
         vec2 vp = vPos;
+        // LENS SHAPE: the screen shows at each point what belongs where a
+        // curved visor makes that point appear, so the lines come out
+        // straight. In eye units (half the eye height = 1).
+        if (lensOn > 0.5){
+          vec2 q = vp * vec2(aspect, 1.0);
+          q *= 1.0 + lensA.w * dot(q, q);                      // BARREL
+          q.x *= 1.0 + lensA.z * q.y + lensA.y * q.y * q.y;    // FAN, BOW
+          q.y += lensA.x * q.x * q.x + lensRows * q.y * q.y;   // CURVE, ROWS
+          vp = q / vec2(aspect, 1.0);
+        }
         if (calOn > 0.5){
           vec2 q = vp * vec2(aspect, 1.0) - calC;
           float r2 = dot(q, q);
@@ -3675,7 +3706,7 @@ const clock = new THREE.Clock();
    frame drawn while they differ, the on-the-way values stand in for the
    real ones (animate()), and the functions that place the picture run with
    them; the real ones are put back straight after. */
-const SMOOTH_KEYS = ['posX', 'posY', 'contentZoom', 'zoom', 'scaleX', 'scaleY', 'trapezoid', 'contentAngle',
+const SMOOTH_KEYS = ['lensCurve', 'lensBow', 'lensFan', 'lensBarrel', 'lensRows', 'posX', 'posY', 'contentZoom', 'zoom', 'scaleX', 'scaleY', 'trapezoid', 'contentAngle',
   'eyeDist', 'eyeOffsetY', 'uiEyeDist', 'lensFov', 'brightness', 'contrast', 'saturation'];
 const smoothed = {};
 let smoothLast = 0, smoothMoving = false;
@@ -3793,6 +3824,7 @@ function animateFrame(){
   renderer.setScissorTest(true);
 
   applyChromaUniforms();
+  setLensUniforms();
   setImgCalUniforms(0);
   quadMat.uniforms.map.value = rtL.texture;
   renderer.setViewport(0, 0, ew, eh);
@@ -8777,6 +8809,14 @@ function viewCentre(eye){
   const { ew, eh } = eyeSize();
   const shift = (state.uiEyeDist / 100) * (ew / 2);
   return [(eye ? shift : -shift) * 2 / eh, 0];
+}
+// LENS SHAPE's sliders into the shader: 100 = a coefficient of 0.4.
+function setLensUniforms(){
+  const u = quadMat.uniforms, k = 0.004;
+  const on = !!(state.lensCurve || state.lensBow || state.lensFan || state.lensBarrel || state.lensRows);
+  u.lensOn.value = on ? 1 : 0;
+  u.lensA.value.set(state.lensCurve * k, state.lensBow * k, state.lensFan * k, state.lensBarrel * k);
+  u.lensRows.value = state.lensRows * k;
 }
 function imgCalMeasureEye(eye){
   Object.assign(imgCal, { phase: 'measure', eye, ref: null, nudge: [0, 0], pairs: [], trail: [] });
