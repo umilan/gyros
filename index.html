@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.84';
+const APP_VERSION = '2.85';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -633,6 +633,11 @@ const DEFAULTS = {
                       // state.sbs and state.mirrorUI (see applyView() below),
                       // which the rest of the app still reads directly.
   mode: 0,           // DEMO | IMAGE / VIDEO | 3D OBJECT | MEDIA FOLDER
+  imgCal: [0, 0, 0, 0, 0, 0, 0, 0, 0],   // IMAGE CORRECTION from CALIBRATE IMAGE:
+                     // [k, a, b, c, d, e, f, g, h] -- a radial term k and a
+                     // homography [[1+a, b, c], [d, 1+e, f], [g, h, 1]] on the
+                     // eye's centred coordinates (half the eye height = 1).
+                     // All zero = no correction. See imgCalMap().
   eyeOffsetY: 0,     // EYE HEIGHT (OPTICS, expert), -100..100: moves the left eye's
                      // picture up and the right eye's down by half of it each
                      // (percent of half the eye height, as POS Y), for lenses
@@ -875,7 +880,7 @@ function syncMountRows(){
 // behaviour and MENU TIMEOUT are left out on purpose: they're not about how
 // the image looks, so they stay one shared value across views.
 const PER_VIEW_KEYS = [
-  'uiEyeDist', 'eyeDist', 'eyeOffsetY',
+  'uiEyeDist', 'eyeDist', 'eyeOffsetY', 'imgCal',
   'posX', 'posY',
   'contentZoom', 'zoom', 'scaleX', 'scaleY',
   'trapezoid',
@@ -971,6 +976,10 @@ const MENU = [
     { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
     { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
     { type:'step', key:'eyeOffsetY', label:'EYE HEIGHT', min:-100, max:100, step:1, whenTrue:'rotView', x:1 },
+    // Draw three squares as they look through the headset; the picture is
+    // pre-warped to undo what the drawing shows -- startImgCal().
+    { type:'action', act:'imgCal', label:'CALIBRATE IMAGE', textbtn:true, x:1 },
+    { type:'action', act:'imgCalClear', label:'REMOVE IMAGE CORRECTION', textbtn:true, whenTrue:'imgCalOn', x:1 },
     // HOLO3 only -- DEFAULTS.lensFov and fovMeasureStep().
     { type:'step',  key:'lensFov',   label:'FIELD OF VIEW', min:5, max:110, step:1, whenTrue:'holo3' },
     { type:'action', act:'measureFov', label:'MEASURE FOV', textbtn:true, whenTrue:'holo3', x:1 },
@@ -1309,6 +1318,7 @@ function refreshMenu(){
     state['chromaKey' + (i + 1)] = has;
     state['rmChromaKey' + (i + 1)] = has;
   });
+  state.imgCalOn = Array.isArray(state.imgCal) && state.imgCal.some(v => v !== 0);
   state.rotView = VIEW_SBS[state.view];   // IN PORTRAIT applies (applyAppRotation())
   state.cutoutOn = state.cutout > 0;
   state.monoSource = !state.sourceSbs && state.projection === 0;   // 2D TO 3D: flat mono only
@@ -1738,6 +1748,9 @@ function initBlit(){
       contrast: { value: 1 },
       saturation: { value: 1 },
       quadXform: { value: new THREE.Matrix3() },
+      calOn: { value: 0 },
+      calK: { value: 0 },
+      calH: { value: new THREE.Matrix3() },
       flipX: { value: 0 },
       flipY: { value: 0 },
       marks: { value: 0 },
@@ -1768,6 +1781,9 @@ function initBlit(){
       uniform float contrast;     // 1 = unchanged; 1 + state.contrast/100
       uniform float saturation;   // 1 = unchanged; 1 + state.saturation/100
       uniform mat3 quadXform;     // screen NDC (x,y,1) -> homogeneous (u,v) of the trapezoid quad
+      uniform float calOn;        // IMAGE CORRECTION (CALIBRATE IMAGE): imgCalMap() in GLSL
+      uniform float calK;
+      uniform mat3 calH;
       uniform float flipX;
       uniform float flipY;
       uniform float marks;        // MEASURE FOV: 0 = off, else the side line's distance from centre in u
@@ -1834,7 +1850,17 @@ function initBlit(){
         return max(c.r, max(c.g, c.b)) < 0.004 ? 0.0 : keyMask(c);
       }
       void main(){
-        vec3 pqr = quadXform * vec3(vPos, 1.0);
+        // IMAGE CORRECTION: each screen point shows what belongs where the
+        // optics make it appear (the drawn distortion), so the picture
+        // comes out undistorted -- the same map as imgCalMap().
+        vec2 vp = vPos;
+        if (calOn > 0.5){
+          vec2 q = vp * vec2(aspect, 1.0);
+          q *= 1.0 + calK * dot(q, q);
+          vec3 hq = calH * vec3(q, 1.0);
+          vp = hq.xy / hq.z / vec2(aspect, 1.0);
+        }
+        vec3 pqr = quadXform * vec3(vp, 1.0);
         vec2 uv = pqr.xy / pqr.z;
         // Outside the 4 corners (or their zoomed/scaled footprint spills
         // past the eye viewport) -- nothing to draw there.
@@ -2023,6 +2049,10 @@ function updateQuad(){
   }
 
   computeQuadInverse(TL, TR, BL, BR, quadMat.uniforms.quadXform.value);
+  const cal = Array.isArray(state.imgCal) && state.imgCal.length === 9 ? state.imgCal : DEFAULTS.imgCal;
+  quadMat.uniforms.calOn.value = cal.some(v => v !== 0) ? 1 : 0;
+  quadMat.uniforms.calK.value = cal[0];
+  quadMat.uniforms.calH.value.set(1 + cal[1], cal[2], cal[3], cal[4], 1 + cal[5], cal[6], cal[7], cal[8], 1);
   quadMat.uniforms.flipX.value = state.flipX ? 1 : 0;
   quadMat.uniforms.flipY.value = state.flipY ? 1 : 0;
   quadMat.uniforms.brightness.value = 1 + state.brightness / 100;
@@ -7307,6 +7337,230 @@ function clearChromaKeys(){
 // TYPE row in whichever of the list or OSD strip is open, reduced or not.
 // fullMenuType: what SHOW / HIDE REDUCED MENU goes back to.
 let fullMenuType = 1;
+/* ---- CALIBRATE IMAGE. Every eye shows three squares, small (red), middle
+   (green) and large (blue), around its centre. Look at them through the
+   headset, then draw each one with a finger the way it looked -- bent,
+   tilted, bigger or smaller -- in either eye. From the three drawings a
+   model of the distortion is fitted: imgCalMap(), a radial bulge / pinch
+   (k) followed by a perspective warp (homography), screen -> as seen. The
+   blit shader then shows at every screen point what belongs where that
+   point is seen, which cancels the distortion. Three sizes are what tell
+   the radial part (grows with distance from the centre) from the
+   perspective part. The result is remembered per VIEW, like the other
+   optics; REMOVE IMAGE CORRECTION clears it. ---- */
+const IMGCAL_SIZES = [0.2, 0.45, 0.7];   // half-sides, in half eye heights
+const IMGCAL_COLORS = ['#ff4040', '#40e040', '#4080ff'];
+const IMGCAL_NAMES = ['RED', 'GREEN', 'BLUE'];
+// p: [x, y] in centred eye units (x right, y up, half the eye height = 1).
+function imgCalMap(P, p){
+  const r2 = p[0] * p[0] + p[1] * p[1];
+  const qx = p[0] * (1 + P[0] * r2), qy = p[1] * (1 + P[0] * r2);
+  const w = P[7] * qx + P[8] * qy + 1;
+  return [((1 + P[1]) * qx + P[2] * qy + P[3]) / w, (P[4] * qx + (1 + P[5]) * qy + P[6]) / w];
+}
+function imgCalOutline(P, half){
+  // The square's outline, distorted: 4 edges x 12 segments.
+  const pts = [], c = [[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]];
+  for (let e = 0; e < 4; e++) for (let i = 0; i < 12; i++){
+    const t = i / 12;
+    pts.push(imgCalMap(P, [half * (c[e][0] + (c[e + 1][0] - c[e][0]) * t), half * (c[e][1] + (c[e + 1][1] - c[e][1]) * t)]));
+  }
+  pts.push(pts[0]);
+  return pts;
+}
+function segDist2(p, a, b){
+  const vx = b[0] - a[0], vy = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / (vx * vx + vy * vy || 1)));
+  const dx = a[0] + vx * t - p[0], dy = a[1] + vy * t - p[1];
+  return dx * dx + dy * dy;
+}
+function imgCalCost(P, strokes){
+  let sum = 0, n = 0;
+  strokes.forEach((pts, i)=>{
+    const ol = imgCalOutline(P, IMGCAL_SIZES[i]);
+    for (const p of pts){
+      let best = Infinity;
+      for (let j = 0; j < ol.length - 1; j++) best = Math.min(best, segDist2(p, ol[j], ol[j + 1]));
+      sum += best; n++;
+    }
+  });
+  // A light pull toward no correction keeps the fit from wandering where
+  // the drawing doesn't pin it down.
+  return sum / Math.max(1, n) + 1e-5 * P.reduce((a, v) => a + v * v, 0);
+}
+// Nelder-Mead from no correction.
+function imgCalFit(strokes){
+  const N = 9, f = P => imgCalCost(P, strokes);
+  let simplex = [new Array(N).fill(0)];
+  for (let i = 0; i < N; i++){ const v = new Array(N).fill(0); v[i] = i === 0 ? 0.05 : (i === 7 || i === 8 ? 0.05 : 0.08); simplex.push(v); }
+  let vals = simplex.map(f);
+  for (let it = 0; it < 4000; it++){
+    const order = vals.map((v, i) => i).sort((a, b) => vals[a] - vals[b]);
+    simplex = order.map(i => simplex[i]); vals = order.map(i => vals[i]);
+    if (vals[N] - vals[0] < 1e-12) break;
+    const cen = new Array(N).fill(0);
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) cen[j] += simplex[i][j] / N;
+    const at = t => cen.map((c, j) => c + t * (simplex[N][j] - c));
+    const xr = at(-1), fr = f(xr);
+    if (fr < vals[0]){
+      const xe = at(-2), fe = f(xe);
+      if (fe < fr){ simplex[N] = xe; vals[N] = fe; } else { simplex[N] = xr; vals[N] = fr; }
+    } else if (fr < vals[N - 1]){ simplex[N] = xr; vals[N] = fr; }
+    else {
+      const xc = at(fr < vals[N] ? -0.5 : 0.5), fc = f(xc);
+      if (fc < Math.min(fr, vals[N])){ simplex[N] = xc; vals[N] = fc; }
+      else {
+        for (let i = 1; i <= N; i++){ simplex[i] = simplex[i].map((v, j) => simplex[0][j] + 0.5 * (v - simplex[0][j])); vals[i] = f(simplex[i]); }
+      }
+    }
+  }
+  return { P: simplex[0], err: Math.sqrt(vals[0]) };
+}
+
+let imgCal = null;   // { el, cv, strokes: [[...]], cur, eye } while calibrating
+function startImgCal(){
+  if (imgCal) return;
+  if (uiState === 'list') closeList();
+  const el = document.createElement('div');
+  el.id = 'imgCal';
+  el.style.cssText = 'position:fixed;left:0;top:0;width:var(--app-w,100vw);height:var(--app-h,100vh);z-index:9000;background:#000;touch-action:none;';
+  const cv = document.createElement('canvas');
+  cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+  el.appendChild(cv);
+  const panes = state.sbs ? 2 : 1;
+  for (let i = 0; i < panes; i++){
+    const bar = document.createElement('div');
+    bar.className = 'imgCalBar';
+    bar.style.cssText = `position:absolute;bottom:12px;left:${i * 100 / panes}%;width:${100 / panes}%;display:flex;justify-content:center;gap:24px;`;
+    bar.innerHTML = '<button class="textbtn" data-imgcal="undo">UNDO</button><button class="textbtn" data-imgcal="cancel">CANCEL</button>';
+    el.appendChild(bar);
+  }
+  document.body.appendChild(el);
+  imgCal = { el, cv, strokes: [], cur: null, eye: 0 };
+  el.addEventListener('click', e=>{
+    const b = e.target.closest('[data-imgcal]');
+    if (!b) return;
+    e.stopPropagation();
+    if (b.dataset.imgcal === 'undo') imgCal.strokes.pop();
+    else endImgCal();
+    drawImgCal();
+  });
+  cv.addEventListener('pointerdown', imgCalDown);
+  cv.addEventListener('pointermove', imgCalMove);
+  ['pointerup', 'pointercancel'].forEach(ev => cv.addEventListener(ev, imgCalUp));
+  drawImgCal();
+}
+function endImgCal(){
+  if (!imgCal) return;
+  imgCal.el.remove();
+  imgCal = null;
+}
+// A pointer in the eye it's over: [x, y] centred eye units, and that eye.
+function imgCalPoint(e){
+  const { w, ew, eh } = eyeSize();
+  let { x, y } = appPoint(e);
+  if (state.mirrorUI) x = w - x;   // the whole app is mirrored in HOLO3
+  const eye = state.sbs && x >= ew ? 1 : 0;
+  const px = x - eye * ew;
+  return { eye, p: [(px / ew * 2 - 1) * (ew / eh), 1 - y / eh * 2] };
+}
+function imgCalDown(e){
+  if (imgCal.strokes.length >= 3) return;
+  e.preventDefault();
+  const { eye, p } = imgCalPoint(e);
+  imgCal.cur = [p];
+  imgCal.eye = eye;
+  imgCal.cv.setPointerCapture(e.pointerId);
+  drawImgCal();
+}
+function imgCalMove(e){
+  if (!imgCal || !imgCal.cur) return;
+  const { p } = imgCalPoint(e);   // stays in the eye the stroke began in
+  const { ew, eh } = eyeSize();
+  if (imgCalPoint(e).eye !== imgCal.eye) p[0] += (imgCalPoint(e).eye - imgCal.eye) * 2 * ew / eh;
+  imgCal.cur.push(p);
+  drawImgCal();
+}
+function imgCalUp(){
+  if (!imgCal || !imgCal.cur) return;
+  const pts = imgCal.cur;
+  imgCal.cur = null;
+  // Too short to be a square: ignore it.
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  if (pts.length < 12 || Math.max(...xs) - Math.min(...xs) < 0.1 || Math.max(...ys) - Math.min(...ys) < 0.1){
+    toast('DRAW THE WHOLE SQUARE IN ONE LINE', 2000);
+    drawImgCal();
+    return;
+  }
+  // Even spacing along the line, so slow parts don't weigh more.
+  imgCal.strokes.push(resampleStroke(pts, 64));
+  drawImgCal();
+  if (imgCal.strokes.length === 3){
+    const { P, err } = imgCalFit(imgCal.strokes);
+    state.imgCal = P.map(v => Math.round(v * 1e5) / 1e5);
+    updateQuad();
+    refreshMenu();
+    saveState();
+    endImgCal();
+    toast('IMAGE CORRECTED (FIT ' + Math.round(err * 1000) / 10 + '%)', 2500);
+  }
+}
+function resampleStroke(pts, n){
+  const d = [0];
+  for (let i = 1; i < pts.length; i++) d.push(d[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const out = [], total = d[d.length - 1] || 1;
+  let j = 0;
+  for (let k = 0; k < n; k++){
+    const t = total * k / (n - 1);
+    while (j < d.length - 2 && d[j + 1] < t) j++;
+    const u = (t - d[j]) / ((d[j + 1] - d[j]) || 1);
+    out.push([pts[j][0] + (pts[j + 1][0] - pts[j][0]) * u, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * u]);
+  }
+  return out;
+}
+function drawImgCal(){
+  if (!imgCal) return;
+  const { cv } = imgCal;
+  const { w, h, ew, eh } = eyeSize();
+  const dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(w * dpr)){ cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const next = imgCal.strokes.length;
+  const panes = state.sbs ? 2 : 1;
+  for (let eye = 0; eye < panes; eye++){
+    const toPx = p => [eye * ew + (p[0] * eh / ew + 1) / 2 * ew, (1 - p[1]) / 2 * eh];
+    IMGCAL_SIZES.forEach((half, i)=>{
+      const a = toPx([-half, half]), b = toPx([half, -half]);
+      g.strokeStyle = IMGCAL_COLORS[i];
+      g.globalAlpha = i === next ? 1 : 0.35;
+      g.lineWidth = i === next ? 3 : 2;
+      g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+    });
+    g.globalAlpha = 1;
+    g.lineWidth = 3;
+    [...imgCal.strokes, imgCal.cur].forEach((pts, i)=>{
+      if (!pts || pts.length < 2) return;
+      g.strokeStyle = '#fff';
+      g.setLineDash(i < imgCal.strokes.length ? [] : [6, 4]);
+      g.beginPath();
+      pts.forEach((p, k)=>{ const q = toPx(p); k ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+      g.stroke();
+    });
+    g.setLineDash([]);
+    g.fillStyle = '#ccc';
+    g.font = '600 13px system-ui, sans-serif';
+    g.textAlign = 'center';
+    const msg = next < 3 ? `DRAW THE ${IMGCAL_NAMES[next]} SQUARE AS YOU SEE IT (${next + 1}/3)` : '';
+    g.fillText(msg, eye * ew + ew / 2, 28);
+  }
+}
+document.addEventListener('keydown', e=>{
+  if (imgCal && e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); endImgCal(); }
+}, true);
+window.addEventListener('resize', ()=>{ if (imgCal) drawImgCal(); });
+
 // A tap anywhere on a menu's or dialog's header closes it, as its x does.
 document.addEventListener('click', e=>{
   const head = e.target.closest('.paneTitle');
@@ -7345,6 +7599,8 @@ function handleAct(act, el){
       break;
     case 'recenter':  recenter(); break;
     case 'measureFov': fovMeasureStep(); break;
+    case 'imgCal': startImgCal(); break;
+    case 'imgCalClear': state.imgCal = DEFAULTS.imgCal; updateQuad(); toast('IMAGE CORRECTION REMOVED'); break;
     case 'calibrateHead': headCalStep(); break;
     case 'closeList': closeList(); break;
     case 'closeMenu':
