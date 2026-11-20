@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.92';
+const APP_VERSION = '2.93';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -978,8 +978,9 @@ const MENU = [
     { type:'step',  key:'uiEyeDist', label:'SBS EYE DIST', min:-100, max:100, step:1 },
     { type:'step', key:'eyeDist', label:'EYE DISTANCE', min:-10000, max:10000, step:1 },
     { type:'step', key:'eyeOffsetY', label:'EYE HEIGHT', min:-100, max:100, step:1, whenTrue:'rotView', x:1 },
-    // Trace three squares' corners with the head; the picture is pre-warped
-    // to undo the distortion that shows -- startImgCal().
+    // Point at two squares' nodes in the grid, nudging a dot back onto a
+    // real object at each; the picture is pre-warped to undo what that
+    // shows -- startImgCal().
     { type:'action', act:'imgCal', label:'CALIBRATE IMAGE', textbtn:true, x:1 },
     { type:'action', act:'imgCalClear', label:'REMOVE IMAGE CORRECTION', textbtn:true, whenTrue:'imgCalOn', x:1 },
     // HOLO3 only -- DEFAULTS.lensFov and fovMeasureStep().
@@ -7372,30 +7373,31 @@ function clearChromaKeys(){
 // TYPE row in whichever of the list or OSD strip is open, reduced or not.
 // fullMenuType: what SHOW / HIDE REDUCED MENU goes back to.
 let fullMenuType = 1;
-/* ---- CALIBRATE IMAGE, by head: the three squares (small, middle, large)
-   are traced corner by corner with a crosshair while wearing the headset.
-     0. a crosshair on the eye's centre: put it on something far away and
-        confirm -- that spot is the reference
-     1..12. the crosshair jumps to the next corner (red square, then green,
-        then blue); turn the head until it sits on the same far spot again
-        and confirm
-   How far the head turned to bring each corner onto the spot is where that
-   screen point really shows up through the optics (straight ahead = the
-   centre). A model of the distortion is fitted to the twelve corners:
-   imgCalMap(), a radial bulge / pinch (k) then a perspective warp
-   (homography), screen -> as seen, in eye units (x right, y up, half the
-   eye height = 1). The blit shader shows at every screen point what belongs
-   where that point is seen, which cancels it. The turn is read from the rig,
-   like MEASURE FOV, so it matches how the picture is pinned. Confirm: tap,
-   Enter, Space, right arrow / D; back one corner: left arrow / A /
-   Backspace; Esc cancels. Remembered per VIEW; REMOVE IMAGE CORRECTION
-   clears it. ---- */
-const IMGCAL_SIZES = [0.2, 0.45, 0.7];   // half-sides, in half eye heights
-const IMGCAL_COLORS = ['#ff4040', '#40e040', '#4080ff'];
-const IMGCAL_NAMES = ['RED', 'GREEN', 'BLUE'];
+/* ---- CALIBRATE IMAGE, for a see-through visor (HOLO3): nine steps.
+     1. a cross in the middle of the screen: put it on a small object far
+        away in the real room and press OK. That object is the target for
+        the rest; a white dot is pinned in the GRID ROOM right on it.
+     2-9. two squares are placed in the grid around that spot, small then
+        large, one node at a time highlighted. Point the cross at the
+        highlighted node (the head's path is drawn on the grid as you go).
+        The target and its white dot are now off to the other side of the
+        screen; if the dot isn't on the target any more, move it there with
+        the arrows (◀ ▶ ▲ ▼ / A D W S) and press OK.
+   Every dot moved is where the screen shows a point that the optics put
+   somewhere else: the screen position of the dot against where the target
+   really is (from how far the head turned, read from the rig like MEASURE
+   FOV) is one sample of the distortion. A model is fitted to the eight:
+   imgCalMap(), a radial bulge / pinch then a perspective warp, screen ->
+   as seen, in eye units (x right, y up, half the eye height = 1), and the
+   blit shader shows at every screen point what belongs where that point is
+   seen. The correction already set is off while measuring. OK: tap, Enter,
+   Space; back a step: Backspace; Esc cancels. Marks in the left eye only.
+   Remembered per VIEW; REMOVE IMAGE CORRECTION clears it. ---- */
+const IMGCAL_SIZES = [0.25, 0.55];   // half-sides of the two squares, in half eye heights
 const IMGCAL_CORNERS = [[-1, 1], [1, 1], [1, -1], [-1, -1]];
-// The corners in order: [x, y] eye units.
 const IMGCAL_TARGETS = IMGCAL_SIZES.flatMap(h => IMGCAL_CORNERS.map(c => [c[0] * h, c[1] * h]));
+const IMGCAL_COLORS = ['#ff4040', '#4080ff'];
+const IMGCAL_NUDGE = 0.004;   // eye units per arrow press
 function imgCalMap(P, p){
   const r2 = p[0] * p[0] + p[1] * p[1];
   const qx = p[0] * (1 + P[0] * r2), qy = p[1] * (1 + P[0] * r2);
@@ -7440,7 +7442,7 @@ function imgCalFit(pairs){
   return { P: simplex[0], err: Math.sqrt(vals[0]) };
 }
 
-// While calibrating: { el, cv, ref: Quaternion|null, seen: [[X, Y], ...] }
+// While calibrating: { el, cv, bg, ref, nudge: [x, y], pairs: [[screen, seen]], trail: [Vector3] }
 let imgCal = null;
 function startImgCal(){
   if (imgCal) return;
@@ -7448,18 +7450,16 @@ function startImgCal(){
   if (uiState === 'list') closeList();
   const el = document.createElement('div');
   el.id = 'imgCal';
-  // See-through: the GRID ROOM demo shows behind the marks while
-  // calibrating, whatever was on screen; it comes back after (endImgCal()).
   el.style.cssText = 'position:fixed;left:0;top:0;width:var(--app-w,100vw);height:var(--app-h,100vh);z-index:9000;background:transparent;touch-action:none;';
   const cv = document.createElement('canvas');
   cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
   el.appendChild(cv);
   document.body.appendChild(el);
-  imgCal = { el, cv, ref: null, seen: [], trail: [], bg: gridBgOn() };
+  imgCal = { el, cv, bg: gridBgOn(), ref: null, nudge: [0, 0], pairs: [], trail: [] };
+  quadMat.uniforms.calOn.value = 0;   // measure the screen as it is
+  el.addEventListener('pointerdown', e=>{ e.preventDefault(); e.stopPropagation(); imgCalConfirm(); });
   const tick = ()=>{ if (!imgCal) return; drawImgCal(); requestAnimationFrame(tick); };
   requestAnimationFrame(tick);
-  el.addEventListener('pointerdown', e=>{ e.preventDefault(); e.stopPropagation(); imgCalConfirm(); });
-  drawImgCal();
 }
 function endImgCal(){
   if (!imgCal) return;
@@ -7467,6 +7467,7 @@ function endImgCal(){
   const { bg } = imgCal;
   imgCal = null;
   gridBgOff(bg);
+  updateQuad();   // the correction back on (old or new)
 }
 // The GRID ROOM demo behind a calibration, whatever was on screen; gridBgOff()
 // with what this returns puts that back.
@@ -7487,14 +7488,18 @@ function gridBgOff(prev){
   else disposeGroup(roomGroup);   // only ever holds GRID ROOM
   applyAll();
 }
-// Where the far spot is now, seen from the head: eye units.
-function imgCalSeenNow(){
-  const fov = THREE.MathUtils.degToRad(camL.fov);
-  const t = Math.tan(fov / 2);
-  const spot = new THREE.Vector3(0, 0, -1).applyQuaternion(imgCal.ref);
-  const v = spot.applyQuaternion(rig.quaternion.clone().invert());
-  if (v.z > -0.05) return null;   // turned right away from it
+// A world direction, as eye units on the screen right now (null: behind).
+function imgCalProject(dir){
+  const t = Math.tan(THREE.MathUtils.degToRad(camL.fov) / 2);
+  const v = dir.clone().applyQuaternion(rig.quaternion.clone().invert());
+  if (v.z > -0.05) return null;
   return [(v.x / -v.z) / t, (v.y / -v.z) / t];
+}
+// The world direction of a point given in eye units around the target, as
+// it was when the target was set (so the squares sit in the grid).
+function imgCalWorldDir(p){
+  const t = Math.tan(THREE.MathUtils.degToRad(camL.fov) / 2);
+  return new THREE.Vector3(p[0] * t, p[1] * t, -1).normalize().applyQuaternion(imgCal.ref);
 }
 function imgCalConfirm(){
   if (!imgCal) return;
@@ -7503,26 +7508,23 @@ function imgCalConfirm(){
     imgCal.trail = [];
     return;
   }
-  const X = imgCalSeenNow();
-  if (!X){ toast('TURNED TOO FAR', 1500); return; }
-  imgCal.seen.push(X);
-  imgCal.trail = [];
-  if (imgCal.seen.length < IMGCAL_TARGETS.length){ drawImgCal(); return; }
-  // Corners seen far closer together or further apart than drawn means the
-  // head didn't really follow them (confirmed without turning): keep the
-  // old correction rather than shrink or blow up the picture.
-  const spread = pts => pts.reduce((a, p) => a + Math.hypot(p[0], p[1]), 0) / pts.length;
-  const ratio = spread(imgCal.seen) / spread(IMGCAL_TARGETS);
-  if (!(ratio > 0.33 && ratio < 3)){
+  // Where the target really is from the head now, and where the dot
+  // covering it is drawn.
+  const seen = imgCalProject(imgCalWorldDir([0, 0]));
+  if (!seen){ toast('TURNED TOO FAR', 1500); return; }
+  const screen = [seen[0] + imgCal.nudge[0], seen[1] + imgCal.nudge[1]];
+  imgCal.pairs.push([screen, seen]);
+  imgCal.nudge = [0, 0];
+  if (imgCal.pairs.length < IMGCAL_TARGETS.length) return;
+  // The head hardly moved: nothing was measured.
+  const reach = imgCal.pairs.reduce((a, pr) => a + Math.hypot(pr[1][0], pr[1][1]), 0) / imgCal.pairs.length;
+  if (reach < 0.08){
     endImgCal();
-    toast('THE HEAD DID NOT FOLLOW THE CORNERS -- NOTHING CHANGED', 3000);
+    toast('THE HEAD DID NOT TURN TO THE NODES -- NOTHING CHANGED', 3000);
     return;
   }
-  const pairs = IMGCAL_TARGETS.map((x, i) => [x, imgCal.seen[i]]);
-  pairs.push([[0, 0], [0, 0]]);   // the reference: the centre is seen straight ahead
-  const { P, err } = imgCalFit(pairs);
+  const { P, err } = imgCalFit([...imgCal.pairs, [[0, 0], [0, 0]]]);
   state.imgCal = P.map(v => Math.round(v * 1e5) / 1e5);
-  updateQuad();
   refreshMenu();
   saveState();
   endImgCal();
@@ -7530,9 +7532,9 @@ function imgCalConfirm(){
 }
 function imgCalBack(){
   if (!imgCal) return;
-  if (imgCal.seen.length) imgCal.seen.pop();
+  if (imgCal.pairs.length) imgCal.pairs.pop();
   else imgCal.ref = null;
-  imgCal.trail = [];
+  imgCal.nudge = [0, 0];
 }
 function drawImgCal(){
   if (!imgCal) return;
@@ -7543,88 +7545,87 @@ function drawImgCal(){
   const g = cv.getContext('2d');
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, w, h);
-  const n = imgCal.ref ? imgCal.seen.length : -1;   // corner being aimed, -1 = the centre
-  const sq = n < 0 ? -1 : Math.floor(n / 4);
-  // Left eye only: two crosshairs, one per eye, don't fuse into one you
-  // can aim with (the stereo views' eyes don't line up on the screen).
-  {
-    const eye = 0;
-    const toPx = p => [eye * ew + (p[0] * eh / ew + 1) / 2 * ew, (1 - p[1]) / 2 * eh];
-    // The squares: done ones solid, the current one dashed.
-    IMGCAL_SIZES.forEach((half, i)=>{
-      if (i > sq) return;
-      const a = toPx([-half, half]), b = toPx([half, -half]);
-      g.strokeStyle = IMGCAL_COLORS[i];
-      g.globalAlpha = i === sq ? 0.8 : 0.35;
-      g.lineWidth = 2;
-      g.setLineDash(i === sq ? [6, 6] : []);
-      g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
-    });
-    g.setLineDash([]);
-    g.globalAlpha = 1;
-    // What the head has drawn: where the far spot is, as the app sees it,
-    // marked live as the head moves (a white dot leaving a line), and the
-    // corners confirmed so far joined into each square as measured. With
-    // no distortion the dot sits under the crosshair at every corner and
-    // the measured squares come out on top of the drawn ones; how far they
-    // are off is what gets corrected.
-    if (imgCal.ref){
-      const live = imgCalSeenNow();
-      if (live){
-        const last = imgCal.trail[imgCal.trail.length - 1];
-        if (!last || Math.hypot(live[0] - last[0], live[1] - last[1]) > 0.004) imgCal.trail.push(live);
-        if (imgCal.trail.length > 600) imgCal.trail.shift();
-      }
-      const line = (pts, col, closed)=>{
-        if (pts.length < 2) return;
-        g.strokeStyle = col;
-        g.beginPath();
-        pts.forEach((p, k)=>{ const q = toPx(p); k ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
-        if (closed) g.closePath();
-        g.stroke();
-      };
-      g.lineWidth = 3;
-      for (let i = 0; i < 3; i++){
-        const pts = imgCal.seen.slice(i * 4, i * 4 + 4);
-        line(pts, IMGCAL_COLORS[i], pts.length === 4);
-      }
-      g.lineWidth = 2;
-      line(imgCal.trail, '#fff', false);
-      if (live){
-        const q = toPx(live);
-        g.fillStyle = '#fff';
-        g.beginPath(); g.arc(q[0], q[1], 5, 0, Math.PI * 2); g.fill();
-      }
-    }
-    // The crosshair, where the head has to bring it onto the far spot.
-    const at = toPx(n < 0 ? [0, 0] : IMGCAL_TARGETS[n]);
-    // Dark under-stroke, so it stands out on the grid's lines.
-    [['#000', 5], [n < 0 ? '#f6c41c' : IMGCAL_COLORS[sq], 2]].forEach(([col, lw])=>{
-      g.strokeStyle = col;
-      g.lineWidth = lw;
+  // Left eye only: one cross to aim with (the eyes don't line up on screen).
+  const toPx = p => [(p[0] * eh / ew + 1) / 2 * ew, (1 - p[1]) / 2 * eh];
+  const n = imgCal.ref ? imgCal.pairs.length : -1;   // node being aimed, -1 = setting the target
+  g.lineCap = 'round';
+  if (imgCal.ref){
+    // The head's path, pinned in the grid.
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(rig.quaternion);
+    const last = imgCal.trail[imgCal.trail.length - 1];
+    if (!last || last.angleTo(fwd) > 0.002) imgCal.trail.push(fwd);
+    if (imgCal.trail.length > 2000) imgCal.trail.shift();
+    const poly = (dirs, col, lw, closed)=>{
+      g.strokeStyle = col; g.lineWidth = lw;
       g.beginPath();
-      g.moveTo(at[0] - 14, at[1]); g.lineTo(at[0] + 14, at[1]);
-      g.moveTo(at[0], at[1] - 14); g.lineTo(at[0], at[1] + 14);
+      let pen = false;
+      dirs.forEach(d=>{
+        const q = imgCalProject(d);
+        if (!q){ pen = false; return; }
+        const px = toPx(q);
+        pen ? g.lineTo(px[0], px[1]) : g.moveTo(px[0], px[1]);
+        pen = true;
+      });
+      if (closed) g.closePath();
       g.stroke();
+    };
+    // The two squares, pinned in the grid around the target.
+    IMGCAL_SIZES.forEach((half, i)=>{
+      const pts = [];
+      for (let e = 0; e < 4; e++) for (let k = 0; k <= 8; k++){
+        const c0 = IMGCAL_CORNERS[e], c1 = IMGCAL_CORNERS[(e + 1) % 4], t = k / 8;
+        pts.push(imgCalWorldDir([half * (c0[0] + (c1[0] - c0[0]) * t), half * (c0[1] + (c1[1] - c0[1]) * t)]));
+      }
+      poly(pts, IMGCAL_COLORS[i], 2, false);
     });
-    g.fillStyle = '#ccc';
-    g.font = '600 13px system-ui, sans-serif';
-    g.textAlign = 'center';
-    g.shadowColor = '#000';
-    g.shadowBlur = 4;   // readable over the grid
-    const msg = n < 0 ? 'CROSS ON A FAR SPOT · CONFIRM'
-      : `${IMGCAL_NAMES[sq]} SQUARE ${n % 4 + 1}/4 · TURN TILL THE CROSS IS ON THE SPOT · CONFIRM`;
-    g.fillText(msg, eye * ew + ew / 2, 28);
-    g.fillText('BACK: ◀ / A · CANCEL: ESC', eye * ew + ew / 2, eh - 16);
-    g.shadowBlur = 0;
+    poly(imgCal.trail, 'rgba(255,255,255,0.8)', 2, false);
+    // The nodes: done ones filled, the one to point at big and yellow.
+    IMGCAL_TARGETS.forEach((c, i)=>{
+      const q = imgCalProject(imgCalWorldDir(c));
+      if (!q) return;
+      const px = toPx(q);
+      g.beginPath();
+      g.arc(px[0], px[1], i === n ? 11 : 6, 0, Math.PI * 2);
+      if (i < n){ g.fillStyle = IMGCAL_COLORS[Math.floor(i / 4)]; g.fill(); }
+      else { g.strokeStyle = i === n ? '#f6c41c' : IMGCAL_COLORS[Math.floor(i / 4)]; g.lineWidth = i === n ? 4 : 2; g.stroke(); }
+    });
+    // The white dot pinned on the target, plus how far the arrows moved it.
+    const t = imgCalProject(imgCalWorldDir([0, 0]));
+    if (t){
+      const px = toPx([t[0] + imgCal.nudge[0], t[1] + imgCal.nudge[1]]);
+      g.fillStyle = '#fff'; g.strokeStyle = '#000'; g.lineWidth = 2;
+      g.beginPath(); g.arc(px[0], px[1], 6, 0, Math.PI * 2); g.fill(); g.stroke();
+    }
   }
+  // The cross, always in the middle.
+  const c = toPx([0, 0]);
+  [['#000', 5], ['#f6c41c', 2]].forEach(([col, lw])=>{
+    g.strokeStyle = col; g.lineWidth = lw;
+    g.beginPath();
+    g.moveTo(c[0] - 16, c[1]); g.lineTo(c[0] + 16, c[1]);
+    g.moveTo(c[0], c[1] - 16); g.lineTo(c[0], c[1] + 16);
+    g.stroke();
+  });
+  g.fillStyle = '#eee';
+  g.font = '600 13px system-ui, sans-serif';
+  g.textAlign = 'center';
+  g.shadowColor = '#000'; g.shadowBlur = 4;
+  const lines = n < 0
+    ? ['STEP 1 / 9', 'PUT THE CROSS ON A SMALL OBJECT FAR AWAY IN THE ROOM', 'PRESS OK']
+    : [`STEP ${n + 2} / 9 · ${n < 4 ? 'SMALL' : 'LARGE'} SQUARE`, 'POINT THE CROSS AT THE YELLOW NODE',
+       'MOVE THE WHITE DOT ONTO YOUR OBJECT (◀ ▶ ▲ ▼) · PRESS OK'];
+  lines.forEach((t, i) => g.fillText(t, ew / 2, 24 + i * 18));
+  g.fillText('OK: TAP / ENTER · BACK: BACKSPACE · CANCEL: ESC', ew / 2, eh - 16);
+  g.shadowBlur = 0;
 }
 document.addEventListener('keydown', e=>{
   if (!imgCal) return;
-  const k = e.key;
-  if (k === 'Escape'){ endImgCal(); }
-  else if (k === 'Enter' || k === ' ' || k === 'ArrowRight' || k === 'd' || k === 'D'){ if (!e.repeat) imgCalConfirm(); }
-  else if (k === 'ArrowLeft' || k === 'a' || k === 'A' || k === 'Backspace'){ if (!e.repeat) imgCalBack(); }
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const mv = { ArrowLeft: [-1, 0], a: [-1, 0], ArrowRight: [1, 0], d: [1, 0], ArrowUp: [0, 1], w: [0, 1], ArrowDown: [0, -1], s: [0, -1] }[k];
+  if (mv){ if (imgCal.ref){ imgCal.nudge[0] += mv[0] * IMGCAL_NUDGE; imgCal.nudge[1] += mv[1] * IMGCAL_NUDGE; } }
+  else if (k === 'Enter' || k === ' '){ if (!e.repeat) imgCalConfirm(); }
+  else if (k === 'Backspace'){ if (!e.repeat) imgCalBack(); }
+  else if (k === 'Escape') endImgCal();
   else return;
   e.preventDefault();
   e.stopImmediatePropagation();
