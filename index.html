@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.98';
+const APP_VERSION = '2.99';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -7551,6 +7551,16 @@ function imgCalWorldDir(p){
   const t = Math.tan(THREE.MathUtils.degToRad(camL.fov) / 2);
   return new THREE.Vector3(p[0] * t, p[1] * t, -1).normalize().applyQuaternion(imgCal.ref);
 }
+// The middle of the view in an eye -- where the menus are centred, i.e. the
+// eye's half of the screen moved by SBS EYE DIST (applyUiEyeDist()) -- in eye
+// units from the half's own middle. The calibration marks are drawn around
+// it, and CALIBRATE IMAGE takes it as straight ahead.
+function viewCentre(eye){
+  if (!state.sbs) return [0, 0];
+  const { ew, eh } = eyeSize();
+  const shift = (state.uiEyeDist / 100) * (ew / 2);
+  return [(eye ? shift : -shift) * 2 / eh, 0];
+}
 function imgCalMeasureEye(eye){
   Object.assign(imgCal, { phase: 'measure', eye, ref: null, nudge: [0, 0], pairs: [], trail: [] });
 }
@@ -7577,7 +7587,8 @@ function imgCalNext(){
   // covering it is drawn.
   const seen = imgCalProject(imgCalWorldDir([0, 0]));
   if (!seen){ toast('TURNED TOO FAR', 1500); return; }
-  c.pairs.push([[seen[0] + c.nudge[0], seen[1] + c.nudge[1]], seen]);
+  const o = viewCentre(c.eye);
+  c.pairs.push([[o[0] + seen[0] + c.nudge[0], o[1] + seen[1] + c.nudge[1]], seen]);
   c.nudge = [0, 0];
   if (c.pairs.length < IMGCAL_TARGETS.length) return;
   // The head hardly moved: nothing was measured.
@@ -7587,7 +7598,8 @@ function imgCalNext(){
     toast('THE HEAD DID NOT TURN TO THE NODES -- NOTHING CHANGED', 3000);
     return;
   }
-  const { P, err } = imgCalFit([...c.pairs, [[0, 0], [0, 0]]]);
+  // The cross at the view's middle was on the target: seen straight ahead.
+  const { P, err } = imgCalFit([...c.pairs, [viewCentre(c.eye), [0, 0]]]);
   c.result[c.eye] = P;
   c.errs[c.eye] = err;
   if (c.eye === 0 && state.sbs){ c.phase = 'switch'; return; }
@@ -7628,8 +7640,9 @@ function drawImgCal(){
     g.font = '600 13px system-ui, sans-serif';
     g.textAlign = 'center';
     g.shadowColor = '#000'; g.shadowBlur = 4;
-    lines.forEach((t, i) => g.fillText(t, eye * ew + ew / 2, 24 + i * 18));
-    g.fillText(foot, eye * ew + ew / 2, eh - 16);
+    const cx = eye * ew + ew / 2 + viewCentre(eye)[0] * eh / 2;
+    lines.forEach((t, i) => g.fillText(t, cx, 24 + i * 18));
+    g.fillText(foot, cx, eh - 16);
     g.shadowBlur = 0;
   };
   const dot = (px)=>{
@@ -7654,7 +7667,8 @@ function drawImgCal(){
     return;
   }
   const eye = c.eye;
-  const toPx = p => [eye * ew + (p[0] * eh / ew + 1) / 2 * ew, (1 - p[1]) / 2 * eh];
+  const o = viewCentre(eye);   // everything around the middle of the view
+  const toPx = p => [eye * ew + ((p[0] + o[0]) * eh / ew + 1) / 2 * ew, (1 - (p[1] + o[1])) / 2 * eh];
   const n = c.ref ? c.pairs.length : -1;   // node being aimed, -1 = setting the target
   if (c.ref){
     // The head's path, pinned in the room.
@@ -7758,7 +7772,8 @@ function startTurnCal(){
   const el = document.createElement('div');
   el.id = 'turnCal';
   el.style.cssText = 'position:fixed;left:0;top:0;width:var(--app-w,100vw);height:var(--app-h,100vh);z-index:9000;touch-action:none;';
-  el.innerHTML = `<div style="position:absolute;left:0;top:0;width:${ew}px;height:100%;color:#eee;font:600 13px system-ui,sans-serif;letter-spacing:.06em;text-align:center;text-shadow:0 0 4px #000,0 0 4px #000;">
+  const ox = viewCentre(0)[0] * eyeSize().eh / 2;   // the middle of the view, not of the half
+  el.innerHTML = `<div style="position:absolute;left:${ox}px;top:0;width:${ew}px;height:100%;color:#eee;font:600 13px system-ui,sans-serif;letter-spacing:.06em;text-align:center;text-shadow:0 0 4px #000,0 0 4px #000;">
     <div class="tcMsg" style="position:absolute;top:12px;left:0;right:0;line-height:18px"></div>
     <div style="position:absolute;left:50%;top:50%;width:32px;height:32px;margin:-16px 0 0 -16px;
       background:linear-gradient(#f6c41c,#f6c41c) center/2px 100% no-repeat,linear-gradient(#f6c41c,#f6c41c) center/100% 2px no-repeat;
@@ -7854,7 +7869,8 @@ function startRoomAlign(){
   el.id = 'roomAlign';
   el.style.cssText = 'position:fixed;left:0;top:0;width:var(--app-w,100vw);height:var(--app-h,100vh);z-index:9000;touch-action:none;';
   // Left eye only, like CALIBRATE IMAGE's marks.
-  el.innerHTML = `<div style="position:absolute;left:0;top:12px;width:${ew}px;text-align:center;color:#ddd;font:600 13px system-ui,sans-serif;letter-spacing:.08em;text-shadow:0 0 4px #000,0 0 4px #000;">
+  const ox = viewCentre(0)[0] * eyeSize().eh / 2;   // the middle of the view, not of the half
+  el.innerHTML = `<div style="position:absolute;left:${ox}px;top:12px;width:${ew}px;text-align:center;color:#ddd;font:600 13px system-ui,sans-serif;letter-spacing:.08em;text-shadow:0 0 4px #000,0 0 4px #000;">
     <div>LINE THE GRID UP WITH A REAL LEVEL EDGE</div>
     <div>◀ ▶ ROLL · ▲ ▼ TILT · CONFIRM · ESC = UNDO</div>
     <div class="raVals" style="color:#f6c41c;margin-top:4px"></div></div>`;
