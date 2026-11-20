@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.15';
+const APP_VERSION = '3.16';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -2305,7 +2305,9 @@ function updateQuad(){
   // than only magnifying the content rendered inside a fixed-size frame.
   const zoomMul = 1 + state.zoom / 100;
   const sx = Math.max(0.05, zoomMul * (1 + state.scaleX / 100));
-  const sy = Math.max(0.05, zoomMul * (1 + state.scaleY / 100));
+  // NAVIGATION: SCALE Y doesn't stretch the picture there -- it lifts the
+  // board off the ground line instead (navBoardLift()).
+  const sy = Math.max(0.05, zoomMul * (1 + (state.content === 'nav' ? 0 : state.scaleY) / 100));
 
   const TL = [-sx,  sy];
   const TR = [ sx,  sy];
@@ -2414,7 +2416,10 @@ function applyEyeProjection(){
   if (world){
     const contentZoomMul = Math.max(0.1, 1 + state.contentZoom / 100);
     world.scale.setScalar(Math.min(1, aspect) * contentZoomMul);
-    if (navMesh) navMesh.scale.setScalar(Math.min(1, aspect) * contentZoomMul);   // NAVIGATION's board
+    if (navMesh){   // NAVIGATION's board
+      navMesh.scale.setScalar(Math.min(1, aspect) * contentZoomMul);
+      navMesh.position.y = navBoardLift();
+    }
     if (demoHeadGroup) demoHeadGroup.scale.setScalar(Math.min(1, aspect) * contentZoomMul);   // BALL IN BOX
   }
 
@@ -8239,6 +8244,14 @@ function navBoard(){
   rig.add(navMesh);
   applyEyeProjection();   // CONTENT ZOOM on it
   return navMesh;
+}
+// How high the board sits: by default its lower edge just above the eye
+// line, where the ground line runs into the distance, so the two don't
+// overlap; SCALE Y adds to the gap (+100 = one board height more) or takes
+// from it.
+function navBoardLift(){
+  const h = 1.9 * (navMesh ? navMesh.scale.y : 1);
+  return h * (0.37 + state.scaleY / 100);   // the drawn part ends ~0.35 h below the board's middle
 }
 // The app's direction arrow (the content navigator's), as a canvas path.
 const NAV_ARROW = typeof Path2D !== 'undefined' ? new Path2D('M4,12l1.41,1.41L11,7.83V20h2V7.83l5.58,5.59L20,12l-8,-8L4,12z') : null;
