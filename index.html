@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.10';
+const APP_VERSION = '3.11';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -785,6 +785,7 @@ const DEFAULTS = {
                             // 0 = follow the sensor exactly.
   chromaOpen: true,        // CHROMA KEY row, HIDE / SHOW: folds the chroma key
                             // settings away (keying itself stays as it is).
+  resolution: 2,           // RESOLUTION: index into RESOLUTIONS -- renderPixelRatio()
   menuType: 1,             // MENU TYPE: 0 REDUCED | 1 BASIC | 2 EXPERT -- MENU_TYPES.
                             // EXPERT adds the rows marked x:1 in MENU; REDUCED
                             // is REDUCED_MENU, once a photo/video is loaded.
@@ -860,6 +861,7 @@ const SHAPES = [
 ];
 const CHOOSE_SOURCE = ['CHOOSE'];
 const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER', 'CAMERA', 'NAVIGATION'];
+const RESOLUTIONS = ['1×', '1.5×', '2×', 'MAX'];   // RESOLUTION -- renderPixelRatio()
 const MODE_NAV = 5;   // NAVIGATE's board as the content -- navEnterContent()
 const MODE_CAMERA = 4;   // live camera -- startCamera(); the row under MODE picks FRONT / BACK
 const CAMERA_SIDES = ['FRONT', 'BACK'];
@@ -988,7 +990,8 @@ const MENU = [
     // below. 0 displays as OFF and disables the auto-hide entirely
     // (fmt() special-cases this key: "OFF" at 0, "<n>S" otherwise).
     { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1, x:1 },
-    { type:'step',  key:'smoothMs', label:'SMOOTH CHANGES', min:0, max:1000, step:50, x:1 }
+    { type:'step',  key:'smoothMs', label:'SMOOTH CHANGES', min:0, max:1000, step:50, x:1 },
+    { type:'enum',  key:'resolution', label:'RESOLUTION', options:RESOLUTIONS, x:1 }
   ]},
   { title:'HEAD TRACKING', items:[
     // How the phone is mounted relative to the head -- see DEFAULTS.
@@ -1436,9 +1439,18 @@ let mediaW = 0, mediaH = 0, usingImage = false;
 
 const CONTENT_DISTANCE = -3;
 
+// RESOLUTION (GENERAL, expert): how many of the screen's real pixels the
+// picture is drawn with. At 1x (as it always was) a phone's 2-3x retina
+// screen gets a picture drawn at a third of its sharpness per side -- fine
+// for video, blurry for text. Never above the screen's own ratio.
+function renderPixelRatio(){
+  const dpr = window.devicePixelRatio || 1;
+  const want = [1, 1.5, 2, dpr][state.resolution] || 2;
+  return Math.max(1, Math.min(dpr, want));
+}
 function initThree(){
   renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
-  renderer.setPixelRatio(1);
+  renderer.setPixelRatio(renderPixelRatio());   // RESOLUTION
   renderer.autoClear = false;
   renderer.setClearColor(0x000000, 1);
   stage.appendChild(renderer.domElement);
@@ -5220,6 +5232,7 @@ function stepEnumValue(node, dir){
     applyAll();
   }
   if (node.key === 'portraitRot') applyAll();
+  if (node.key === 'resolution'){ renderer.setPixelRatio(renderPixelRatio()); onResize(); }
   if (node.key === 'projection'){
     cancelProjectionProbe();   // the user's choice wins over a late detection
     if (galleryItems.length && galleryItems[galleryIdx]) galleryItems[galleryIdx].projection = state.projection;
@@ -7783,7 +7796,7 @@ function navParseDest(text){
   if (/goo\.gl|maps\.app|maps\.apple|apple\.co/.test(u.hostname)) return { short: u.href };
   return { query: t };
 }
-async function navResolveDest(text){
+async function navResolveDest(text, near){
   let d = navParseDest(text);
   if (!d) throw new Error('TYPE AN ADDRESS OR PASTE A MAPS LINK');
   if (d.short){
@@ -7796,10 +7809,13 @@ async function navResolveDest(text){
     d = { lat: +m[1], lng: +m[2] };
   }
   if (d.query){
-    const r = await fetch(NAV_GEOCODE + encodeURIComponent(d.query), { headers: { 'Accept-Language': navigator.language || 'en' } });
+    // Several places share a name (there's more than one Senec): of the
+    // first ten found, the nearest one.
+    const r = await fetch(NAV_GEOCODE.replace('limit=1', 'limit=10') + encodeURIComponent(d.query), { headers: { 'Accept-Language': navigator.language || 'en' } });
     const j = await r.json();
     if (!j.length) throw new Error('PLACE NOT FOUND');
-    return { lat: +j[0].lat, lng: +j[0].lon, name: (j[0].name || j[0].display_name || d.query).split(',')[0] };
+    const best = near ? j.reduce((a, b) => navDist(near, { lat: +b.lat, lng: +b.lon }) < navDist(near, { lat: +a.lat, lng: +a.lon }) ? b : a) : j[0];
+    return { lat: +best.lat, lng: +best.lon, name: (best.name || best.display_name || d.query).split(',')[0] };
   }
   return { lat: d.lat, lng: d.lng, name: `${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}` };
 }
@@ -7828,7 +7844,7 @@ async function startNav(mode){
   toast('FINDING THE WAY…', 10000);
   try{
     const here = await navHere();   // first, straight from the tap: that's when the browser asks
-    const dest = await navResolveDest(text);
+    const dest = await navResolveDest(text, here);
     const route = await navRoute(here, dest, mode);
     stopNav(true);
     nav = { mode, dest, route, idx: 1, pos: here, heading: null, gpsHeading: null, watch: null,
