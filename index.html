@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.97';
+const APP_VERSION = '2.98';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -708,6 +708,10 @@ const DEFAULTS = {
   trapezoid: 0,
   flipX: false, flipY: false,
   gyroMulX: 0.4, gyroMulY: 0.4,
+  yawScale: 1,             // YAW SCALE (HEAD TRACKING, expert): corrects how much the
+                            // sensor over- or under-reads a turn left / right --
+                            // measured by CALIBRATE 360 TURN (startTurnCal()).
+                            // On top of X MULTIPLY, in applyStableTuning().
   freezeX: false, freezeY: false,
   gyroFlipX: false, gyroFlipY: false,
   trackingAlgo: 3,         // 0 = CLASSIC (alpha/beta/gamma), 1 = GYRO (BETA)
@@ -967,6 +971,9 @@ const MENU = [
     { type:'step',  key:'mountYaw',  label:'PHONE YAW',  min:-90, max:90, step:1, whenTrue:'mountRows', x:1 },
     // Measures all three angles above from two head sweeps -- headCalStep().
     { type:'action', act:'calibrateHead', label:'CALIBRATE HEAD', textbtn:true, whenTrue:'mountRows', x:1 },
+    // A full turn back onto a far object: the sensor's own error -- startTurnCal().
+    { type:'action', act:'turnCal', label:'CALIBRATE 360 TURN', textbtn:true, x:1 },
+    { type:'step',  key:'yawScale', label:'YAW SCALE', min:0.8, max:1.2, step:0.01, dec:2, x:1 },
     // Line the GRID ROOM up with the real room by hand -- startRoomAlign().
     { type:'action', act:'roomAlign', label:'ALIGN WITH ROOM', textbtn:true, whenTrue:'mountRows', x:1 },
     // HOLO3's see-through tuning -- see DEFAULTS.predictMs/smoothing.
@@ -2541,7 +2548,7 @@ function twistAngle(twist, axis){
 // above. Called from animate() once relQuat is set for this frame.
 function applyStableTuning(){
   swingTwist(relQuat, WORLD_UP, stableYawTwist);
-  const yaw = state.freezeX ? 0 : twistAngle(stableYawTwist, WORLD_UP) * state.gyroMulX * (state.gyroFlipX ? -1 : 1);
+  const yaw = state.freezeX ? 0 : twistAngle(stableYawTwist, WORLD_UP) * state.yawScale * state.gyroMulX * (state.gyroFlipX ? -1 : 1);
   stableYawScaled.setFromAxisAngle(WORLD_UP, yaw);
 
   // What's left once yaw is removed has no yaw component at all, so pitch
@@ -7728,6 +7735,108 @@ document.addEventListener('keydown', e=>{
 }, true);
 window.addEventListener('resize', ()=>{ if (imgCal) drawImgCal(); });
 
+/* ---- CALIBRATE 360 TURN (HEAD TRACKING): a full circle is the one turn
+   whose real size is known without any other equipment.
+     1. a cross in the middle (left eye): put it on something far away and
+        press D
+     2. hold still for 3 s: the sensor's drift -- how far it says it turns
+        when it doesn't -- is measured, and taken out of step 3
+     3. turn slowly a whole circle, body and all, either way, until the cross
+        is back on the same thing, and press D
+   The sensor's raw turn (relQuat, before X MULTIPLY and YAW SCALE), counted
+   frame by frame so it passes 180 degrees, minus the drift over that time,
+   against 360 gives YAW SCALE. A back, Esc cancels, D / tap / Enter next. ---- */
+const TURNCAL_STILL_MS = 3000;
+let turnCal = null;   // { el, bg, phase: 'aim' | 'still' | 'turn', yaw, acc, t0, drift, tTurn }
+const turnCalEuler = new THREE.Euler();
+function turnCalYaw(){ return turnCalEuler.setFromQuaternion(relQuat, 'YXZ').y; }
+function startTurnCal(){
+  if (turnCal || imgCal || roomAlign) return;
+  if (!motionGranted){ toast('HEAD TRACKING IS NEEDED FOR THIS', 2500); return; }
+  if (uiState === 'list') closeList();
+  const { ew } = eyeSize();
+  const el = document.createElement('div');
+  el.id = 'turnCal';
+  el.style.cssText = 'position:fixed;left:0;top:0;width:var(--app-w,100vw);height:var(--app-h,100vh);z-index:9000;touch-action:none;';
+  el.innerHTML = `<div style="position:absolute;left:0;top:0;width:${ew}px;height:100%;color:#eee;font:600 13px system-ui,sans-serif;letter-spacing:.06em;text-align:center;text-shadow:0 0 4px #000,0 0 4px #000;">
+    <div class="tcMsg" style="position:absolute;top:12px;left:0;right:0;line-height:18px"></div>
+    <div style="position:absolute;left:50%;top:50%;width:32px;height:32px;margin:-16px 0 0 -16px;
+      background:linear-gradient(#f6c41c,#f6c41c) center/2px 100% no-repeat,linear-gradient(#f6c41c,#f6c41c) center/100% 2px no-repeat;
+      filter:drop-shadow(0 0 1px #000) drop-shadow(0 0 1px #000)"></div>
+    <div style="position:absolute;bottom:12px;left:0;right:0">NEXT: D · BACK: A · CANCEL: ESC</div></div>`;
+  document.body.appendChild(el);
+  turnCal = { el, bg: gridBgOn(), phase: 'aim', yaw: 0, acc: 0, t0: 0, drift: 0, tTurn: 0 };
+  el.addEventListener('pointerdown', e=>{ e.preventDefault(); e.stopPropagation(); turnCalNext(); });
+  const tick = ()=>{ if (!turnCal) return; turnCalTick(); requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+}
+function endTurnCal(){
+  if (!turnCal) return;
+  const { el, bg } = turnCal;
+  turnCal = null;
+  el.remove();
+  gridBgOff(bg);
+}
+function turnCalTick(){
+  const c = turnCal;
+  // Count the turn frame by frame, so it carries on past 180 degrees.
+  const y = turnCalYaw();
+  let d = y - c.yaw;
+  if (d > Math.PI) d -= 2 * Math.PI;
+  if (d < -Math.PI) d += 2 * Math.PI;
+  c.yaw = y;
+  c.acc += d;
+  const now = performance.now();
+  let msg;
+  if (c.phase === 'aim') msg = 'STEP 1 / 3<br>PUT THE CROSS ON SOMETHING FAR AWAY<br>PRESS D';
+  else if (c.phase === 'still'){
+    const left = TURNCAL_STILL_MS - (now - c.t0);
+    if (left <= 0){
+      c.drift = c.acc / ((now - c.t0) / 1000);   // rad per second, while still
+      Object.assign(c, { phase: 'turn', acc: 0, tTurn: now });
+    }
+    msg = `STEP 2 / 3<br>HOLD STILL · ${Math.max(0, Math.ceil(left / 1000))}`;
+  } else {
+    const deg = Math.round(THREE.MathUtils.radToDeg(Math.abs(c.acc)));
+    msg = `STEP 3 / 3<br>TURN SLOWLY A FULL CIRCLE, BODY AND ALL<br>CROSS BACK ON THE SAME THING · PRESS D<br><span style="color:#f6c41c">TURNED ${deg}°</span>`;
+  }
+  const el = c.el.querySelector('.tcMsg');
+  if (el.innerHTML !== msg) el.innerHTML = msg;
+}
+function turnCalNext(){
+  const c = turnCal;
+  if (!c) return;
+  if (c.phase === 'aim'){ Object.assign(c, { phase: 'still', acc: 0, t0: performance.now() }); return; }
+  if (c.phase !== 'turn') return;
+  const secs = (performance.now() - c.tTurn) / 1000;
+  const turned = Math.abs(c.acc - c.drift * secs);
+  const deg = THREE.MathUtils.radToDeg(turned);
+  if (deg < 270 || deg > 450){ toast(`TURNED ${Math.round(deg)}° -- GO A FULL CIRCLE, BACK TO THE SAME THING`, 2500); return; }
+  const scale = Math.round(THREE.MathUtils.clamp(360 / deg, SPEC.yawScale.min, SPEC.yawScale.max) * 100) / 100;
+  const driftMin = Math.round(THREE.MathUtils.radToDeg(c.drift) * 60 * 10) / 10;
+  state.yawScale = scale;
+  refreshMenu();
+  saveState();
+  endTurnCal();
+  toast(`SENSOR READ ${Math.round(deg)}° · YAW SCALE ${scale.toFixed(2)} · DRIFT ${driftMin}°/MIN`, 4000);
+}
+function turnCalBack(){
+  const c = turnCal;
+  if (!c) return;
+  if (c.phase === 'aim') endTurnCal();
+  else Object.assign(c, { phase: 'aim', acc: 0 });
+}
+document.addEventListener('keydown', e=>{
+  if (!turnCal) return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (k === 'd' || k === 'Enter' || k === ' '){ if (!e.repeat) turnCalNext(); }
+  else if (k === 'a' || k === 'Backspace'){ if (!e.repeat) turnCalBack(); }
+  else if (k === 'Escape') endTurnCal();
+  else return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
+
 /* ---- ALIGN WITH ROOM (HEAD TRACKING): for a see-through visor. The GRID
    ROOM shows over the real room; with a real level edge in view (a table,
    a shelf, a window sill -- or the horizon), ◀ / ▶ turn PHONE ROLL until the
@@ -7822,6 +7931,7 @@ function handleAct(act, el){
     case 'measureFov': fovMeasureStep(); break;
     case 'imgCal': startImgCal(); break;
     case 'roomAlign': startRoomAlign(); break;
+    case 'turnCal': startTurnCal(); break;
     case 'imgCalClear': state.imgCal = []; state.imgCalR = []; toast('IMAGE CORRECTION REMOVED'); break;
     case 'calibrateHead': headCalStep(); break;
     case 'closeList': closeList(); break;
