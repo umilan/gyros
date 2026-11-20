@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.01';
+const APP_VERSION = '3.02';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -771,6 +771,9 @@ const DEFAULTS = {
   menuType: 1,             // MENU TYPE: 0 REDUCED | 1 BASIC | 2 EXPERT -- MENU_TYPES.
                             // EXPERT adds the rows marked x:1 in MENU; REDUCED
                             // is REDUCED_MENU, once a photo/video is loaded.
+  smoothMs: 150,           // SMOOTH CHANGES (GENERAL, expert), ms: how long a picture
+                            // setting takes to glide to a new value instead of
+                            // jumping -- 0 = OFF. See smoothChanges().
   menuTimeout: 3           // seconds the bottom OSD strip sits idle before
                             // auto-hiding, see checkBotMenuIdle(). 0 = OFF
                             // disables auto-hide.
@@ -966,7 +969,8 @@ const MENU = [
     // increments -- see checkBotMenuIdle() near "Bottom-menu auto-hide"
     // below. 0 displays as OFF and disables the auto-hide entirely
     // (fmt() special-cases this key: "OFF" at 0, "<n>S" otherwise).
-    { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1, x:1 }
+    { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1, x:1 },
+    { type:'step',  key:'smoothMs', label:'SMOOTH CHANGES', min:0, max:1000, step:50, x:1 }
   ]},
   { title:'HEAD TRACKING', items:[
     // How the phone is mounted relative to the head -- see DEFAULTS.
@@ -1312,6 +1316,7 @@ function fmt(key, v){
   if (ENUM_SPEC[key]) return ENUM_SPEC[key].options[v];
   if (key === 'menuTimeout') return v <= 0 ? 'OFF' : `${Math.round(v)}S`;
   if (key === 'predictMs') return `${Math.round(v)}MS`;
+  if (key === 'smoothMs') return v <= 0 ? 'OFF' : `${Math.round(v)}MS`;
   if (CHROMA_INT_KEYS.includes(key) || key === 'chromaSmooth' || key === 'chromaSpill' || key === 'cutoutSmooth') return `${Math.round(v)}%`;
   const dec = SPEC[key] && SPEC[key].dec ? SPEC[key].dec : 0;
   return dec ? v.toFixed(dec) : String(Math.round(v));
@@ -3263,7 +3268,56 @@ document.addEventListener('visibilitychange', ()=>{ if (document.hidden) gamepad
    ========================================================================= */
 const clock = new THREE.Clock();
 
+/* SMOOTH CHANGES: the picture settings below glide to a new value over about
+   state.smoothMs instead of jumping -- a step of POS Y, a held ZOOM, a
+   switch of VIEW. `state` always holds where they're going (menus, saving,
+   keys all see that); `smoothed` holds where they are on the way. For each
+   frame drawn while they differ, the on-the-way values stand in for the
+   real ones (animate()), and the functions that place the picture run with
+   them; the real ones are put back straight after. */
+const SMOOTH_KEYS = ['posX', 'posY', 'contentZoom', 'zoom', 'scaleX', 'scaleY', 'trapezoid', 'contentAngle',
+  'eyeDist', 'eyeOffsetY', 'uiEyeDist', 'lensFov', 'brightness', 'contrast', 'saturation'];
+const smoothed = {};
+let smoothLast = 0, smoothMoving = false;
+// Moves the on-the-way values along; true while any of them differs (and
+// for the one frame after, which lands them exactly).
+function smoothChanges(){
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - (smoothLast || now)) / 1000);
+  smoothLast = now;
+  const tau = state.smoothMs / 1000 / 3;   // ~95 % of the way in smoothMs
+  const a = tau > 0 ? 1 - Math.exp(-dt / tau) : 1;
+  let moving = false;
+  for (const k of SMOOTH_KEYS){
+    const target = state[k];
+    if (typeof target !== 'number') continue;
+    let v = smoothed[k];
+    if (typeof v !== 'number' || a >= 1){ smoothed[k] = target; continue; }
+    v += (target - v) * a;
+    const span = SPEC[k] ? SPEC[k].max - SPEC[k].min : 1;
+    if (Math.abs(target - v) < span * 1e-4) v = target;
+    else moving = true;
+    smoothed[k] = v;
+  }
+  const run = moving || smoothMoving;
+  smoothMoving = moving;
+  return run;
+}
 function animate(){
+  if (!smoothChanges()){ animateFrame(); return; }
+  const real = {};
+  for (const k of SMOOTH_KEYS){ real[k] = state[k]; state[k] = smoothed[k]; }
+  try{
+    applyEyeProjection();
+    updateQuad();
+    applyEyeDistance();
+    applyUiEyeDist();
+    animateFrame();
+  } finally {
+    Object.assign(state, real);
+  }
+}
+function animateFrame(){
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
 
