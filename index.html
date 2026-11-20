@@ -568,6 +568,7 @@
       <div class="paneTitle">NAVIGATE<button class="paneCloseBtn" data-dlgclose tabindex="-1" aria-label="Close">&#215;</button></div>
       <div class="hr"></div>
       <p class="helpText">An address or place, a Google Maps or Apple Maps link, or "lat, lng". Walking and cycling directions from OpenStreetMap, shown over the picture. Never use while driving; keep an eye on traffic.</p>
+      <p class="helpText" id="navHelp" hidden style="color:var(--accent)"></p>
       <div class="section">WHERE TO</div>
       <input class="dlgInput" type="text" id="navInput" placeholder="Address, place or Maps link" autocomplete="off" spellcheck="false">
       <button class="textbtn" id="navPaste">PASTE LINK</button>
@@ -648,7 +649,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.06';
+const APP_VERSION = '3.07';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -7712,8 +7713,11 @@ let nav = null;   // { mode, dest:{lat,lng,name}, route, idx, pos, heading, gpsH
 const navDlg = document.getElementById('navDlg');
 const navInput = document.getElementById('navInput');
 
-function openNavDlg(){
+function openNavDlg(help){
   if (uiState === 'list') closeList();
+  const h = document.getElementById('navHelp');
+  h.hidden = !help;
+  h.textContent = help || '';
   navDlg.hidden = false;
   navInput.focus();
 }
@@ -7800,7 +7804,7 @@ async function navResolveDest(text){
 function navHere(){
   return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(
     p => res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }),
-    e => rej(new Error(e.code === 1 ? 'LOCATION ACCESS DENIED' : 'NO GPS POSITION')),
+    e => rej(Object.assign(new Error(e.code === 1 ? 'LOCATION ACCESS DENIED' : 'NO GPS POSITION'), { denied: e.code === 1 })),
     { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }));
 }
 async function navRoute(from, to, mode){
@@ -7821,7 +7825,8 @@ async function startNav(mode){
   navDlg.hidden = true;
   toast('FINDING THE WAY…', 10000);
   try{
-    const [dest, here] = await Promise.all([navResolveDest(text), navHere()]);
+    const here = await navHere();   // first, straight from the tap: that's when the browser asks
+    const dest = await navResolveDest(text);
     const route = await navRoute(here, dest, mode);
     stopNav(true);
     nav = { mode, dest, route, idx: 1, pos: here, heading: null, gpsHeading: null, watch: null,
@@ -7831,8 +7836,20 @@ async function startNav(mode){
     navUpdate();
     toast(`TO ${dest.name.toUpperCase().slice(0, 24)} · ${navKm(route.dist)} · NOT WHILE DRIVING`, 4000);
   }catch(e){
+    // Location refused: the browser asks only once per site; after a "don't
+    // allow" (or with location off for the browser) it refuses straight
+    // away, with no question. Say where to turn it back on.
+    if (e.denied){ navInput.value = text; openNavDlg(navLocationHelp()); return; }
     toast(String(e.message || 'NAVIGATION FAILED').toUpperCase(), 3500);
   }
+}
+function navLocationHelp(){
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (ios && /CriOS/.test(ua)) return 'LOCATION IS OFF FOR CHROME. iPhone Settings → Privacy & Security → Location Services: ON, then Chrome → While Using the App. Then press WALK THERE again.';
+  if (ios) return 'LOCATION IS BLOCKED. iPhone Settings → Privacy & Security → Location Services: ON, and Safari Websites → While Using the App. In Safari, also tap aA (or the page menu) → Website Settings → Location → Ask or Allow. Then press WALK THERE again.';
+  if (/Android/.test(ua)) return 'LOCATION IS BLOCKED. Tap the icon left of the address bar → Permissions → Location → Allow, and make sure the phone\'s Location is on. Then press WALK THERE again.';
+  return 'LOCATION IS BLOCKED. Click the icon left of the address bar → Location → Allow (and turn on location for the browser in the system settings). Then press WALK THERE again.';
 }
 function stopNav(quiet){
   if (!nav) return;
