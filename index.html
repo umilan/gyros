@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.91';
+const APP_VERSION = '2.92';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -968,6 +968,8 @@ const MENU = [
     { type:'step',  key:'mountYaw',  label:'PHONE YAW',  min:-90, max:90, step:1, whenTrue:'mountRows', x:1 },
     // Measures all three angles above from two head sweeps -- headCalStep().
     { type:'action', act:'calibrateHead', label:'CALIBRATE HEAD', textbtn:true, whenTrue:'mountRows', x:1 },
+    // Line the GRID ROOM up with the real room by hand -- startRoomAlign().
+    { type:'action', act:'roomAlign', label:'ALIGN WITH ROOM', textbtn:true, whenTrue:'mountRows', x:1 },
     // HOLO3's see-through tuning -- see DEFAULTS.predictMs/smoothing.
     { type:'step',  key:'predictMs', label:'PREDICTION', min:0, max:150, step:5, whenTrue:'holo3', x:1 },
     { type:'step',  key:'smoothing', label:'SMOOTHING',  min:0, max:200, step:5, whenTrue:'holo3', x:1 }
@@ -7453,27 +7455,37 @@ function startImgCal(){
   cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
   el.appendChild(cv);
   document.body.appendChild(el);
-  imgCal = { el, cv, ref: null, seen: [], prevContent: state.content, prevShape: state.shape };
-  if (!(state.content === 'demo' && SHAPES[state.shape] === 'GRID ROOM')){
-    disposeGroup(roomGroup);
-    buildGridRoom(roomGroup);
-    state.content = 'demo';
-    applyAll();
-  }
+  imgCal = { el, cv, ref: null, seen: [], trail: [], bg: gridBgOn() };
+  const tick = ()=>{ if (!imgCal) return; drawImgCal(); requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
   el.addEventListener('pointerdown', e=>{ e.preventDefault(); e.stopPropagation(); imgCalConfirm(); });
   drawImgCal();
 }
 function endImgCal(){
   if (!imgCal) return;
   imgCal.el.remove();
-  const { prevContent, prevShape } = imgCal;
+  const { bg } = imgCal;
   imgCal = null;
-  if (!(prevContent === 'demo' && SHAPES[prevShape] === 'GRID ROOM')){
-    state.content = prevContent;
-    if (prevContent === 'demo') buildDemo(prevShape);
-    else disposeGroup(roomGroup);   // only ever holds GRID ROOM
+  gridBgOff(bg);
+}
+// The GRID ROOM demo behind a calibration, whatever was on screen; gridBgOff()
+// with what this returns puts that back.
+function gridBgOn(){
+  const prev = { content: state.content, shape: state.shape };
+  if (!(state.content === 'demo' && SHAPES[state.shape] === 'GRID ROOM')){
+    disposeGroup(roomGroup);
+    buildGridRoom(roomGroup);
+    state.content = 'demo';
     applyAll();
   }
+  return prev;
+}
+function gridBgOff(prev){
+  if (prev.content === 'demo' && SHAPES[prev.shape] === 'GRID ROOM') return;
+  state.content = prev.content;
+  if (prev.content === 'demo') buildDemo(prev.shape);
+  else disposeGroup(roomGroup);   // only ever holds GRID ROOM
+  applyAll();
 }
 // Where the far spot is now, seen from the head: eye units.
 function imgCalSeenNow(){
@@ -7488,12 +7500,13 @@ function imgCalConfirm(){
   if (!imgCal) return;
   if (!imgCal.ref){
     imgCal.ref = rig.quaternion.clone();
-    drawImgCal();
+    imgCal.trail = [];
     return;
   }
   const X = imgCalSeenNow();
   if (!X){ toast('TURNED TOO FAR', 1500); return; }
   imgCal.seen.push(X);
+  imgCal.trail = [];
   if (imgCal.seen.length < IMGCAL_TARGETS.length){ drawImgCal(); return; }
   // Corners seen far closer together or further apart than drawn means the
   // head didn't really follow them (confirmed without turning): keep the
@@ -7519,7 +7532,7 @@ function imgCalBack(){
   if (!imgCal) return;
   if (imgCal.seen.length) imgCal.seen.pop();
   else imgCal.ref = null;
-  drawImgCal();
+  imgCal.trail = [];
 }
 function drawImgCal(){
   if (!imgCal) return;
@@ -7549,6 +7562,40 @@ function drawImgCal(){
     });
     g.setLineDash([]);
     g.globalAlpha = 1;
+    // What the head has drawn: where the far spot is, as the app sees it,
+    // marked live as the head moves (a white dot leaving a line), and the
+    // corners confirmed so far joined into each square as measured. With
+    // no distortion the dot sits under the crosshair at every corner and
+    // the measured squares come out on top of the drawn ones; how far they
+    // are off is what gets corrected.
+    if (imgCal.ref){
+      const live = imgCalSeenNow();
+      if (live){
+        const last = imgCal.trail[imgCal.trail.length - 1];
+        if (!last || Math.hypot(live[0] - last[0], live[1] - last[1]) > 0.004) imgCal.trail.push(live);
+        if (imgCal.trail.length > 600) imgCal.trail.shift();
+      }
+      const line = (pts, col, closed)=>{
+        if (pts.length < 2) return;
+        g.strokeStyle = col;
+        g.beginPath();
+        pts.forEach((p, k)=>{ const q = toPx(p); k ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+        if (closed) g.closePath();
+        g.stroke();
+      };
+      g.lineWidth = 3;
+      for (let i = 0; i < 3; i++){
+        const pts = imgCal.seen.slice(i * 4, i * 4 + 4);
+        line(pts, IMGCAL_COLORS[i], pts.length === 4);
+      }
+      g.lineWidth = 2;
+      line(imgCal.trail, '#fff', false);
+      if (live){
+        const q = toPx(live);
+        g.fillStyle = '#fff';
+        g.beginPath(); g.arc(q[0], q[1], 5, 0, Math.PI * 2); g.fill();
+      }
+    }
     // The crosshair, where the head has to bring it onto the far spot.
     const at = toPx(n < 0 ? [0, 0] : IMGCAL_TARGETS[n]);
     // Dark under-stroke, so it stands out on the grid's lines.
@@ -7583,6 +7630,60 @@ document.addEventListener('keydown', e=>{
   e.stopImmediatePropagation();
 }, true);
 window.addEventListener('resize', ()=>{ if (imgCal) drawImgCal(); });
+
+/* ---- ALIGN WITH ROOM (HEAD TRACKING): for a see-through visor. The GRID
+   ROOM shows over the real room; with a real level edge in view (a table,
+   a shelf, a window sill -- or the horizon), ◀ / ▶ turn PHONE ROLL until the
+   grid's lines run the same way, ▲ / ▼ move PHONE TILT until its centre line
+   sits at the same height. Both act live (v28BuildMount() runs every
+   frame). Confirm (tap, Enter, Space) keeps them, Esc puts them back.
+   Turning the hand-set angles switches AUTO TILT off, as stepping them does. ---- */
+let roomAlign = null;   // { el, bg, prev }
+function startRoomAlign(){
+  if (roomAlign || imgCal) return;
+  if (!motionGranted){ toast('HEAD TRACKING IS NEEDED FOR THIS', 2500); return; }
+  if (uiState === 'list') closeList();
+  const { ew } = eyeSize();
+  const el = document.createElement('div');
+  el.id = 'roomAlign';
+  el.style.cssText = 'position:fixed;left:0;top:0;width:var(--app-w,100vw);height:var(--app-h,100vh);z-index:9000;touch-action:none;';
+  // Left eye only, like CALIBRATE IMAGE's marks.
+  el.innerHTML = `<div style="position:absolute;left:0;top:12px;width:${ew}px;text-align:center;color:#ddd;font:600 13px system-ui,sans-serif;letter-spacing:.08em;text-shadow:0 0 4px #000,0 0 4px #000;">
+    <div>LINE THE GRID UP WITH A REAL LEVEL EDGE</div>
+    <div>◀ ▶ ROLL · ▲ ▼ TILT · CONFIRM · ESC = UNDO</div>
+    <div class="raVals" style="color:#f6c41c;margin-top:4px"></div></div>`;
+  document.body.appendChild(el);
+  roomAlign = { el, bg: gridBgOn(), prev: { mountAuto: state.mountAuto, mountRoll: state.mountRoll, mountTilt: state.mountTilt } };
+  el.addEventListener('pointerdown', e=>{ e.preventDefault(); e.stopPropagation(); endRoomAlign(true); });
+  showRoomAlign();
+}
+function showRoomAlign(){
+  if (roomAlign) roomAlign.el.querySelector('.raVals').textContent = `ROLL ${state.mountRoll}° · TILT ${state.mountTilt}°`;
+}
+function endRoomAlign(keep){
+  if (!roomAlign) return;
+  const { el, bg, prev } = roomAlign;
+  roomAlign = null;
+  el.remove();
+  if (!keep) Object.assign(state, prev);
+  gridBgOff(bg);
+  refreshMenu();
+  saveState();
+  toast(keep ? `ROLL ${state.mountRoll}° · TILT ${state.mountTilt}° KEPT` : 'ALIGNMENT UNDONE');
+}
+document.addEventListener('keydown', e=>{
+  if (!roomAlign) return;
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  const step = { ArrowLeft: ['mountRoll', -1], a: ['mountRoll', -1], ArrowRight: ['mountRoll', 1], d: ['mountRoll', 1],
+                 ArrowUp: ['mountTilt', 1], w: ['mountTilt', 1], ArrowDown: ['mountTilt', -1], s: ['mountTilt', -1] }[k];
+  if (step) setStepValue(step[0], state[step[0]] + step[1]);
+  else if (k === 'Enter' || k === ' '){ if (!e.repeat) endRoomAlign(true); }
+  else if (k === 'Escape') endRoomAlign(false);
+  else return;
+  showRoomAlign();
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}, true);
 
 // A tap anywhere on a menu's or dialog's header closes it, as its x does.
 document.addEventListener('click', e=>{
@@ -7623,6 +7724,7 @@ function handleAct(act, el){
     case 'recenter':  recenter(); break;
     case 'measureFov': fovMeasureStep(); break;
     case 'imgCal': startImgCal(); break;
+    case 'roomAlign': startRoomAlign(); break;
     case 'imgCalClear': state.imgCal = DEFAULTS.imgCal; updateQuad(); toast('IMAGE CORRECTION REMOVED'); break;
     case 'calibrateHead': headCalStep(); break;
     case 'closeList': closeList(); break;
