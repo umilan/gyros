@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.16';
+const APP_VERSION = '3.17';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -863,7 +863,7 @@ const SHAPES = [
   'SNOW',          // flakes falling all around you -- buildSnow()
   'SPACE TRAVEL',  // flying ahead through stars -- buildSpace()
   'MAGIC SPIRAL',  // a turning rainbow spiral in front -- buildSpiral()
-  'BALL IN BOX',   // a box held in front of you, a ball inside it rolling with your head -- buildBallBox()
+  'BALL IN BOX',   // a box held in front of you, three balls inside rolling with your head -- buildBallBox()
   'OFF'
 ];
 const CHOOSE_SOURCE = ['CHOOSE'];
@@ -1558,31 +1558,35 @@ function headGroup(){
   }
   return demoHeadGroup;
 }
-/* BALL IN BOX: a glass box held still in front of you (it turns with the
-   head, so it never moves on screen) with a ball inside that the head's
-   movement does move -- as a real ball in a real box would. Simulated in
-   the box's own frame: gravity as it points there given how the head is
-   tilted (rig), plus the pushes of the box being carried round by the head
-   3 m out (Coriolis, centrifugal, and the jolt of starting / stopping a
-   turn), bounces off the walls that lose a little each time, and a little
-   rolling friction. Nothing moves until the head does. */
+/* BALL IN BOX: a white glass box held still in front of you (it turns with
+   the head, so it never moves on screen) with three balls inside -- red,
+   green, blue -- that the head's movement does move, as real balls in a
+   real box would. Simulated in the box's own frame: gravity as it points
+   there given how the head is tilted (rig), plus the pushes of the box being
+   carried round by the head 3 m out (Coriolis, centrifugal, and the jolt of
+   starting / stopping a turn), bounces off the walls and off each other
+   that lose a little each time, and a little rolling friction. Nothing
+   moves until the head does. */
 function buildBallBox(group){
-  const H = 0.6, R = 0.14;                       // box half-size, ball radius (m)
+  const H = 0.6, R = 0.12;                       // box half-size, ball radius (m)
   const box = new THREE.Mesh(new THREE.BoxGeometry(H * 2, H * 2, H * 2),
-    new THREE.MeshStandardMaterial({ color: 0x88aaff, transparent: true, opacity: 0.08, roughness: 0.1, metalness: 0, depthWrite: false, side: THREE.BackSide }));
+    new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.07, roughness: 0.1, metalness: 0, depthWrite: false, side: THREE.BackSide }));
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(H * 2, H * 2, H * 2)),
-    new THREE.LineBasicMaterial({ color: 0xf6c41c }));
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32),
-    new THREE.MeshStandardMaterial({ color: 0xff5533, roughness: 0.25, metalness: 0.35 }));
-  // A soft shadow under the ball on whichever face is "down" right now.
+    new THREE.LineBasicMaterial({ color: 0xffffff }));
+  group.add(box, edges);
   const shadowTex = dotTexture();
-  const shadow = new THREE.Mesh(new THREE.CircleGeometry(R * 1.3, 32),
-    new THREE.MeshBasicMaterial({ map: shadowTex, color: 0x000000, transparent: true, opacity: 0.6, depthWrite: false }));
-  group.add(box, edges, shadow, ball);
-  const pos = new THREE.Vector3(0, -H + R, 0), vel = new THREE.Vector3();
+  const balls = [0xff2a2a, 0x22dd44, 0x2a6bff].map((col, i)=>{
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32),
+      new THREE.MeshStandardMaterial({ color: col, roughness: 0.25, metalness: 0.3 }));
+    // A soft shadow under each ball on whichever face is "down" right now.
+    const shadow = new THREE.Mesh(new THREE.CircleGeometry(R * 1.3, 32),
+      new THREE.MeshBasicMaterial({ map: shadowTex, color: 0x000000, transparent: true, opacity: 0.6, depthWrite: false }));
+    group.add(shadow, mesh);
+    return { mesh, shadow, pos: new THREE.Vector3((i - 1) * R * 2.6, -H + R, (i % 2) * R), vel: new THREE.Vector3() };
+  });
   const qPrev = rig.quaternion.clone(), qInv = new THREE.Quaternion(), dq = new THREE.Quaternion();
   const w = new THREE.Vector3(), wPrev = new THREE.Vector3(), alpha = new THREE.Vector3();
-  const g = new THREE.Vector3(), a = new THREE.Vector3(), r = new THREE.Vector3(), tmp = new THREE.Vector3();
+  const g = new THREE.Vector3(), a = new THREE.Vector3(), r = new THREE.Vector3(), tmp = new THREE.Vector3(), n = new THREE.Vector3();
   const centre = new THREE.Vector3(0, 0, CONTENT_DISTANCE);
   const LIM = H - R, BOUNCE = 0.72, ROLL = 0.6;   // ROLL: rolling drag, 1/s
   const step = dt=>{
@@ -1593,41 +1597,63 @@ function buildBallBox(group){
     dq.copy(qInv).multiply(rig.quaternion);
     qPrev.copy(rig.quaternion);
     const ang = 2 * Math.acos(Math.min(1, Math.abs(dq.w)));
-    if (ang > 1e-6){ w.set(dq.x, dq.y, dq.z).normalize().multiplyScalar((dq.w < 0 ? -ang : ang) / dt); }
+    if (ang > 1e-6) w.set(dq.x, dq.y, dq.z).normalize().multiplyScalar((dq.w < 0 ? -ang : ang) / dt);
     else w.set(0, 0, 0);
     if (w.length() > 20) w.setLength(20);   // a jump in tracking (recenter), not a turn
     alpha.copy(w).sub(wPrev).divideScalar(dt).clampLength(0, 80);
     wPrev.copy(w);
     // Gravity, as it points in the box.
     g.set(0, -9.81, 0).applyQuaternion(qInv.copy(rig.quaternion).invert());
-    // Where the ball is from the head: the box sits 3 m out (CONTENT ZOOM
-    // scales the box, not the distance).
     const sc = group.scale.x || 1;
-    r.copy(pos).multiplyScalar(sc).add(centre);
-    a.copy(g);
-    a.sub(tmp.copy(w).cross(vel).multiplyScalar(2));            // Coriolis
-    a.sub(tmp.copy(w).cross(r).cross(w).negate());             // centrifugal: -w x (w x r)
-    a.sub(tmp.copy(alpha).cross(r));                           // the jolt of a turn starting / stopping
-    vel.addScaledVector(a, dt / sc);
-    vel.multiplyScalar(Math.exp(-ROLL * dt));
-    if (vel.length() > 12) vel.setLength(12);
-    pos.addScaledVector(vel, dt);
-    // The walls: back inside, bounce with a little lost.
-    for (const k of ['x', 'y', 'z']){
-      if (pos[k] > LIM){ pos[k] = LIM; if (vel[k] > 0) vel[k] *= -BOUNCE; }
-      else if (pos[k] < -LIM){ pos[k] = -LIM; if (vel[k] < 0) vel[k] *= -BOUNCE; }
+    for (const b of balls){
+      // Where the ball is from the head: the box sits 3 m out (CONTENT ZOOM
+      // scales the box, not the distance).
+      r.copy(b.pos).multiplyScalar(sc).add(centre);
+      a.copy(g);
+      a.sub(tmp.copy(w).cross(b.vel).multiplyScalar(2));       // Coriolis
+      a.sub(tmp.copy(w).cross(r).cross(w).negate());           // centrifugal: -w x (w x r)
+      a.sub(tmp.copy(alpha).cross(r));                         // the jolt of a turn starting / stopping
+      b.vel.addScaledVector(a, dt / sc);
+      b.vel.multiplyScalar(Math.exp(-ROLL * dt));
+      if (b.vel.length() > 12) b.vel.setLength(12);
+      b.pos.addScaledVector(b.vel, dt);
+      // The walls: back inside, bounce with a little lost.
+      for (const k of ['x', 'y', 'z']){
+        if (b.pos[k] > LIM){ b.pos[k] = LIM; if (b.vel[k] > 0) b.vel[k] *= -BOUNCE; }
+        else if (b.pos[k] < -LIM){ b.pos[k] = -LIM; if (b.vel[k] < 0) b.vel[k] *= -BOUNCE; }
+      }
     }
-    ball.position.copy(pos);
-    ball.rotation.x += vel.z * dt / R;   // roll along
-    ball.rotation.z -= vel.x * dt / R;
-    // The shadow: on the face gravity points at most.
+    // Ball on ball: pushed apart, and a bounce along the line between them
+    // (same mass, so they swap that part of their speed, less a little).
+    for (let i = 0; i < balls.length; i++) for (let j = i + 1; j < balls.length; j++){
+      const A = balls[i], B = balls[j];
+      n.copy(B.pos).sub(A.pos);
+      const d = n.length();
+      if (d >= 2 * R || d < 1e-6) continue;
+      n.divideScalar(d);
+      const push = (2 * R - d) / 2;
+      A.pos.addScaledVector(n, -push);
+      B.pos.addScaledVector(n, push);
+      const closing = tmp.copy(A.vel).sub(B.vel).dot(n);
+      if (closing > 0){
+        const imp = closing * (1 + BOUNCE) / 2;
+        A.vel.addScaledVector(n, -imp);
+        B.vel.addScaledVector(n, imp);
+      }
+    }
+    // The face gravity points at most: where the shadows go.
     const ax = ['x', 'y', 'z'].reduce((m, k) => Math.abs(g[k]) > Math.abs(g[m]) ? k : m, 'y');
     const sgn = Math.sign(g[ax]) || -1;
-    shadow.position.copy(pos);
-    shadow.position[ax] = sgn * (H - 0.002);
-    shadow.lookAt(group.localToWorld(tmp.copy(shadow.position).setComponent(ax === 'x' ? 0 : ax === 'y' ? 1 : 2, 0)));
-    const hgt = Math.abs(pos[ax] - shadow.position[ax]);
-    shadow.material.opacity = 0.6 * Math.max(0, 1 - hgt / (2 * H));
+    for (const b of balls){
+      for (const k of ['x', 'y', 'z']) b.pos[k] = Math.max(-LIM, Math.min(LIM, b.pos[k]));
+      b.mesh.position.copy(b.pos);
+      b.mesh.rotation.x += b.vel.z * dt / R;   // roll along
+      b.mesh.rotation.z -= b.vel.x * dt / R;
+      b.shadow.position.copy(b.pos);
+      b.shadow.position[ax] = sgn * (H - 0.002);
+      b.shadow.lookAt(group.localToWorld(tmp.copy(b.shadow.position).setComponent(ax === 'x' ? 0 : ax === 'y' ? 1 : 2, 0)));
+      b.shadow.material.opacity = 0.6 * Math.max(0, 1 - Math.abs(b.pos[ax] - b.shadow.position[ax]) / (2 * H));
+    }
   };
   step.realTime = true;
   return step;
