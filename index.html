@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.08';
+const APP_VERSION = '3.09';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -3385,6 +3385,7 @@ function animateFrame(){
   updateCutout();
   updateDepth();
   updateDomeEyes();
+  navGroundFrame();
   checkBotMenuIdle();
 
   const { w, h, ew, eh } = eyeSize();
@@ -3436,6 +3437,7 @@ function applyContent(){
   modelGroup.visible = state.content === 'model';
   videoGroup.visible = state.content === 'video';
   if (navMesh) navMesh.visible = state.content === 'nav';
+  if (navGround && state.content !== 'nav') navGround.visible = false;
   if (state.content !== 'video'){
     if (!video.paused) video.pause();
     stopReverse();
@@ -7982,6 +7984,81 @@ function navDrawBoard(info){
   g.fillStyle = '#9a9a9a'; fit(info.sub, 32, 600); g.fillText(info.sub, x, 470);
   navTex.needsUpdate = true;
 }
+/* The way on the ground: the next NAV_GROUND_AHEAD metres of the route as a
+   yellow band on the floor, 1.6 m below the eyes, pointing the real way.
+   Built from GPS (where you are) and the facing (compass / direction of
+   travel) at each update, in a frame whose forward is that facing; each
+   frame it's turned by how far the view (rig) and the facing have turned
+   since, so it stays put on the ground as you look around -- whatever
+   X MULTIPLY does to the picture. */
+const NAV_GROUND_AHEAD = 80, NAV_GROUND_W = 0.5, NAV_EYE_H = 1.6;
+let navGround = null, navGroundFacing = 0;
+const navGroundEuler = new THREE.Euler();
+function navGroundBuild(){
+  const n = nav;
+  const facing = n ? (n.heading !== null ? n.heading : n.gpsHeading) : null;
+  if (!n || facing === null || !n.route){ if (navGround) navGround.visible = false; return; }
+  if (!navGround){
+    navGround = new THREE.Mesh(new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: 0xf6c41c, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
+    navGround.renderOrder = 5;
+    scene.add(navGround);
+  }
+  // The route from the nearest point on it, NAV_GROUND_AHEAD metres on.
+  const line = n.route.line, p = n.pos;
+  const kx = 111320 * Math.cos(p.lat * Math.PI / 180), ky = 110540;
+  const xy = q => [(q.lng - p.lng) * kx, (q.lat - p.lat) * ky];   // east, north (m)
+  let best = Infinity, bi = 0, bt = 0;
+  for (let i = 0; i < line.length - 1; i++){
+    const [ax, ay] = xy(line[i]), [bx, by] = xy(line[i + 1]);
+    const vx = bx - ax, vy = by - ay;
+    const t = Math.max(0, Math.min(1, -(ax * vx + ay * vy) / (vx * vx + vy * vy || 1)));
+    const d = Math.hypot(ax + vx * t, ay + vy * t);
+    if (d < best){ best = d; bi = i; bt = t; }
+  }
+  const pts = [];
+  { const [ax, ay] = xy(line[bi]), [bx, by] = xy(line[bi + 1] || line[bi]); pts.push([ax + (bx - ax) * bt, ay + (by - ay) * bt]); }
+  let left = NAV_GROUND_AHEAD;
+  for (let i = bi + 1; i < line.length && left > 0; i++){
+    const q = xy(line[i]), last = pts[pts.length - 1];
+    const seg = Math.hypot(q[0] - last[0], q[1] - last[1]);
+    if (seg > left){ const f = left / seg; pts.push([last[0] + (q[0] - last[0]) * f, last[1] + (q[1] - last[1]) * f]); break; }
+    pts.push(q);
+    left -= seg;
+  }
+  // East / north -> the facing frame: forward (-Z) = facing, right = +X.
+  const f = facing * Math.PI / 180, cf = Math.cos(f), sf = Math.sin(f);
+  const loc = pts.map(([e, nn]) => [e * cf - nn * sf, -(e * sf + nn * cf)]);   // [x, z]
+  const pos = [], idx = [];
+  loc.forEach((c, i)=>{
+    const a = loc[Math.max(0, i - 1)], b = loc[Math.min(loc.length - 1, i + 1)];
+    let dx = b[0] - a[0], dz = b[1] - a[1];
+    const l = Math.hypot(dx, dz) || 1;
+    const nx = -dz / l * NAV_GROUND_W / 2, nz = dx / l * NAV_GROUND_W / 2;
+    pos.push(c[0] + nx, 0, c[1] + nz, c[0] - nx, 0, c[1] - nz);
+    if (i) { const k = i * 2; idx.push(k - 2, k - 1, k, k - 1, k + 1, k); }
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  navGround.geometry.dispose();
+  navGround.geometry = geo;
+  navGroundFacing = facing;
+  navGround.visible = state.content === 'nav' && loc.length > 1;
+}
+function navGroundFrame(){
+  if (!navGround || !navGround.visible) return;
+  if (!nav || state.content !== 'nav'){ navGround.visible = false; return; }
+  const facing = nav.heading !== null ? nav.heading : nav.gpsHeading;
+  if (facing === null) return;
+  // Turned with the view, less however far the facing turned since it was built.
+  const viewYaw = navGroundEuler.setFromQuaternion(rig.quaternion, 'YXZ').y;
+  let df = facing - navGroundFacing;
+  df = ((df + 540) % 360) - 180;
+  navGround.rotation.y = viewYaw + df * Math.PI / 180;
+  navGround.position.set(rig.position.x, rig.position.y - NAV_EYE_H, rig.position.z);
+}
+
 // MODE NAVIGATION: the board in place of whatever was showing (that stops,
 // and comes back when navigation ends).
 let navPrev = null;
@@ -8017,6 +8094,7 @@ function navUpdate(){
   const main = n.arrivedAt ? 'YOU HAVE ARRIVED' : navInstruction(st);
   const dist = n.arrivedAt ? '' : 'IN ' + navKm(toTurn);
   const sub = `${navKm(rest)} · ${mins} MIN LEFT` + (facing === null ? ' · NO COMPASS: UP = NORTH' : '');
+  navGroundBuild();
   navDrawBoard({ rot, main, dist, sub, to: 'TO ' + n.dest.name.toUpperCase() + (n.mode === 'bike' ? ' · CYCLING' : ' · WALKING') });
 }
 setInterval(()=>{ if (nav) navUpdate(); }, 250);   // the compass turns between GPS fixes
