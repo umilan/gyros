@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.11';
+const APP_VERSION = '3.12';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -785,6 +785,9 @@ const DEFAULTS = {
                             // 0 = follow the sensor exactly.
   chromaOpen: true,        // CHROMA KEY row, HIDE / SHOW: folds the chroma key
                             // settings away (keying itself stays as it is).
+  rememberContent: false,  // REMEMBER CONTENT (GENERAL, expert): bring back the last
+                            // photo / video / folder (rememberMedia()) and a running
+                            // navigation with its goal (navSave()) after a reload.
   resolution: 2,           // RESOLUTION: index into RESOLUTIONS -- renderPixelRatio()
   menuType: 1,             // MENU TYPE: 0 REDUCED | 1 BASIC | 2 EXPERT -- MENU_TYPES.
                             // EXPERT adds the rows marked x:1 in MENU; REDUCED
@@ -991,7 +994,8 @@ const MENU = [
     // (fmt() special-cases this key: "OFF" at 0, "<n>S" otherwise).
     { type:'step',  key:'menuTimeout', label:'MENU TIMEOUT', min:0, max:60, step:1, x:1 },
     { type:'step',  key:'smoothMs', label:'SMOOTH CHANGES', min:0, max:1000, step:50, x:1 },
-    { type:'enum',  key:'resolution', label:'RESOLUTION', options:RESOLUTIONS, x:1 }
+    { type:'enum',  key:'resolution', label:'RESOLUTION', options:RESOLUTIONS, x:1 },
+    { type:'check', key:'rememberContent', label:'REMEMBER CONTENT', x:1 }
   ]},
   { title:'HEAD TRACKING', items:[
     // How the phone is mounted relative to the head -- see DEFAULTS.
@@ -1330,7 +1334,7 @@ function buildBotPanes(){
 
 // What a yes/no row shows, where YES/NO isn't the right word.
 const BOOL_TEXT = {
-  chromaOn: ['OFF', 'ON'], chromaOpen: ['HIDE', 'SHOW'], keepDepth: ['OFF', 'ON']
+  chromaOn: ['OFF', 'ON'], chromaOpen: ['HIDE', 'SHOW'], keepDepth: ['OFF', 'ON'], rememberContent: ['OFF', 'ON']
 };
 function fmt(key, v){
   if (typeof v === 'boolean' || BOOL_TEXT[key]) return (BOOL_TEXT[key] || ['NO', 'YES'])[v ? 1 : 0];
@@ -4693,6 +4697,7 @@ function forgetMedia(){
 function rememberMedia(files){
   if (mediaRestoring || !window.indexedDB) return;
   forgetMedia();
+  if (!state.rememberContent) return;   // REMEMBER CONTENT off: keep nothing
   const total = files.reduce((n, f) => n + f.size, 0);
   if (total > MEDIA_STORE_MAX){ toast('OVER 2 GB — WON\'T BE REMEMBERED', 2500); return; }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
@@ -4708,7 +4713,7 @@ function rememberMedia(files){
 }
 
 function rememberMediaIdx(idx){
-  if (mediaRestoring || !window.indexedDB) return;
+  if (mediaRestoring || !window.indexedDB || !state.rememberContent) return;
   mediaOp(['meta'], 'readwrite', tx=>{
     const meta = tx.objectStore('meta');
     const req = meta.get('set');
@@ -4718,6 +4723,7 @@ function rememberMediaIdx(idx){
 
 async function restoreMedia(){
   if (!window.indexedDB) return;
+  if (!state.rememberContent){ forgetMedia(); return; }   // and free what an older version kept
   let set = null, recs = [];
   try{
     await mediaOp(['files', 'meta'], 'readonly', tx=>{
@@ -7666,6 +7672,15 @@ function setCheck(key, v){
       if (v && !state.chromaKeys.length){ startChromaPick(); return; }
       state.chromaOn = v;
       break;
+    case 'rememberContent':
+      state.rememberContent = v;
+      if (v){
+        // From now on -- starting with what's showing.
+        const files = galleryItems.map(it => it.file).filter(Boolean);
+        if (files.length){ rememberMedia(files); rememberMediaIdx(Math.max(0, galleryIdx)); }
+        navSave();
+      } else { forgetMedia(); navSave(); }
+      break;
     default:
       if (key === 'sourceSbs') cancelSbsProbe();
       state[key] = v;
@@ -7837,6 +7852,16 @@ async function navRoute(from, to, mode){
   }));
   return { line: r.geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] })), steps, dist: r.distance };
 }
+function navBegin(dest, mode, here, route){
+  stopNav(true);
+  nav = { mode, dest, route, idx: 1, pos: here, heading: null, gpsHeading: null, watch: null,
+          offCount: 0, lastRoute: performance.now(), arrivedAt: 0 };
+  nav.watch = navigator.geolocation.watchPosition(navOnPos, ()=>{}, { enableHighAccuracy: true, maximumAge: 1000 });
+  navEnterContent();
+  navUpdate();
+  navSave();
+  toast(`TO ${dest.name.toUpperCase().slice(0, 24)} · ${navKm(route.dist)} · NOT WHILE DRIVING`, 4000);
+}
 async function startNav(mode){
   if (!navigator.geolocation){ toast('NO GPS IN THIS BROWSER', 2500); return; }
   const text = navInput.value;
@@ -7845,14 +7870,7 @@ async function startNav(mode){
   try{
     const here = await navHere();   // first, straight from the tap: that's when the browser asks
     const dest = await navResolveDest(text, here);
-    const route = await navRoute(here, dest, mode);
-    stopNav(true);
-    nav = { mode, dest, route, idx: 1, pos: here, heading: null, gpsHeading: null, watch: null,
-            offCount: 0, lastRoute: performance.now(), arrivedAt: 0 };
-    nav.watch = navigator.geolocation.watchPosition(navOnPos, ()=>{}, { enableHighAccuracy: true, maximumAge: 1000 });
-    navEnterContent();
-    navUpdate();
-    toast(`TO ${dest.name.toUpperCase().slice(0, 24)} · ${navKm(route.dist)} · NOT WHILE DRIVING`, 4000);
+    navBegin(dest, mode, here, await navRoute(here, dest, mode));
   }catch(e){
     // Location refused: the browser asks only once per site; after a "don't
     // allow" (or with location off for the browser) it refuses straight
@@ -7869,11 +7887,33 @@ function navLocationHelp(){
   if (/Android/.test(ua)) return 'LOCATION IS BLOCKED. Tap the icon left of the address bar → Permissions → Location → Allow, and make sure the phone\'s Location is on. Then press WALK THERE again.';
   return 'LOCATION IS BLOCKED. Click the icon left of the address bar → Location → Allow (and turn on location for the browser in the system settings). Then press WALK THERE again.';
 }
+/* REMEMBER CONTENT: a running navigation (its goal and mode) comes back
+   after a reload, from wherever you are by then. */
+const NAV_STORE = 'gyrosNav';
+function navSave(){
+  try{
+    if (state.rememberContent && nav) localStorage.setItem(NAV_STORE, JSON.stringify({ mode: nav.mode, dest: nav.dest }));
+    else localStorage.removeItem(NAV_STORE);
+  }catch(e){}
+}
+async function restoreNav(){
+  let saved = null;
+  try{ saved = JSON.parse(localStorage.getItem(NAV_STORE) || 'null'); }catch(e){}
+  if (!saved || !saved.dest) return;
+  if (!state.rememberContent){ navSave(); return; }
+  toast('NAVIGATION: FINDING THE WAY…', 10000);
+  try{
+    const here = await navHere();
+    navBegin(saved.dest, saved.mode === 'bike' ? 'bike' : 'foot', here, await navRoute(here, saved.dest, saved.mode));
+  }catch(e){
+    toast(String(e.message || 'NAVIGATION FAILED').toUpperCase(), 3500);
+  }
+}
 function stopNav(quiet){
   if (!nav) return;
   if (nav.watch !== null) navigator.geolocation.clearWatch(nav.watch);
   nav = null;
-  if (!quiet){ navLeaveContent(); toast('NAVIGATION STOPPED'); }
+  if (!quiet){ navSave(); navLeaveContent(); toast('NAVIGATION STOPPED'); }
 }
 // Facing: the compass where there is one (iOS gives it as webkitCompassHeading,
 // Android as an absolute alpha); else the GPS's direction of travel.
@@ -7900,7 +7940,7 @@ function navOnPos(p){
   }
   if (navDist(n.pos, n.dest) < NAV_ARRIVE && !n.arrivedAt){
     n.arrivedAt = performance.now();
-    setTimeout(()=>{ if (nav === n){ stopNav(true); navLeaveContent(); toast('YOU HAVE ARRIVED', 4000); } }, 8000);
+    setTimeout(()=>{ if (nav === n){ stopNav(true); navSave(); navLeaveContent(); toast('YOU HAVE ARRIVED', 4000); } }, 8000);
   }
   // Off the line for two fixes in a row (and not just re-routed): a new route.
   const off = navOffRoute(n.pos, n.route.line);
@@ -9079,6 +9119,7 @@ requestWakeLock();
 enableMotion(true);
 toast(`GYROS v${APP_VERSION}`, 2000);   // which version just loaded
 restoreMedia();
+restoreNav();
 </script>
 </body>
 </html>
