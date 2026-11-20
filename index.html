@@ -137,6 +137,11 @@
 
   body[data-chrome="0"] #topbar,
   body[data-chrome="0"] #botbar{opacity:0;pointer-events:none;}
+  /* ...and nothing in them either (.bar > * turns taps back on): a faded-out
+     bar mustn't catch a tap meant for the picture -- nor have iOS refuse
+     an invisible photo picker. */
+  body[data-chrome="0"] #topbar *,
+  body[data-chrome="0"] #botbar *{pointer-events:none !important;}
   /* Logo stays clickable in every state including hidden-chrome */
   body[data-chrome="0"] .appTitle{pointer-events:auto;}
 
@@ -414,8 +419,7 @@
     opacity:0;transition:opacity 0.55s ease;pointer-events:none;
   }
   .toast.show{opacity:1;}
-  .loadWrap{position:relative;display:inline-flex;}
-  .loadPick{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0;z-index:2;}
+
   .toastR{display:none;}
   /* SBS EYE DIST moves each eye's toast like the rest of that eye's UI, so
      it sits at the same depth as the panes. */
@@ -643,7 +647,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.26';
+const APP_VERSION = '3.27';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1295,12 +1299,12 @@ function buildPanes(){
    eye's half. All instances share state and stay in sync via the delegated
    click handlers on #topbar below (no per-instance listeners needed). ---- */
 function topPaneHTML(){
-  // The folder icon: a real file input lies (invisibly) over it, so the
-  // tap itself opens the picker -- on iOS a picker opened from code can be
-  // refused. The button underneath is for the keyboard (Enter -> click()).
-  return `<span class="loadWrap"><button class="iconbtn btnLoad" title="Photos / videos" aria-label="Open photos or videos">
+  // The folder icon is the label of a (hidden) file input: tapping the
+  // visible icon is a tap on the picker itself, which iOS opens -- a picker
+  // opened from code, or an invisible one under the finger, it can refuse.
+  return `<label class="iconbtn btnLoad" title="Photos / videos" aria-label="Open photos or videos" tabindex="0">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M10,4H4C2.89,4,2.01,4.89,2.01,6L2,18c0,1.1,0.89,2,2,2h16c1.1,0,2,-0.9,2,-2V8c0,-1.1,-0.9,-2,-2,-2h-8L10,4z"/></svg>
-  </button><input type="file" class="loadPick" accept="image/*,video/*" multiple aria-label="Open photos or videos"></span>
+    <input type="file" class="loadPick" accept="image/*,video/*" multiple hidden></label>
   <div class="title appTitle" role="button" tabindex="0" aria-label="Open settings list">GYROS v${APP_VERSION}</div>
   <button class="iconbtn btnShortcuts" title="Shortcuts…" aria-label="Open the shortcuts menu">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12,8c1.1,0,2,-0.9,2,-2s-0.9,-2,-2,-2s-2,0.9,-2,2s0.9,2,2,2z M12,10c-1.1,0,-2,0.9,-2,2s0.9,2,2,2s2,-0.9,2,-2s-0.9,-2,-2,-2z M12,16c-1.1,0,-2,0.9,-2,2s0.9,2,2,2s2,-0.9,2,-2s-0.9,-2,-2,-2z"/></svg>
@@ -1308,6 +1312,11 @@ function topPaneHTML(){
 }
 
 const topPanesEl = document.getElementById('topPanes');
+// The folder icon from the keyboard: Enter / Space opens its picker.
+topPanesEl.addEventListener('keydown', e=>{
+  const lab = e.target.closest && e.target.closest('.btnLoad');
+  if (lab && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); lab.querySelector('.loadPick').click(); }
+});
 // A pick made straight on the folder icon's own input (topPaneHTML()).
 topPanesEl.addEventListener('change', e=>{
   const inp = e.target.closest('.loadPick');
@@ -5980,7 +5989,7 @@ function loadDemo(){
 topbar.addEventListener('click', e=>{
   // The folder icon goes straight to the photo / video picker (on an
   // iPhone, the photo library); the other sources are under SHORTCUTS > LOAD.
-  if (e.target.closest('.btnLoad')) videoFile.click();
+  // The label opens its own input on a tap; nothing to do here.
 });
 loadTypeDlg.addEventListener('click', e=>{
   const row = e.target.closest('[data-loadtype]');
@@ -9429,7 +9438,9 @@ function handleTap(){
 /* Enable motion on any first user interaction.
    touchstart and click are the most reliable user-activation events on
    iOS Chrome (WKWebView) for DeviceOrientationEvent.requestPermission. */
-['touchstart', 'click', 'pointerdown', 'keydown'].forEach(ev=>{
+// Only from a click / touchend / key: iOS 26 refuses a permission question
+// asked from pointerdown or touchstart ("requires a user gesture").
+['touchend', 'click', 'keydown'].forEach(ev=>{
   // Not from a tap on a button, menu or dialog: on iOS a permission
   // question started by the same tap can stop what the button does
   // (the folder icon's photo picker opening).
@@ -9626,7 +9637,7 @@ function keepAwake(){
   else syncNoSleepVideo();
 }
 // Not from a tap on a button, menu or dialog either (see onUiControl()).
-['pointerdown', 'touchstart', 'keydown'].forEach(ev => document.addEventListener(ev, e=>{ if (!onUiControl(e)) keepAwake(); }, { passive: true, capture: true }));
+['click', 'touchend', 'keydown'].forEach(ev => document.addEventListener(ev, e=>{ if (!onUiControl(e)) keepAwake(); }, { passive: true, capture: true }));
 document.addEventListener('visibilitychange', ()=>{
   if (document.visibilityState === 'visible') keepAwake();
   else if (noSleepVideo) noSleepVideo.pause();
