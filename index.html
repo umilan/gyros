@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.02';
+const APP_VERSION = '3.03';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -3499,11 +3499,15 @@ const modelFile = document.getElementById('modelFile');
 modelFile.addEventListener('change', async ()=>{
   const file = modelFile.files && modelFile.files[0];
   if (!file) return;
+  try{ await loadModelFile(file); }
+  finally{ modelFile.value = ''; }
+});
+// A picked or dropped .obj / .stl / .usdz.
+async function loadModelFile(file){
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   const maxMb = MODEL_MAX_MB[ext] || 5;
   if (file.size > maxMb * 1024 * 1024){
     toast(`FILE TOO LARGE — USE MAX ~${maxMb} MB`);
-    modelFile.value = '';
     return;
   }
   forgetMedia();
@@ -3512,8 +3516,55 @@ modelFile.addEventListener('change', async ()=>{
     await loadModel(url, ext, file.name);
   }finally{
     URL.revokeObjectURL(url);
-    modelFile.value = '';
   }
+}
+
+/* ---- Drag and drop (desktop browsers): drop a 3D model (.obj / .stl /
+   .usdz), a photo or video, several of them, or a folder of them, anywhere
+   on the app. A model wins if one is in the drop; otherwise every photo and
+   video found (folders read through, any depth) opens as one gallery, as if
+   picked. ---- */
+const MODEL_EXTS = ['obj', 'stl', 'usdz'];
+const dropHint = document.createElement('div');
+dropHint.id = 'dropHint';
+dropHint.hidden = true;
+dropHint.style.cssText = 'position:fixed;inset:12px;z-index:9500;border:3px dashed #f6c41c;border-radius:16px;'
+  + 'background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;pointer-events:none;'
+  + 'color:#f6c41c;font:700 18px system-ui,sans-serif;letter-spacing:.2em;text-align:center;';
+dropHint.textContent = 'DROP TO OPEN · PHOTOS · VIDEOS · FOLDERS · OBJ / STL / USDZ';
+document.body.appendChild(dropHint);
+let dropDepth = 0;
+const isFileDrag = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+window.addEventListener('dragenter', e=>{ if (!isFileDrag(e)) return; e.preventDefault(); dropDepth++; dropHint.hidden = false; });
+window.addEventListener('dragover', e=>{ if (!isFileDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+window.addEventListener('dragleave', e=>{ if (!isFileDrag(e)) return; if (--dropDepth <= 0){ dropDepth = 0; dropHint.hidden = true; } });
+window.addEventListener('drop', async e=>{
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  dropDepth = 0;
+  dropHint.hidden = true;
+  // Folders come as entries; their files have to be read out one by one.
+  const entries = [...(e.dataTransfer.items || [])].map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+  let files = [];
+  if (entries.some(en => en.isDirectory)){
+    toast('READING FOLDER…', 4000);
+    const walk = async en=>{
+      if (en.isFile){ files.push(await new Promise((res, rej) => en.file(res, rej))); return; }
+      const reader = en.createReader();
+      for (;;){
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const b of batch) await walk(b);
+      }
+    };
+    try{ for (const en of entries) await walk(en); }catch(err){ toast('COULD NOT READ THE FOLDER', 2500); return; }
+  } else files = [...e.dataTransfer.files];
+  if (!files.length) return;
+  const model = files.find(f => MODEL_EXTS.includes((f.name.split('.').pop() || '').toLowerCase()));
+  if (model){ await loadModelFile(model); return; }
+  const media = files.filter(f => !isHiddenFile(f) && classifyMediaFile(f));
+  if (!media.length){ toast('NOTHING TO OPEN -- PHOTOS, VIDEOS OR OBJ / STL / USDZ', 2500); return; }
+  openMediaFiles(media);
 });
 
 function modelMaterial(){
