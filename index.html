@@ -610,7 +610,11 @@
 </div>
 
 <input type="file" id="modelFile" accept=".obj,.stl,.usdz" hidden>
-<input type="file" id="videoFile" accept="video/*,image/*,image/heic,image/heif,.heic,.heif" multiple hidden>
+<!-- Plain image/* + video/*: iOS then offers its own Photo Library / Take
+     Photo / Choose File sheet; listing file extensions too (.heic) made it
+     skip that. HEIC files from Files have their own picker (heicFile). -->
+<input type="file" id="videoFile" accept="image/*,video/*" multiple hidden>
+<input type="file" id="heicFile" accept=".heic,.heif,image/heic,image/heif" multiple hidden>
 <input type="file" id="folderFiles" accept="image/*,video/*" webkitdirectory multiple hidden>
 <video id="video" playsinline webkit-playsinline crossorigin="anonymous" loop hidden></video>
 
@@ -637,7 +641,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.23';
+const APP_VERSION = '3.24';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -4636,6 +4640,13 @@ function probeVideoProjection(onVerdict, fallback = 1){
 
 /* ---- video loading ---- */
 const videoFile = document.getElementById('videoFile');
+// HEIC picked from Files (LOAD): kept as it is, both eyes of a spatial photo.
+const heicFile = document.getElementById('heicFile');
+heicFile.addEventListener('change', ()=>{
+  const list = heicFile.files;
+  if (list && list.length) openMediaFiles([...list]);
+  heicFile.value = '';
+});
 videoFile.addEventListener('change', ()=>{
   const list = videoFile.files;
   if (!list || !list.length) return;
@@ -5712,6 +5723,7 @@ function loadTypePaneHTML(){
       <button class="row" data-loadtype="video"><span class="label">IMAGE / VIDEO</span></button>
       <button class="row" data-loadtype="folder"><span class="label">FOLDER (PHOTOS + VIDEOS)</span></button>
       <button class="row" data-loadtype="model"><span class="label">3D MODEL (.OBJ / .STL / .USDZ)</span></button>
+      <button class="row" data-loadtype="heic"><span class="label">SPATIAL / HEIC PHOTO (FROM FILES)</span></button>
       <button class="row" data-loadtype="camFront"><span class="label">FRONT CAMERA</span></button>
       <button class="row" data-loadtype="camBack"><span class="label">BACK CAMERA</span></button>
       <button class="row" data-loadtype="pasteUrl"><span class="label">PASTE LINK FROM CLIPBOARD</span></button>
@@ -5927,6 +5939,7 @@ loadTypeDlg.addEventListener('click', e=>{
     case 'video':    videoFile.click(); break;
     case 'folder':   folderFiles.click(); break;
     case 'model':    modelFile.click(); break;
+    case 'heic':     heicFile.click(); break;
     case 'camFront': startCamera(true); break;
     case 'camBack':  startCamera(false); break;
     case 'pasteUrl': pasteAndLoad(); break;
