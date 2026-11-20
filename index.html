@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.21';
+const APP_VERSION = '3.22';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1059,7 +1059,7 @@ const MENU = [
   { title:'POSITIONING', items:[
     { type:'step',  key:'contentAngle', label:'ANGLE', min:-180, max:180, step:1, when:'video' },
     { type:'step', key:'posX',    label:'POS X',        min:-200, max:200, step:1 },
-    { type:'step', key:'posY',    label:'POS Y',        min:-200, max:200, step:1 }
+    { type:'step', key:'posY',    label:'POS Y',        min:-1000, max:1000, step:1 }
   ]},
   { title:'ZOOM', items:[
     { type:'step', key:'contentZoom', label:'CONTENT ZOOM', min:-90, max:300, step:1 },
