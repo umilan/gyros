@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.19';
+const APP_VERSION = '3.20';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -1608,7 +1608,7 @@ function buildBallBox(group){
     alpha.copy(w).sub(wPrev).divideScalar(dt).clampLength(0, 80);
     wPrev.copy(w);
     // Gravity, as it points in the box.
-    g.set(0, -9.81, 0).applyQuaternion(qInv.copy(rig.quaternion).invert());
+    g.set(0, -9.81 / 3, 0).applyQuaternion(qInv.copy(rig.quaternion).invert());   // a third of real gravity: slower, easier to follow
     const sc = group.scale.x || 1;
     for (const b of balls){
       // Where the ball is from the head: the box sits 3 m out (CONTENT ZOOM
