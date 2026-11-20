@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.93';
+const APP_VERSION = '2.94';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -8098,6 +8098,7 @@ requestWakeLock();
 // again (the listeners above); where access was already allowed, it starts
 // right here.
 enableMotion(true);
+toast(`GYROS v${APP_VERSION}`, 2000);   // which version just loaded
 restoreMedia();
 </script>
 </body>
