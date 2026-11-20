@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.85';
+const APP_VERSION = '2.86';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -4035,6 +4035,7 @@ function applyImageTexture(url, onDone, onError){
     usingImage = true;
     applyVideoLayout(tex.image.width, tex.image.height);
     onDone(tex.image.width, tex.image.height, tex.image);
+    toastMediaRes(tex.image.width, tex.image.height);
   }, undefined, onError);
 }
 
@@ -4333,8 +4334,19 @@ async function startCamera(front, prevMode){
   state.mode = MODE_CAMERA;
   applyAll();
   refreshMenu();
-  toast(label);
+  if (video.videoWidth) toastMediaRes(video.videoWidth, video.videoHeight); else toast(label);
 }
+
+// A photo / video / camera starting shows its name and resolution.
+function toastMediaRes(w, h){
+  if (!w || !h) return;
+  const opts = ENUM_SPEC.shape.options;
+  let name = '';
+  if (cameraStream) name = (cameraFront ? 'FRONT' : 'BACK') + ' CAMERA';
+  else if (opts !== SHAPES && opts !== CHOOSE_SOURCE) name = String(opts[state.shape] || '');
+  toast((name ? name.slice(0, 24) + ' · ' : '') + w + ' × ' + h, 2500);
+}
+video.addEventListener('loadedmetadata', ()=> toastMediaRes(video.videoWidth, video.videoHeight));
 
 async function playVideo(src, label, file, hintOverride){
   usingImage = false;
@@ -4367,7 +4379,8 @@ async function playVideo(src, label, file, hintOverride){
   state.mode = 1;
   applyAll();
   refreshMenu();
-  if (label) toast(label.toUpperCase().slice(0, 28));
+  if (video.videoWidth) toastMediaRes(video.videoWidth, video.videoHeight);
+  else if (label) toast(label.toUpperCase().slice(0, 28));
 }
 
 /* =========================================================================
