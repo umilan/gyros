@@ -620,7 +620,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '2.89';
+const APP_VERSION = '2.90';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -7446,19 +7446,34 @@ function startImgCal(){
   if (uiState === 'list') closeList();
   const el = document.createElement('div');
   el.id = 'imgCal';
-  el.style.cssText = 'position:fixed;left:0;top:0;width:var(--app-w,100vw);height:var(--app-h,100vh);z-index:9000;background:#000;touch-action:none;';
+  // See-through: the GRID ROOM demo shows behind the marks while
+  // calibrating, whatever was on screen; it comes back after (endImgCal()).
+  el.style.cssText = 'position:fixed;left:0;top:0;width:var(--app-w,100vw);height:var(--app-h,100vh);z-index:9000;background:transparent;touch-action:none;';
   const cv = document.createElement('canvas');
   cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
   el.appendChild(cv);
   document.body.appendChild(el);
-  imgCal = { el, cv, ref: null, seen: [] };
+  imgCal = { el, cv, ref: null, seen: [], prevContent: state.content, prevShape: state.shape };
+  if (!(state.content === 'demo' && SHAPES[state.shape] === 'GRID ROOM')){
+    disposeGroup(roomGroup);
+    buildGridRoom(roomGroup);
+    state.content = 'demo';
+    applyAll();
+  }
   el.addEventListener('pointerdown', e=>{ e.preventDefault(); e.stopPropagation(); imgCalConfirm(); });
   drawImgCal();
 }
 function endImgCal(){
   if (!imgCal) return;
   imgCal.el.remove();
+  const { prevContent, prevShape } = imgCal;
   imgCal = null;
+  if (!(prevContent === 'demo' && SHAPES[prevShape] === 'GRID ROOM')){
+    state.content = prevContent;
+    if (prevContent === 'demo') buildDemo(prevShape);
+    else disposeGroup(roomGroup);   // only ever holds GRID ROOM
+    applyAll();
+  }
 }
 // Where the far spot is now, seen from the head: eye units.
 function imgCalSeenNow(){
@@ -7517,8 +7532,10 @@ function drawImgCal(){
   g.clearRect(0, 0, w, h);
   const n = imgCal.ref ? imgCal.seen.length : -1;   // corner being aimed, -1 = the centre
   const sq = n < 0 ? -1 : Math.floor(n / 4);
-  const panes = state.sbs ? 2 : 1;
-  for (let eye = 0; eye < panes; eye++){
+  // Left eye only: two crosshairs, one per eye, don't fuse into one you
+  // can aim with (the stereo views' eyes don't line up on the screen).
+  {
+    const eye = 0;
     const toPx = p => [eye * ew + (p[0] * eh / ew + 1) / 2 * ew, (1 - p[1]) / 2 * eh];
     // The squares: done ones solid, the current one dashed.
     IMGCAL_SIZES.forEach((half, i)=>{
@@ -7534,19 +7551,25 @@ function drawImgCal(){
     g.globalAlpha = 1;
     // The crosshair, where the head has to bring it onto the far spot.
     const at = toPx(n < 0 ? [0, 0] : IMGCAL_TARGETS[n]);
-    g.strokeStyle = n < 0 ? '#f6c41c' : IMGCAL_COLORS[sq];
-    g.lineWidth = 2;
-    g.beginPath();
-    g.moveTo(at[0] - 14, at[1]); g.lineTo(at[0] + 14, at[1]);
-    g.moveTo(at[0], at[1] - 14); g.lineTo(at[0], at[1] + 14);
-    g.stroke();
+    // Dark under-stroke, so it stands out on the grid's lines.
+    [['#000', 5], [n < 0 ? '#f6c41c' : IMGCAL_COLORS[sq], 2]].forEach(([col, lw])=>{
+      g.strokeStyle = col;
+      g.lineWidth = lw;
+      g.beginPath();
+      g.moveTo(at[0] - 14, at[1]); g.lineTo(at[0] + 14, at[1]);
+      g.moveTo(at[0], at[1] - 14); g.lineTo(at[0], at[1] + 14);
+      g.stroke();
+    });
     g.fillStyle = '#ccc';
     g.font = '600 13px system-ui, sans-serif';
     g.textAlign = 'center';
+    g.shadowColor = '#000';
+    g.shadowBlur = 4;   // readable over the grid
     const msg = n < 0 ? 'CROSS ON A FAR SPOT · CONFIRM'
       : `${IMGCAL_NAMES[sq]} SQUARE ${n % 4 + 1}/4 · TURN TILL THE CROSS IS ON THE SPOT · CONFIRM`;
     g.fillText(msg, eye * ew + ew / 2, 28);
     g.fillText('BACK: ◀ / A · CANCEL: ESC', eye * ew + ew / 2, eh - 16);
+    g.shadowBlur = 0;
   }
 }
 document.addEventListener('keydown', e=>{
