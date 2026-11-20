@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.09';
+const APP_VERSION = '3.10';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -7924,9 +7924,10 @@ function navOffRoute(p, line){
   return best;
 }
 function navKm(m){ return m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + ' KM' : Math.round(m / 10) * 10 + ' M'; }
+// What to do at a turn (the street it leads onto is shown on its own).
 function navInstruction(st){
   const mod = (st.modifier || '').toUpperCase();
-  const onto = st.name ? ' · ' + st.name.toUpperCase() : '';
+  const onto = '';
   switch (st.type){
     case 'arrive': return 'ARRIVE';
     case 'depart': return 'HEAD OFF' + onto;
@@ -7943,7 +7944,7 @@ function navInstruction(st){
    turn, and goes through the same picture settings as any content: POS X/Y
    (and dragging), CONTENT ZOOM (applyEyeProjection()), ZOOM (XY), SCALE,
    TRAPEZOID, IMAGE CORRECTION. */
-const NAV_BOARD_W = 1024, NAV_BOARD_H = 576;
+const NAV_BOARD_W = 1024, NAV_BOARD_H = 1024;
 let navMesh = null, navCanvas = null, navTex = null;
 function navBoard(){
   if (navMesh) return navMesh;
@@ -7951,7 +7952,7 @@ function navBoard(){
   navCanvas.width = NAV_BOARD_W; navCanvas.height = NAV_BOARD_H;
   navTex = new THREE.CanvasTexture(navCanvas);
   navTex.colorSpace = THREE.SRGBColorSpace;
-  navMesh = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4 * NAV_BOARD_H / NAV_BOARD_W),
+  navMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 1.9 * NAV_BOARD_H / NAV_BOARD_W),
     new THREE.MeshBasicMaterial({ map: navTex, transparent: true, depthTest: false }));
   navMesh.position.set(0, 0, CONTENT_DISTANCE);
   navMesh.renderOrder = 10;
@@ -7960,28 +7961,41 @@ function navBoard(){
   applyEyeProjection();   // CONTENT ZOOM on it
   return navMesh;
 }
+// The app's direction arrow (the content navigator's), as a canvas path.
+const NAV_ARROW = typeof Path2D !== 'undefined' ? new Path2D('M4,12l1.41,1.41L11,7.83V20h2V7.83l5.58,5.59L20,12l-8,-8L4,12z') : null;
+// A vertical stack in the middle, no frame: the arrow toward the next turn,
+// then the distance and what to do there in yellow (the thing that matters
+// now), the street in white, what's left small and grey.
 function navDrawBoard(info){
   navBoard();
   const g = navCanvas.getContext('2d'), W = NAV_BOARD_W, H = NAV_BOARD_H;
   g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(12,12,12,0.92)';
-  g.strokeStyle = 'rgba(246,196,28,0.5)'; g.lineWidth = 4;
-  g.beginPath(); g.roundRect(4, 4, W - 8, H - 8, 36); g.fill(); g.stroke();
-  // The arrow, toward the next turn.
-  g.save();
-  g.translate(220, H / 2);
-  g.rotate(info.rot * Math.PI / 180);
-  g.fillStyle = '#f6c41c'; g.strokeStyle = '#000'; g.lineWidth = 6;
-  g.beginPath(); g.moveTo(0, -150); g.lineTo(110, 130); g.lineTo(0, 70); g.lineTo(-110, 130); g.closePath();
-  g.fill(); g.stroke();
-  g.restore();
-  g.textAlign = 'left';
-  const x = 420, maxW = W - x - 40;
-  const fit = (t, size, weight)=>{ let sz = size; do { g.font = `${weight} ${sz}px system-ui, sans-serif`; sz -= 2; } while (g.measureText(t).width > maxW && sz > 18); };
-  g.fillStyle = '#9a9a9a'; fit(info.to, 30, 600); g.fillText(info.to, x, 90);
-  g.fillStyle = '#f6c41c'; fit(info.dist, 110, 800); g.fillText(info.dist, x, 230);
-  g.fillStyle = '#fff'; fit(info.main, 54, 700); g.fillText(info.main, x, 330);
-  g.fillStyle = '#9a9a9a'; fit(info.sub, 32, 600); g.fillText(info.sub, x, 470);
+  if (NAV_ARROW){
+    g.save();
+    g.translate(W / 2, 250);
+    g.rotate(info.rot * Math.PI / 180);
+    g.scale(11, 11);
+    g.translate(-12, -12);
+    g.fillStyle = '#f6c41c';
+    g.fill(NAV_ARROW);
+    g.restore();
+  }
+  g.textAlign = 'center';
+  g.textBaseline = 'alphabetic';
+  const line = (t, y, size, color, spacing)=>{
+    if (!t) return;
+    let sz = size;
+    if ('letterSpacing' in g) g.letterSpacing = spacing + 'px';
+    do { g.font = `700 ${sz}px system-ui, -apple-system, sans-serif`; sz -= 2; } while (g.measureText(t).width > W - 60 && sz > 20);
+    g.fillStyle = color;
+    g.shadowColor = 'rgba(0,0,0,0.9)'; g.shadowBlur = 18;   // readable over the ground band
+    g.fillText(t, W / 2, y);
+    g.shadowBlur = 0;
+  };
+  line(info.dist, 520, 88, '#f6c41c', 10);
+  line(info.main, 625, 88, '#f6c41c', 10);
+  line(info.street, 735, 50, '#ffffff', 8);
+  line(info.sub, 850, 32, '#8a8a8a', 5);
   navTex.needsUpdate = true;
 }
 /* The way on the ground: the next NAV_GROUND_AHEAD metres of the route as a
@@ -8092,10 +8106,11 @@ function navUpdate(){
   const rot = navBearing(n.pos, st) - (facing === null ? 0 : facing);
   const mins = Math.max(1, Math.round(rest / NAV_SPEED[n.mode] / 60));
   const main = n.arrivedAt ? 'YOU HAVE ARRIVED' : navInstruction(st);
+  const street = n.arrivedAt ? n.dest.name.toUpperCase() : (st.name || '').toUpperCase();
   const dist = n.arrivedAt ? '' : 'IN ' + navKm(toTurn);
-  const sub = `${navKm(rest)} · ${mins} MIN LEFT` + (facing === null ? ' · NO COMPASS: UP = NORTH' : '');
+  const sub = n.arrivedAt ? '' : `${navKm(rest)} · ${mins} MIN · TO ${n.dest.name.toUpperCase()}` + (facing === null ? ' · NO COMPASS: UP = NORTH' : '');
   navGroundBuild();
-  navDrawBoard({ rot, main, dist, sub, to: 'TO ' + n.dest.name.toUpperCase() + (n.mode === 'bike' ? ' · CYCLING' : ' · WALKING') });
+  navDrawBoard({ rot, main, dist, street, sub });
 }
 setInterval(()=>{ if (nav) navUpdate(); }, 250);   // the compass turns between GPS fixes
 
