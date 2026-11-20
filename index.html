@@ -414,18 +414,6 @@
     opacity:0;transition:opacity 0.55s ease;pointer-events:none;
   }
   .toast.show{opacity:1;}
-  /* NAVIGATE: the direction HUD, one copy per eye like the toasts. */
-  #navHud{position:fixed;inset:0;z-index:55;pointer-events:none;}
-  .navPane{position:absolute;top:56px;left:50%;transform:translateX(-50%);width:min(320px,44%);
-    display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:rgba(0,0,0,0.55);color:#fff;}
-  .navPane svg{flex:0 0 auto;width:48px;height:48px;transition:transform .25s linear;}
-  .navTxt{min-width:0;}
-  .navMain{font-size:15px;font-weight:700;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .navDist{font-size:22px;font-weight:700;color:var(--accent);letter-spacing:.04em;}
-  .navSub{font-size:10px;letter-spacing:.16em;color:var(--muted);}
-  .navPane.R{display:none;}
-  body[data-sbs="1"] .navPane.L{left:25%;transform:translateX(-50%) translateX(calc(-1 * var(--ui-eye-shift)));}
-  body[data-sbs="1"] .navPane.R{display:flex;left:75%;transform:translateX(-50%) translateX(var(--ui-eye-shift));}
   .toastR{display:none;}
   /* SBS EYE DIST moves each eye's toast like the rest of that eye's UI, so
      it sits at the same depth as the panes. */
@@ -649,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.07';
+const APP_VERSION = '3.08';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -871,7 +859,8 @@ const SHAPES = [
   'OFF'
 ];
 const CHOOSE_SOURCE = ['CHOOSE'];
-const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER', 'CAMERA'];
+const MODES = ['DEMO', 'IMAGE / VIDEO', '3D OBJECT', 'MEDIA FOLDER', 'CAMERA', 'NAVIGATION'];
+const MODE_NAV = 5;   // NAVIGATE's board as the content -- navEnterContent()
 const MODE_CAMERA = 4;   // live camera -- startCamera(); the row under MODE picks FRONT / BACK
 const CAMERA_SIDES = ['FRONT', 'BACK'];
 
@@ -2188,6 +2177,7 @@ function applyEyeProjection(){
   if (world){
     const contentZoomMul = Math.max(0.1, 1 + state.contentZoom / 100);
     world.scale.setScalar(Math.min(1, aspect) * contentZoomMul);
+    if (navMesh) navMesh.scale.setScalar(Math.min(1, aspect) * contentZoomMul);   // NAVIGATION's board
   }
 
   // ANGLE straightens a crooked photo/video by rotating just the video/photo
@@ -3445,6 +3435,7 @@ function applyContent(){
   domeGroup.visible  = state.content === 'video';  // empty unless PROJECTION isn't FLAT
   modelGroup.visible = state.content === 'model';
   videoGroup.visible = state.content === 'video';
+  if (navMesh) navMesh.visible = state.content === 'nav';
   if (state.content !== 'video'){
     if (!video.paused) video.pause();
     stopReverse();
@@ -5195,6 +5186,14 @@ function stepEnumValue(node, dir){
   const prevVal = state[node.key];
   state[node.key] = (state[node.key] + dir + n) % n;
   if (node.key === 'mode'){
+    // NAVIGATION: the board if navigating, else the NAVIGATE dialog (MODE
+    // goes back if it's closed without starting).
+    if (state.mode === MODE_NAV){
+      if (nav) navEnterContent();
+      else { state.mode = prevVal; openNavDlg(); refreshMenu(); }
+      return;
+    }
+    if (prevVal === MODE_NAV && nav) stopNav();
     // A camera starts as soon as it's picked; anything else lets it go.
     if (state.mode === MODE_CAMERA){
       startCamera(cameraFront, prevVal);
@@ -5244,6 +5243,7 @@ function openModeChooser(){
     case 2: modelFile.click(); break;
     case 3: folderFiles.click(); break;
     case MODE_CAMERA: startCamera(cameraFront); break;
+    case MODE_NAV: if (!nav) openNavDlg(); break;
   }
 }
 
@@ -7832,7 +7832,7 @@ async function startNav(mode){
     nav = { mode, dest, route, idx: 1, pos: here, heading: null, gpsHeading: null, watch: null,
             offCount: 0, lastRoute: performance.now(), arrivedAt: 0 };
     nav.watch = navigator.geolocation.watchPosition(navOnPos, ()=>{}, { enableHighAccuracy: true, maximumAge: 1000 });
-    navHud.hidden = false;
+    navEnterContent();
     navUpdate();
     toast(`TO ${dest.name.toUpperCase().slice(0, 24)} · ${navKm(route.dist)} · NOT WHILE DRIVING`, 4000);
   }catch(e){
@@ -7855,8 +7855,7 @@ function stopNav(quiet){
   if (!nav) return;
   if (nav.watch !== null) navigator.geolocation.clearWatch(nav.watch);
   nav = null;
-  navHud.hidden = true;
-  if (!quiet) toast('NAVIGATION STOPPED');
+  if (!quiet){ navLeaveContent(); toast('NAVIGATION STOPPED'); }
 }
 // Facing: the compass where there is one (iOS gives it as webkitCompassHeading,
 // Android as an absolute alpha); else the GPS's direction of travel.
@@ -7883,7 +7882,7 @@ function navOnPos(p){
   }
   if (navDist(n.pos, n.dest) < NAV_ARRIVE && !n.arrivedAt){
     n.arrivedAt = performance.now();
-    setTimeout(()=>{ if (nav === n){ stopNav(true); toast('YOU HAVE ARRIVED', 4000); } }, 8000);
+    setTimeout(()=>{ if (nav === n){ stopNav(true); navLeaveContent(); toast('YOU HAVE ARRIVED', 4000); } }, 8000);
   }
   // Off the line for two fixes in a row (and not just re-routed): a new route.
   const off = navOffRoute(n.pos, n.route.line);
@@ -7936,13 +7935,74 @@ function navInstruction(st){
     default: return (mod === 'UTURN' ? 'TURN AROUND' : mod === 'STRAIGHT' ? 'STRAIGHT ON' : 'TURN ' + (mod || 'AHEAD')) + onto;
   }
 }
-const navHud = document.createElement('div');
-navHud.id = 'navHud';
-navHud.hidden = true;
-navHud.innerHTML = ['L', 'R'].map(side => `<div class="navPane ${side}">
-  <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#f6c41c" stroke="#000" stroke-width="2" d="M24 3 L40 40 L24 31 L8 40 Z"/></svg>
-  <div class="navTxt"><div class="navDist"></div><div class="navMain"></div><div class="navSub"></div></div></div>`).join('');
-document.body.appendChild(navHud);
+/* The board: NAVIGATE is a content of its own (MODE NAVIGATION), on black,
+   in the middle of the view. Drawn into a canvas that's the texture of a
+   plane carried with the head (rig), so it stays in front of you as you
+   turn, and goes through the same picture settings as any content: POS X/Y
+   (and dragging), CONTENT ZOOM (applyEyeProjection()), ZOOM (XY), SCALE,
+   TRAPEZOID, IMAGE CORRECTION. */
+const NAV_BOARD_W = 1024, NAV_BOARD_H = 576;
+let navMesh = null, navCanvas = null, navTex = null;
+function navBoard(){
+  if (navMesh) return navMesh;
+  navCanvas = document.createElement('canvas');
+  navCanvas.width = NAV_BOARD_W; navCanvas.height = NAV_BOARD_H;
+  navTex = new THREE.CanvasTexture(navCanvas);
+  navTex.colorSpace = THREE.SRGBColorSpace;
+  navMesh = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4 * NAV_BOARD_H / NAV_BOARD_W),
+    new THREE.MeshBasicMaterial({ map: navTex, transparent: true, depthTest: false }));
+  navMesh.position.set(0, 0, CONTENT_DISTANCE);
+  navMesh.renderOrder = 10;
+  navMesh.visible = state.content === 'nav';
+  rig.add(navMesh);
+  applyEyeProjection();   // CONTENT ZOOM on it
+  return navMesh;
+}
+function navDrawBoard(info){
+  navBoard();
+  const g = navCanvas.getContext('2d'), W = NAV_BOARD_W, H = NAV_BOARD_H;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = 'rgba(12,12,12,0.92)';
+  g.strokeStyle = 'rgba(246,196,28,0.5)'; g.lineWidth = 4;
+  g.beginPath(); g.roundRect(4, 4, W - 8, H - 8, 36); g.fill(); g.stroke();
+  // The arrow, toward the next turn.
+  g.save();
+  g.translate(220, H / 2);
+  g.rotate(info.rot * Math.PI / 180);
+  g.fillStyle = '#f6c41c'; g.strokeStyle = '#000'; g.lineWidth = 6;
+  g.beginPath(); g.moveTo(0, -150); g.lineTo(110, 130); g.lineTo(0, 70); g.lineTo(-110, 130); g.closePath();
+  g.fill(); g.stroke();
+  g.restore();
+  g.textAlign = 'left';
+  const x = 420, maxW = W - x - 40;
+  const fit = (t, size, weight)=>{ let sz = size; do { g.font = `${weight} ${sz}px system-ui, sans-serif`; sz -= 2; } while (g.measureText(t).width > maxW && sz > 18); };
+  g.fillStyle = '#9a9a9a'; fit(info.to, 30, 600); g.fillText(info.to, x, 90);
+  g.fillStyle = '#f6c41c'; fit(info.dist, 110, 800); g.fillText(info.dist, x, 230);
+  g.fillStyle = '#fff'; fit(info.main, 54, 700); g.fillText(info.main, x, 330);
+  g.fillStyle = '#9a9a9a'; fit(info.sub, 32, 600); g.fillText(info.sub, x, 470);
+  navTex.needsUpdate = true;
+}
+// MODE NAVIGATION: the board in place of whatever was showing (that stops,
+// and comes back when navigation ends).
+let navPrev = null;
+function navEnterContent(){
+  if (state.content !== 'nav') navPrev = { content: state.content, mode: state.mode };
+  stopCamera();
+  navBoard();
+  state.content = 'nav';
+  state.mode = MODE_NAV;
+  applyAll();
+  refreshMenu();
+}
+function navLeaveContent(){
+  if (state.content !== 'nav') return;
+  const prev = navPrev || { content: 'demo', mode: 0 };
+  navPrev = null;
+  state.content = prev.content === 'nav' ? 'demo' : prev.content;
+  state.mode = prev.mode === MODE_NAV ? 0 : prev.mode;
+  applyAll();
+  refreshMenu();
+}
 function navUpdate(){
   if (!nav) return;
   const n = nav, st = n.route.steps[Math.min(n.idx, n.route.steps.length - 1)];
@@ -7957,12 +8017,7 @@ function navUpdate(){
   const main = n.arrivedAt ? 'YOU HAVE ARRIVED' : navInstruction(st);
   const dist = n.arrivedAt ? '' : 'IN ' + navKm(toTurn);
   const sub = `${navKm(rest)} · ${mins} MIN LEFT` + (facing === null ? ' · NO COMPASS: UP = NORTH' : '');
-  navHud.querySelectorAll('.navPane').forEach(pane=>{
-    pane.querySelector('svg').style.transform = `rotate(${Math.round(rot)}deg)`;
-    pane.querySelector('.navMain').textContent = main;
-    pane.querySelector('.navDist').textContent = dist;
-    pane.querySelector('.navSub').textContent = sub;
-  });
+  navDrawBoard({ rot, main, dist, sub, to: 'TO ' + n.dest.name.toUpperCase() + (n.mode === 'bike' ? ' · CYCLING' : ' · WALKING') });
 }
 setInterval(()=>{ if (nav) navUpdate(); }, 250);   // the compass turns between GPS fixes
 
