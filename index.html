@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.13';
+const APP_VERSION = '3.14';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -8191,17 +8191,44 @@ function navDrawBoard(info){
    frame it's turned by how far the view (rig) and the facing have turned
    since, so it stays put on the ground as you look around -- whatever
    X MULTIPLY does to the picture. */
-const NAV_GROUND_AHEAD = 80, NAV_GROUND_W = 0.5, NAV_EYE_H = 1.6;
-let navGround = null, navGroundFacing = 0;
+const NAV_GROUND_AHEAD = 80, NAV_GROUND_W = 0.22, NAV_EYE_H = 1.6;
+const NAV_TILE_EVERY = 4, NAV_TILE_R = 0.45, NAV_TILES = Math.ceil(NAV_GROUND_AHEAD / NAV_TILE_EVERY) + 1;
+let navGround = null, navLine = null, navTiles = null, navGroundFacing = 0;
+// A round tile lying on the line every NAV_TILE_EVERY m, with the app's
+// direction arrow on it pointing the way to go (one InstancedMesh).
+function navTileTexture(){
+  const S = 256, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.beginPath(); g.arc(S / 2, S / 2, S / 2 - 6, 0, Math.PI * 2);
+  g.fillStyle = 'rgba(0,0,0,0.75)'; g.fill();
+  g.lineWidth = 10; g.strokeStyle = '#f6c41c'; g.stroke();
+  if (NAV_ARROW){
+    g.save();
+    g.translate(S / 2, S / 2); g.scale(7, 7); g.translate(-12, -12);
+    g.fillStyle = '#f6c41c'; g.fill(NAV_ARROW);
+    g.restore();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
 const navGroundEuler = new THREE.Euler();
 function navGroundBuild(){
   const n = nav;
   const facing = n ? (n.heading !== null ? n.heading : n.gpsHeading) : null;
   if (!n || facing === null || !n.route){ if (navGround) navGround.visible = false; return; }
   if (!navGround){
-    navGround = new THREE.Mesh(new THREE.BufferGeometry(),
-      new THREE.MeshBasicMaterial({ color: 0xf6c41c, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
-    navGround.renderOrder = 5;
+    navGround = new THREE.Group();
+    navLine = new THREE.Mesh(new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: 0xf6c41c, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+    navLine.renderOrder = 5;
+    navTiles = new THREE.InstancedMesh(new THREE.CircleGeometry(NAV_TILE_R, 40),
+      new THREE.MeshBasicMaterial({ map: navTileTexture(), transparent: true, side: THREE.DoubleSide, depthWrite: false }), NAV_TILES);
+    navTiles.renderOrder = 6;
+    navTiles.frustumCulled = false;
+    navGround.add(navLine, navTiles);
     scene.add(navGround);
   }
   // The route from the nearest point on it, NAV_GROUND_AHEAD metres on.
@@ -8241,8 +8268,29 @@ function navGroundBuild(){
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setIndex(idx);
-  navGround.geometry.dispose();
-  navGround.geometry = geo;
+  navLine.geometry.dispose();
+  navLine.geometry = geo;
+  // The tiles: every NAV_TILE_EVERY m along the line, lying flat (a hair
+  // above it), the arrow pointing along the way.
+  const m = new THREE.Matrix4(), tilt = new THREE.Matrix4().makeRotationX(-Math.PI / 2), yaw = new THREE.Matrix4();
+  let count = 0, next = NAV_TILE_EVERY / 2;
+  let walked = 0;
+  for (let i = 0; i < loc.length - 1 && count < NAV_TILES; i++){
+    const [ax, az] = loc[i], [bx, bz] = loc[i + 1];
+    const seg = Math.hypot(bx - ax, bz - az);
+    if (!seg) continue;
+    const dx = (bx - ax) / seg, dz = (bz - az) / seg;
+    while (next <= walked + seg && count < NAV_TILES){
+      const f = next - walked;
+      yaw.makeRotationY(Math.atan2(-dx, -dz));
+      m.copy(yaw).multiply(tilt).setPosition(ax + dx * f, 0.01, az + dz * f);
+      navTiles.setMatrixAt(count++, m);
+      next += NAV_TILE_EVERY;
+    }
+    walked += seg;
+  }
+  navTiles.count = count;
+  navTiles.instanceMatrix.needsUpdate = true;
   navGroundFacing = facing;
   navGround.visible = state.content === 'nav' && loc.length > 1;
 }
