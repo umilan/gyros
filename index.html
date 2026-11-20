@@ -637,7 +637,7 @@ import { USDZLoader } from 'three/addons/loaders/USDZLoader.js';
    since this is a single hand-edited file, not a package with a release
    pipeline. Update this one constant; both display spots read from it.
    ========================================================================= */
-const APP_VERSION = '3.14';
+const APP_VERSION = '3.15';
 document.title = `GYROS v${APP_VERSION}`;
 
 /* =========================================================================
@@ -863,6 +863,7 @@ const SHAPES = [
   'SNOW',          // flakes falling all around you -- buildSnow()
   'SPACE TRAVEL',  // flying ahead through stars -- buildSpace()
   'MAGIC SPIRAL',  // a turning rainbow spiral in front -- buildSpiral()
+  'BALL IN BOX',   // a box held in front of you, a ball inside it rolling with your head -- buildBallBox()
   'OFF'
 ];
 const CHOOSE_SOURCE = ['CHOOSE'];
@@ -1539,8 +1540,97 @@ function gridAxisName(d){   // [0,0,-1] -> '-Z'
    PLAY SPEED keys set it) while the demo spins (autoRotate). ---- */
 let demoAnim = null;
 function demoAnimStep(dt){
+  if (demoHeadGroup) demoHeadGroup.visible = state.content === 'demo';
   if (!demoAnim || state.content !== 'demo') return;
-  demoAnim(dt * (state.autoRotate ? state.rotSpeed : 0));
+  // BALL IN BOX runs on real time: nothing in it moves by itself.
+  demoAnim(demoAnim.realTime ? dt : dt * (state.autoRotate ? state.rotSpeed : 0));
+}
+// A group carried with the head (on the rig) at the content's distance, for
+// a demo that stays put in front of you whatever the head does; CONTENT
+// ZOOM sizes it (applyEyeProjection()).
+let demoHeadGroup = null;
+function headGroup(){
+  if (!demoHeadGroup){
+    demoHeadGroup = new THREE.Group();
+    demoHeadGroup.position.set(0, 0, CONTENT_DISTANCE);
+    rig.add(demoHeadGroup);
+    applyEyeProjection();
+  }
+  return demoHeadGroup;
+}
+/* BALL IN BOX: a glass box held still in front of you (it turns with the
+   head, so it never moves on screen) with a ball inside that the head's
+   movement does move -- as a real ball in a real box would. Simulated in
+   the box's own frame: gravity as it points there given how the head is
+   tilted (rig), plus the pushes of the box being carried round by the head
+   3 m out (Coriolis, centrifugal, and the jolt of starting / stopping a
+   turn), bounces off the walls that lose a little each time, and a little
+   rolling friction. Nothing moves until the head does. */
+function buildBallBox(group){
+  const H = 0.6, R = 0.14;                       // box half-size, ball radius (m)
+  const box = new THREE.Mesh(new THREE.BoxGeometry(H * 2, H * 2, H * 2),
+    new THREE.MeshStandardMaterial({ color: 0x88aaff, transparent: true, opacity: 0.08, roughness: 0.1, metalness: 0, depthWrite: false, side: THREE.BackSide }));
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(H * 2, H * 2, H * 2)),
+    new THREE.LineBasicMaterial({ color: 0xf6c41c }));
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32),
+    new THREE.MeshStandardMaterial({ color: 0xff5533, roughness: 0.25, metalness: 0.35 }));
+  // A soft shadow under the ball on whichever face is "down" right now.
+  const shadowTex = dotTexture();
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(R * 1.3, 32),
+    new THREE.MeshBasicMaterial({ map: shadowTex, color: 0x000000, transparent: true, opacity: 0.6, depthWrite: false }));
+  group.add(box, edges, shadow, ball);
+  const pos = new THREE.Vector3(0, -H + R, 0), vel = new THREE.Vector3();
+  const qPrev = rig.quaternion.clone(), qInv = new THREE.Quaternion(), dq = new THREE.Quaternion();
+  const w = new THREE.Vector3(), wPrev = new THREE.Vector3(), alpha = new THREE.Vector3();
+  const g = new THREE.Vector3(), a = new THREE.Vector3(), r = new THREE.Vector3(), tmp = new THREE.Vector3();
+  const centre = new THREE.Vector3(0, 0, CONTENT_DISTANCE);
+  const LIM = H - R, BOUNCE = 0.72, ROLL = 0.6;   // ROLL: rolling drag, 1/s
+  const step = dt=>{
+    if (!(dt > 0)) return;
+    dt = Math.min(dt, 0.05);
+    // The head's turn since last frame, in the box's (head's) frame.
+    qInv.copy(qPrev).invert();
+    dq.copy(qInv).multiply(rig.quaternion);
+    qPrev.copy(rig.quaternion);
+    const ang = 2 * Math.acos(Math.min(1, Math.abs(dq.w)));
+    if (ang > 1e-6){ w.set(dq.x, dq.y, dq.z).normalize().multiplyScalar((dq.w < 0 ? -ang : ang) / dt); }
+    else w.set(0, 0, 0);
+    if (w.length() > 20) w.setLength(20);   // a jump in tracking (recenter), not a turn
+    alpha.copy(w).sub(wPrev).divideScalar(dt).clampLength(0, 80);
+    wPrev.copy(w);
+    // Gravity, as it points in the box.
+    g.set(0, -9.81, 0).applyQuaternion(qInv.copy(rig.quaternion).invert());
+    // Where the ball is from the head: the box sits 3 m out (CONTENT ZOOM
+    // scales the box, not the distance).
+    const sc = group.scale.x || 1;
+    r.copy(pos).multiplyScalar(sc).add(centre);
+    a.copy(g);
+    a.sub(tmp.copy(w).cross(vel).multiplyScalar(2));            // Coriolis
+    a.sub(tmp.copy(w).cross(r).cross(w).negate());             // centrifugal: -w x (w x r)
+    a.sub(tmp.copy(alpha).cross(r));                           // the jolt of a turn starting / stopping
+    vel.addScaledVector(a, dt / sc);
+    vel.multiplyScalar(Math.exp(-ROLL * dt));
+    if (vel.length() > 12) vel.setLength(12);
+    pos.addScaledVector(vel, dt);
+    // The walls: back inside, bounce with a little lost.
+    for (const k of ['x', 'y', 'z']){
+      if (pos[k] > LIM){ pos[k] = LIM; if (vel[k] > 0) vel[k] *= -BOUNCE; }
+      else if (pos[k] < -LIM){ pos[k] = -LIM; if (vel[k] < 0) vel[k] *= -BOUNCE; }
+    }
+    ball.position.copy(pos);
+    ball.rotation.x += vel.z * dt / R;   // roll along
+    ball.rotation.z -= vel.x * dt / R;
+    // The shadow: on the face gravity points at most.
+    const ax = ['x', 'y', 'z'].reduce((m, k) => Math.abs(g[k]) > Math.abs(g[m]) ? k : m, 'y');
+    const sgn = Math.sign(g[ax]) || -1;
+    shadow.position.copy(pos);
+    shadow.position[ax] = sgn * (H - 0.002);
+    shadow.lookAt(group.localToWorld(tmp.copy(shadow.position).setComponent(ax === 'x' ? 0 : ax === 'y' ? 1 : 2, 0)));
+    const hgt = Math.abs(pos[ax] - shadow.position[ax]);
+    shadow.material.opacity = 0.6 * Math.max(0, 1 - hgt / (2 * H));
+  };
+  step.realTime = true;
+  return step;
 }
 // A soft round dot, for point sprites.
 function dotTexture(){
@@ -1791,6 +1881,7 @@ function solidMat(color){
 function buildDemo(index){
   disposeGroup(demoGroup);
   disposeGroup(roomGroup);
+  if (demoHeadGroup) disposeGroup(demoHeadGroup);
   demoAnim = null;
   const name = SHAPES[index] || 'WIRE CUBE';
   if (name === 'OFF') return;   // demo hidden; nothing to build
@@ -1800,6 +1891,7 @@ function buildDemo(index){
   if (name === 'SNOW'){ demoAnim = buildSnow(roomGroup); return; }
   if (name === 'SPACE TRAVEL'){ demoAnim = buildSpace(roomGroup); return; }
   if (name === 'MAGIC SPIRAL'){ demoAnim = buildSpiral(roomGroup); return; }
+  if (name === 'BALL IN BOX'){ demoAnim = buildBallBox(headGroup()); return; }
 
   switch(name){
     case 'WIRE CUBE': {
@@ -2323,6 +2415,7 @@ function applyEyeProjection(){
     const contentZoomMul = Math.max(0.1, 1 + state.contentZoom / 100);
     world.scale.setScalar(Math.min(1, aspect) * contentZoomMul);
     if (navMesh) navMesh.scale.setScalar(Math.min(1, aspect) * contentZoomMul);   // NAVIGATION's board
+    if (demoHeadGroup) demoHeadGroup.scale.setScalar(Math.min(1, aspect) * contentZoomMul);   // BALL IN BOX
   }
 
   // ANGLE straightens a crooked photo/video by rotating just the video/photo
@@ -3237,7 +3330,7 @@ function updateNavArrow(){
 
   // Nothing on screen to navigate back to -- don't point at an empty spot.
   // GRID ROOM is all around you and labels its own walls.
-  const nothingToPointAt = state.content === 'demo' && ['OFF', 'GRID ROOM', 'SNOW', 'SPACE TRAVEL'].includes(SHAPES[state.shape]);
+  const nothingToPointAt = state.content === 'demo' && ['OFF', 'GRID ROOM', 'SNOW', 'SPACE TRAVEL', 'BALL IN BOX'].includes(SHAPES[state.shape]);
 
   navFwd.copy(NAV_CONTENT_DIR).applyQuaternion(rig.quaternion);
   const away = navFwd.angleTo(NAV_CONTENT_DIR);       // 0 .. PI
@@ -6294,7 +6387,7 @@ document.addEventListener('keyup', e=>{ delete keyHolds[keyMapCode(e)]; delete k
 // The PLAY SPEED keys turn into ROTATION SPEED keys for a spinning demo
 // shape or a 3D model.
 function rotSpeedKeys(){
-  return state.content === 'model' || (state.content === 'demo' && SHAPES[state.shape] !== 'GRID ROOM' && SHAPES[state.shape] !== 'OFF');
+  return state.content === 'model' || (state.content === 'demo' && !['GRID ROOM', 'OFF', 'BALL IN BOX'].includes(SHAPES[state.shape]));
 }
 function stepRotSpeed(steps){
   setStepValue('rotSpeed', state.rotSpeed + steps * SPEC.rotSpeed.step);
